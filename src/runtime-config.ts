@@ -1,0 +1,50 @@
+export interface RuntimeConfig {
+  databaseUrl: string;
+  host: "0.0.0.0";
+  port: number;
+  environment: string;
+  readinessTimeoutMs: number;
+}
+
+export type RuntimeEnvironment = Readonly<Record<string, string | undefined>>;
+
+const DEFAULT_PORT = 3000;
+const READINESS_TIMEOUT_MS = 2000;
+
+export function loadRuntimeConfig(
+  environment: RuntimeEnvironment,
+): RuntimeConfig {
+  const databaseUrl = environment.DATABASE_URL?.trim();
+  if (!databaseUrl) {
+    throw new Error("DATABASE_URL is required");
+  }
+
+  let parsedDatabaseUrl: URL;
+  try {
+    parsedDatabaseUrl = new URL(databaseUrl);
+  } catch {
+    throw new Error("DATABASE_URL must be a valid PostgreSQL URL");
+  }
+
+  if (
+    parsedDatabaseUrl.protocol !== "postgres:" &&
+    parsedDatabaseUrl.protocol !== "postgresql:"
+  ) {
+    throw new Error("DATABASE_URL must use the postgres or postgresql scheme");
+  }
+
+  const portValue = environment.PORT?.trim();
+  const port = portValue ? Number(portValue) : DEFAULT_PORT;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("PORT must be an integer from 1 to 65535");
+  }
+
+  const environmentName = environment.NODE_ENV?.trim() || "development";
+  return {
+    databaseUrl,
+    host: "0.0.0.0",
+    port,
+    environment: environmentName,
+    readinessTimeoutMs: READINESS_TIMEOUT_MS,
+  };
+}
