@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { parse } from "yaml";
-import { isMerchantBootstrapErrorResponse } from "./schema.js";
+import { isMerchantBootstrapErrorResponse, isMerchantBootstrapResponse } from "./schema.js";
 import { MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../woocommerce/installation/routes.js";
 
 test("merchant bootstrap OpenAPI contract is strict, authenticated and versioned", async () => {
@@ -35,6 +35,15 @@ test("merchant bootstrap OpenAPI contract is strict, authenticated and versioned
   assert.deepEqual(contextSchema.required, [
     "storeLocale", "languageTag", "timeZone", "countryCode",
   ]);
+  for (const [field, maximum] of Object.entries({
+    storeLocale: 128,
+    languageTag: 64,
+    timeZone: 255,
+    countryCode: 2,
+  })) {
+    assert.equal(contextSchema.properties[field]?.minLength, 1, `${field} minLength`);
+    assert.equal(contextSchema.properties[field]?.maxLength, maximum, `${field} maxLength`);
+  }
   assert.deepEqual(categorySchema.required, ["id", "slug", "displayName"]);
   assert.equal(categorySchema.properties.promptRevisionId, undefined);
   assert.equal(categorySchema.properties.description, undefined);
@@ -42,6 +51,38 @@ test("merchant bootstrap OpenAPI contract is strict, authenticated and versioned
   assert.equal(isMerchantBootstrapErrorResponse({ error: "unauthorized" }), true);
   assert.equal(isMerchantBootstrapErrorResponse({ error: "database details" }), false);
   assert.equal(isMerchantBootstrapErrorResponse({ error: "unauthorized", detail: "secret" }), false);
+});
+
+test("merchant bootstrap runtime schema rejects empty non-null international context strings", () => {
+  const response = {
+    schemaVersion: 1 as const,
+    shop: {
+      id: "shop-1",
+      platform: "WOOCOMMERCE" as const,
+      domain: "https://merchant.example",
+      onboardingCompleted: false,
+      installedAt: "2026-10-02T10:00:00.000Z",
+    },
+    internationalContext: {
+      storeLocale: "pt_BR",
+      languageTag: "pt-BR",
+      timeZone: "America/Sao_Paulo",
+      countryCode: "BR",
+    },
+    storeProfile: {
+      activeCategory: null,
+      pendingCategory: null,
+      pendingSelectionGeneration: 0,
+      pendingSelectedAt: null,
+    },
+  };
+
+  assert.equal(isMerchantBootstrapResponse(response), true);
+  for (const field of ["storeLocale", "languageTag", "timeZone", "countryCode"] as const) {
+    const invalidResponse = structuredClone(response);
+    invalidResponse.internationalContext[field] = "";
+    assert.equal(isMerchantBootstrapResponse(invalidResponse), false, field);
+  }
 });
 
 interface BootstrapOpenApiDocument {
@@ -55,7 +96,7 @@ interface BootstrapOpenApiDocument {
       additionalProperties?: boolean;
       required?: string[];
       const?: number;
-      properties: Record<string, { const?: number; $ref?: string }>;
+      properties: Record<string, { const?: number; $ref?: string; minLength?: number; maxLength?: number }>;
     }>;
     responses: Record<string, {
       content: { "application/json": { schema: { $ref: string } } };

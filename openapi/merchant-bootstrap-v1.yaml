@@ -85,16 +85,20 @@ components:
       properties:
         storeLocale:
           type: [string, "null"]
+          minLength: 1
           maxLength: 128
           description: Provider-native locale, returned unchanged and independently nullable from languageTag.
         languageTag:
           type: [string, "null"]
+          minLength: 1
           maxLength: 64
         timeZone:
           type: [string, "null"]
+          minLength: 1
           maxLength: 255
         countryCode:
           type: [string, "null"]
+          minLength: 1
           maxLength: 2
     StoreProfile:
       type: object
