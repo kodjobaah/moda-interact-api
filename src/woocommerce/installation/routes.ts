@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
 import { decodeSecret } from "./credential.js";
@@ -7,6 +8,7 @@ import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode 
 
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
+export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";
 export const MAX_CONNECT_BODY_BYTES = 8192;
 export const MAX_SITE_URL_BYTES = 512;
 export const CONNECT_REQUEST_FIELDS = ["siteUrl", "attemptId", "bootstrapSecret"] as const;
@@ -19,6 +21,7 @@ export interface WooInstallationRouteHandler {
 interface WooInstallationRouteOptions {
   mode: WooConnectionMode;
   connectionService: WooInstallationConnectionService;
+  bootstrapReadService: MerchantBootstrapReadService;
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
   now?: () => number;
@@ -27,6 +30,7 @@ interface WooInstallationRouteOptions {
 export function createWooInstallationRoutes({
   mode,
   connectionService,
+  bootstrapReadService,
   authenticator,
   logger,
   now = Date.now,
@@ -78,6 +82,35 @@ export function createWooInstallationRoutes({
             sendError(response, 401, "unauthorized");
           } else {
             logger.error("woocommerce.installation.authentication.failed", { reason: "internal" });
+            sendError(response, 500, "internal_error");
+          }
+        }
+        return true;
+      }
+
+      if (requestUrl.pathname === MERCHANT_BOOTSTRAP_ROUTE_PATH && request.method === "GET") {
+        const startedAt = now();
+        try {
+          const principal = await authenticator.authenticate(request);
+          if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
+          const bootstrap = await bootstrapReadService.read(principal);
+          logger.info("merchant.bootstrap.read", {
+            installationId: principal.installationId,
+            shopId: principal.shopId,
+            outcome: "success",
+            onboardingCompleted: bootstrap.shop.onboardingCompleted,
+            durationMs: Math.max(0, now() - startedAt),
+          });
+          sendJson(response, 200, bootstrap);
+        } catch (error) {
+          if (error instanceof WooUnauthenticatedError) {
+            sendError(response, 401, "unauthorized");
+          } else if (error instanceof HttpFailure) {
+            sendError(response, error.statusCode, error.code);
+          } else {
+            logger.error("merchant.bootstrap.read.failed", {
+              reason: error instanceof MerchantBootstrapIntegrityError ? "integrity" : "internal",
+            });
             sendError(response, 500, "internal_error");
           }
         }

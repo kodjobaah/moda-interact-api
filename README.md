@@ -34,6 +34,12 @@ The service exposes `GET /health/live` independently of PostgreSQL and
 `GET /health/ready` with a bounded Prisma connectivity probe. WooCommerce
 installation routes are documented in
 [`openapi/woocommerce-installation-v1.yaml`](openapi/woocommerce-installation-v1.yaml).
+The authenticated `GET /v1/merchant/bootstrap` read model is documented in
+[`openapi/merchant-bootstrap-v1.yaml`](openapi/merchant-bootstrap-v1.yaml). It
+returns shared Shop onboarding and international context plus bounded active
+and pending Commerce category identities. It is read-only, performs no
+ShopSettings fallback or profile creation, and is intended for the plugin's
+server-side PHP client rather than browser JavaScript.
 Startup and shutdown logs use the canonical Shared structured logger; health
 responses do not include configuration or database error details.
 

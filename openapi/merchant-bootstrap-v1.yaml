@@ -1,0 +1,185 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact Merchant Bootstrap API
+  version: 1.0.0
+  description: Authenticated, read-only WooCommerce merchant bootstrap projection for server-side plugin clients.
+servers:
+  - url: https://api.moda-interact.example
+paths:
+  /v1/merchant/bootstrap:
+    get:
+      operationId: getMerchantBootstrap
+      summary: Read the authenticated merchant bootstrap projection
+      description: Tenant identity is resolved only from the authenticated Woo installation principal. Query parameters and caller-provided tenant identifiers are not accepted. This endpoint does not mutate onboarding or Store Category state.
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      responses:
+        "200":
+          description: Bounded shared Shop, international-context and Commerce store-profile state.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MerchantBootstrap"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url(32-byte credential)
+  schemas:
+    MerchantBootstrap:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, shop, internationalContext, storeProfile]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        shop:
+          $ref: "#/components/schemas/ShopIdentity"
+        internationalContext:
+          $ref: "#/components/schemas/InternationalContext"
+        storeProfile:
+          $ref: "#/components/schemas/StoreProfile"
+    ShopIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, platform, domain, onboardingCompleted, installedAt]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        platform:
+          type: string
+          const: WOOCOMMERCE
+        domain:
+          type: string
+          minLength: 1
+          maxLength: 512
+        onboardingCompleted:
+          type: boolean
+        installedAt:
+          type: string
+          format: date-time
+    InternationalContext:
+      type: object
+      additionalProperties: false
+      required: [storeLocale, languageTag, timeZone, countryCode]
+      properties:
+        storeLocale:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 128
+          description: Provider-native locale, returned unchanged and independently nullable from languageTag.
+        languageTag:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 64
+        timeZone:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 255
+        countryCode:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 2
+    StoreProfile:
+      type: object
+      additionalProperties: false
+      required: [activeCategory, pendingCategory, pendingSelectionGeneration, pendingSelectedAt]
+      properties:
+        activeCategory:
+          oneOf:
+            - $ref: "#/components/schemas/CategoryIdentity"
+            - type: "null"
+        pendingCategory:
+          oneOf:
+            - $ref: "#/components/schemas/CategoryIdentity"
+            - type: "null"
+        pendingSelectionGeneration:
+          type: integer
+          minimum: 0
+        pendingSelectedAt:
+          type: [string, "null"]
+          format: date-time
+    CategoryIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, slug, displayName]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 128
+        displayName:
+          type: string
+          minLength: 1
+          maxLength: 255
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+    InvalidRequestError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: invalid_request
+    UnauthorizedError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: unauthorized
+    InternalErrorError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: internal_error
+  responses:
+    InvalidRequest:
+      description: Query parameters and caller-controlled tenant selectors are not accepted.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidRequestError"
+    Unauthorized:
+      description: Missing, malformed, invalid or incompatible installation credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnauthorizedError"
+    InternalError:
+      description: Unexpected failure or authenticated Shop/profile integrity mismatch without sensitive details.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InternalErrorError"
