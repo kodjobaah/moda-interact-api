@@ -1,5 +1,6 @@
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createDatabase } from "./database.js";
+import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
 import { WooInstallationAuthenticator } from "./woocommerce/installation/authenticator.js";
@@ -19,9 +20,11 @@ async function main(): Promise<void> {
     const verifier = new WooSiteVerifier({ mode: config.woocommerceConnectionMode });
     const connectionService = new WooInstallationConnectionService(database.prisma, verifier);
     const authenticator = new WooInstallationAuthenticator(database.prisma);
+    const bootstrapReadService = new MerchantBootstrapReadService(database.prisma);
     const wooRoutes = createWooInstallationRoutes({
       mode: config.woocommerceConnectionMode,
       connectionService,
+      bootstrapReadService,
       authenticator,
       logger,
     });
