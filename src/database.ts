@@ -5,7 +5,11 @@ export interface ReadinessDatabase {
   disconnect(): Promise<void>;
 }
 
-export function createDatabase(databaseUrl: string): ReadinessDatabase {
+export interface ApiDatabase extends ReadinessDatabase {
+  prisma: PrismaClient;
+}
+
+export function createDatabase(databaseUrl: string): ApiDatabase {
   const prisma = new PrismaClient({
     datasources: {
       db: { url: databaseUrl },
@@ -13,6 +17,7 @@ export function createDatabase(databaseUrl: string): ReadinessDatabase {
   });
 
   return {
+    prisma,
     async probe() {
       await prisma.$queryRaw`SELECT 1`;
     },

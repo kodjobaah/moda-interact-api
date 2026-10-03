@@ -1,0 +1,258 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Installation API
+  version: 1.0.0
+  description: Server-to-server connection and authentication contract for the WooCommerce plugin.
+  x-connection-modes:
+    public: HTTPS DNS hostnames resolving only to public/global addresses.
+    local-development: Explicit non-production opt-in for local HTTP/HTTPS identities resolving only to local addresses; public targets retain public HTTPS requirements.
+  x-woocommerce-site-challenge:
+    method: GET
+    path: /wp-json/moda-interact/v1/connection/challenge
+    query:
+      attempt_id: UUID from the connect request
+      nonce: base64url encoding of 32 cryptographically random bytes
+    response:
+      content-type: application/json
+      maximum-body-bytes: 4096
+      schema:
+        $ref: "#/components/schemas/SiteChallenge"
+    proof:
+      algorithm: HMAC-SHA256
+      key: decoded bootstrapSecret from the connect request
+      message: "moda-interact-connect-v1\n<attemptId>\n<nonce>\n<canonicalSiteUrl>"
+    transport:
+      redirects: forbidden
+      total-deadline-seconds: 5
+      credentials-and-cookies: forbidden
+servers:
+  - url: https://api.moda-interact.example
+paths:
+  /v1/woocommerce/installations/connect:
+    post:
+      operationId: connectWooCommerceInstallation
+      summary: Prove site control and create or reconnect an installation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectRequest"
+      responses:
+        "200":
+          description: Existing installation reconnected and its credential rotated.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ConnectResponse"
+                  - type: object
+                    properties:
+                      connection:
+                        const: RECONNECTED
+        "201":
+          description: WooCommerce installation created.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/ConnectResponse"
+                  - type: object
+                    properties:
+                      connection:
+                        const: CREATED
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "409":
+          $ref: "#/components/responses/ConnectionConflict"
+        "413":
+          $ref: "#/components/responses/RequestTooLarge"
+        "422":
+          $ref: "#/components/responses/SiteVerificationFailed"
+        "500":
+          $ref: "#/components/responses/InternalError"
+  /v1/woocommerce/installation:
+    get:
+      operationId: getWooCommerceInstallationPrincipal
+      summary: Verify installation credentials and return the authoritative principal
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      responses:
+        "200":
+          description: Authenticated installation principal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InstallationPrincipal"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url(32-byte credential)
+      description: Raw credential is exactly 32 bytes before base64url encoding and is returned only once by connect.
+  schemas:
+    ConnectRequest:
+      type: object
+      additionalProperties: false
+      required: [siteUrl, attemptId, bootstrapSecret]
+      properties:
+        siteUrl:
+          type: string
+          maxLength: 512
+          x-max-utf8-bytes: 512
+          description: Maximum 512 UTF-8 bytes; canonical HTTPS DNS URL in public mode, or explicitly permitted local target in local-development mode.
+        attemptId:
+          type: string
+          format: uuid
+        bootstrapSecret:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+          description: Canonical base64url encoding of exactly 32 ephemeral bytes.
+      x-max-body-bytes: 8192
+    ConnectResponse:
+      type: object
+      additionalProperties: false
+      required: [installationId, shopId, canonicalSiteUrl, credential, credentialVersion, connection]
+      properties:
+        installationId:
+          type: string
+        shopId:
+          type: string
+        canonicalSiteUrl:
+          type: string
+          maxLength: 512
+        credential:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+          description: Returned once; the API persists only its SHA-256 digest.
+        credentialVersion:
+          type: integer
+          minimum: 1
+        connection:
+          type: string
+          enum: [CREATED, RECONNECTED]
+    InstallationPrincipal:
+      type: object
+      additionalProperties: false
+      required: [installationId, shopId, canonicalSiteUrl, credentialVersion]
+      properties:
+        installationId:
+          type: string
+        shopId:
+          type: string
+        canonicalSiteUrl:
+          type: string
+        credentialVersion:
+          type: integer
+          minimum: 1
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+    InvalidRequestError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: invalid_request
+    RequestTooLargeError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: request_too_large
+    SiteVerificationFailedError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: site_verification_failed
+    ConnectionConflictError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: connection_conflict
+    InternalErrorResponse:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: internal_error
+    UnauthorizedError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: unauthorized
+    SiteChallenge:
+      type: object
+      additionalProperties: false
+      required: [attemptId, nonce, proof]
+      properties:
+        attemptId:
+          type: string
+          format: uuid
+        nonce:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+        proof:
+          type: string
+          pattern: "^[A-Za-z0-9_-]{43}$"
+      description: Plugin callback body. proof is base64url HMAC-SHA256 over `moda-interact-connect-v1\n<attemptId>\n<nonce>\n<canonicalSiteUrl>` keyed by the decoded bootstrapSecret.
+  responses:
+    InvalidRequest:
+      description: Invalid media type, URL, encoding or request shape.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InvalidRequestError"
+    RequestTooLarge:
+      description: Encoded connect request body exceeds 8192 bytes.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/RequestTooLargeError"
+    SiteVerificationFailed:
+      description: The canonical site did not return the expected bounded challenge proof.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/SiteVerificationFailedError"
+    ConnectionConflict:
+      description: The site identity or observed credential version was concurrently claimed or cannot be reconnected.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ConnectionConflictError"
+    InternalError:
+      description: Unexpected internal failure without sensitive details.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/InternalErrorResponse"
+    Unauthorized:
+      description: Generic failure for missing, malformed, invalid or incompatible installation credentials.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnauthorizedError"

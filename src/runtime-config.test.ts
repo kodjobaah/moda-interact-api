@@ -39,3 +39,36 @@ test("runtime config rejects invalid ports without exposing database credentials
     },
   );
 });
+
+test("Woo connection mode defaults to public and accepts explicit local development", () => {
+  const base = { DATABASE_URL: "postgresql://user:secret@localhost:5432/moda" };
+  assert.equal(loadRuntimeConfig(base).woocommerceConnectionMode, "public");
+  assert.equal(
+    loadRuntimeConfig({
+      ...base,
+      MODA_WOOCOMMERCE_CONNECTION_MODE: "local-development",
+    }).woocommerceConnectionMode,
+    "local-development",
+  );
+});
+
+test("Woo connection mode rejects unknown values and local development in production", () => {
+  const databaseUrl = "postgresql://user:secret@localhost:5432/moda";
+  assert.throws(
+    () =>
+      loadRuntimeConfig({
+        DATABASE_URL: databaseUrl,
+        MODA_WOOCOMMERCE_CONNECTION_MODE: "development",
+      }),
+    /must be public or local-development/,
+  );
+  assert.throws(
+    () =>
+      loadRuntimeConfig({
+        DATABASE_URL: databaseUrl,
+        NODE_ENV: "production",
+        MODA_WOOCOMMERCE_CONNECTION_MODE: "local-development",
+      }),
+    /forbidden in production/,
+  );
+});

@@ -14,6 +14,7 @@
     "typecheck": "npm run prisma:generate && tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --max-warnings=0",
     "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs",
     "prisma:generate": "prisma generate --schema database/prisma/schema.prisma"
   },
   "dependencies": {
@@ -28,6 +29,7 @@
     "prisma": "6.19.3",
     "tsx": "^4.20.6",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.48.0"
+    "typescript-eslint": "^8.48.0",
+    "yaml": "^2.9.1"
   }
 }
