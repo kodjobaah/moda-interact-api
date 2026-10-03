@@ -36,7 +36,15 @@ test("OpenAPI v1 matches the installation route paths, request limits and respon
   ]);
   const probe = document.paths[AUTH_PROBE_ROUTE_PATH]?.get;
   assert.ok(probe);
-  assert.deepEqual(Object.keys(probe.responses).sort(), ["200", "401"]);
+  assert.deepEqual(Object.keys(probe.responses).sort(), ["200", "401", "500"]);
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(connect.responses).filter(([status]) => Number(status) >= 400).map(([status, response]) => [status, responseCode(document, response)])),
+    { "400": "invalid_request", "409": "connection_conflict", "413": "request_too_large", "422": "site_verification_failed", "500": "internal_error" },
+  );
+  assert.deepEqual(
+    Object.fromEntries(Object.entries(probe.responses).filter(([status]) => Number(status) >= 400).map(([status, response]) => [status, responseCode(document, response)])),
+    { "401": "unauthorized", "500": "internal_error" },
+  );
   const principal = document.components.schemas.InstallationPrincipal;
   assert.ok(principal);
   assert.deepEqual(Object.keys(principal.properties ?? {}).sort(), [
@@ -67,7 +75,11 @@ interface OpenApiDocument {
     get?: { responses: Record<string, unknown>; security?: Array<Record<string, string[]>> };
   }>;
   components: {
+    responses: Record<string, {
+      content?: { "application/json"?: { schema?: { $ref?: string } } };
+    }>;
     schemas: Record<string, {
+      allOf?: Array<{ $ref?: string; properties?: Record<string, { const?: string }> }>;
       type?: string;
       additionalProperties?: boolean;
       required?: string[];
@@ -75,4 +87,13 @@ interface OpenApiDocument {
       "x-max-body-bytes"?: number;
     }>;
   };
+}
+
+function responseCode(document: OpenApiDocument, response: unknown): string | undefined {
+  if (!response || typeof response !== "object" || !("$ref" in response)) return undefined;
+  const responseName = String(response.$ref).split("/").at(-1) ?? "";
+  const schemaRef = document.components.responses[responseName]?.content?.["application/json"]?.schema?.$ref;
+  const schemaName = schemaRef?.split("/").at(-1) ?? "";
+  const schema = document.components.schemas[schemaName];
+  return schema?.allOf?.flatMap((part) => Object.values(part.properties ?? {})).find((property) => property.const !== undefined)?.const;
 }

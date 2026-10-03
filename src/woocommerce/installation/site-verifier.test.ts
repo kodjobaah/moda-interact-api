@@ -240,6 +240,27 @@ test("local HTTP cannot use a globally resolved target in local-development mode
   );
 });
 
+test("local-development public targets retain HTTPS default-port policy", async () => {
+  let nonceGenerated = false;
+  const verifier = new WooSiteVerifier({
+    mode: "local-development",
+    resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+    nonceFactory: () => {
+      nonceGenerated = true;
+      return nonce;
+    },
+  });
+  await assert.rejects(
+    verifier.verify(
+      canonicalizeWooSiteUrl("https://merchant.example:8443", "local-development"),
+      attemptId,
+      secret,
+    ),
+    (error: unknown) => error instanceof SiteVerificationError && error.code === "site_address_rejected",
+  );
+  assert.equal(nonceGenerated, false);
+});
+
 test("local hostnames resolving publicly are rejected even when HTTPS is used", async () => {
   for (const hostname of ["localhost", "wordpress.local"]) {
     const verifier = new WooSiteVerifier({

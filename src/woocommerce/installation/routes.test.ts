@@ -13,6 +13,7 @@ const installationCredential = Buffer.alloc(32, 7).toString("base64url");
 
 async function withApi(
   callback: (baseUrl: string, logLines: string[], calls: string[]) => Promise<void>,
+  probeFailure?: Error,
 ): Promise<void> {
   const logLines: string[] = [];
   const calls: string[] = [];
@@ -37,6 +38,7 @@ async function withApi(
   const authenticator = {
     authenticate: async (request: IncomingMessage) => {
       calls.push("authenticate");
+      if (probeFailure) throw probeFailure;
       if (!request.headers["x-moda-installation-id"] || !request.headers.authorization) {
         throw new WooUnauthenticatedError();
       }
@@ -159,4 +161,18 @@ test("authentication probe returns only the principal and generic unauthorized b
     assert.deepEqual(await invalid.json(), { error: "unauthorized" });
     assert.deepEqual(calls, ["authenticate", "authenticate"]);
   });
+});
+
+test("authentication probe maps unexpected authenticator failures to internal error", async () => {
+  await withApi(async (baseUrl, logs) => {
+    const response = await fetch(`${baseUrl}/v1/woocommerce/installation`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "internal_error" });
+    assert.equal(logs.join("\n").includes("database details"), false);
+  }, new Error("database details must not be logged"));
 });

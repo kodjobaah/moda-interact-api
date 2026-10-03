@@ -74,10 +74,12 @@ export function createWooInstallationRoutes({
           const principal = await authenticator.authenticate(request);
           sendJson(response, 200, principal);
         } catch (error) {
-          if (!(error instanceof WooUnauthenticatedError)) {
+          if (error instanceof WooUnauthenticatedError) {
+            sendError(response, 401, "unauthorized");
+          } else {
             logger.error("woocommerce.installation.authentication.failed", { reason: "internal" });
+            sendError(response, 500, "internal_error");
           }
-          sendError(response, 401, "unauthorized");
         }
         return true;
       }

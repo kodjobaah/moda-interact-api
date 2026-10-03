@@ -184,20 +184,54 @@ test("reconnect rotates only the credential with observed-version CAS and restor
   assert.equal(result.connection, "RECONNECTED");
 });
 
-test("suspended Shops and stale reconnect versions return bounded conflicts", async () => {
-  const suspended = makeDatabase({ observed: existingInstallation("SUSPENDED") });
+test("suspended Shop conflicts only after site proof; failed proof issues no credential or writes", async () => {
+  const suspended = makeDatabase({
+    observed: existingInstallation("SUSPENDED"),
+    shop: {
+      id: "shop-1",
+      status: "SUSPENDED",
+      platform: "WOOCOMMERCE",
+      shopifyShopId: null,
+    },
+  });
   let verified = false;
+  let issued = false;
   const suspendedService = new WooInstallationConnectionService(
     suspended.database as never,
     { verify: async () => { verified = true; } } as never,
     () => issuedAt,
-    () => credential,
+    () => { issued = true; return credential; },
   );
   await assert.rejects(
     suspendedService.connect({ site, attemptId, bootstrapSecret }),
     WooConnectionConflictError,
   );
-  assert.equal(verified, false);
+  assert.equal(verified, true);
+  assert.equal(issued, true);
+  assert.equal(suspended.writes.length, 0);
+
+  const rejectedProof = makeDatabase({
+    observed: existingInstallation("SUSPENDED"),
+    shop: {
+      id: "shop-1",
+      status: "SUSPENDED",
+      platform: "WOOCOMMERCE",
+      shopifyShopId: null,
+    },
+  });
+  let rejectedProofCredentialIssued = false;
+  const rejectedProofService = new WooInstallationConnectionService(
+    rejectedProof.database as never,
+    { verify: async () => { throw new SiteVerificationError("site_proof_rejected"); } } as never,
+    () => issuedAt,
+    () => { rejectedProofCredentialIssued = true; return credential; },
+  );
+  await assert.rejects(
+    rejectedProofService.connect({ site, attemptId, bootstrapSecret }),
+    WooSiteControlRejectedError,
+  );
+  assert.equal(rejectedProof.writes.length, 0);
+  assert.equal(rejectedProofCredentialIssued, false);
 
   const stale = makeDatabase({ observed: existingInstallation(), updatedCount: 0 });
   const staleService = new WooInstallationConnectionService(

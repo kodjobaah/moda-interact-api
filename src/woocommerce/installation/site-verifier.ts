@@ -126,6 +126,7 @@ export class WooSiteVerifier {
     } else if (allPublic) {
       if (
         site.protocol !== "https:" ||
+        site.port !== 443 ||
         isIP(site.hostname) !== 0 ||
         isExplicitLocalIdentity(site.hostname)
       ) {

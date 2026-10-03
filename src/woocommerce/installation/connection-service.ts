@@ -53,14 +53,6 @@ export class WooInstallationConnectionService {
       },
     });
 
-    if (observed && (
-      observed.shop.status === "SUSPENDED" ||
-      observed.shop.platform !== "WOOCOMMERCE" ||
-      observed.shop.shopifyShopId !== null
-    )) {
-      throw new WooConnectionConflictError();
-    }
-
     try {
       await this.verifier.verify(input.site, input.attemptId, input.bootstrapSecret);
     } catch (error) {

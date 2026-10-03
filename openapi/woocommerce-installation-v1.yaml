@@ -87,6 +87,8 @@ paths:
                 $ref: "#/components/schemas/InstallationPrincipal"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "500":
+          $ref: "#/components/responses/InternalError"
 components:
   securitySchemes:
     WooInstallationId:
@@ -160,7 +162,48 @@ components:
       properties:
         error:
           type: string
-          enum: [invalid_request, request_too_large, site_verification_failed, connection_conflict, internal_error, unauthorized]
+    InvalidRequestError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: invalid_request
+    RequestTooLargeError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: request_too_large
+    SiteVerificationFailedError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: site_verification_failed
+    ConnectionConflictError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: connection_conflict
+    InternalErrorResponse:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: internal_error
+    UnauthorizedError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: unauthorized
     SiteChallenge:
       type: object
       additionalProperties: false
@@ -182,34 +225,34 @@ components:
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: "#/components/schemas/InvalidRequestError"
     RequestTooLarge:
       description: Encoded connect request body exceeds 8192 bytes.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: "#/components/schemas/RequestTooLargeError"
     SiteVerificationFailed:
       description: The canonical site did not return the expected bounded challenge proof.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: "#/components/schemas/SiteVerificationFailedError"
     ConnectionConflict:
       description: The site identity or observed credential version was concurrently claimed or cannot be reconnected.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: "#/components/schemas/ConnectionConflictError"
     InternalError:
       description: Unexpected internal failure without sensitive details.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: "#/components/schemas/InternalErrorResponse"
     Unauthorized:
       description: Generic failure for missing, malformed, invalid or incompatible installation credentials.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/Error"
+            $ref: "#/components/schemas/UnauthorizedError"
