@@ -2,6 +2,7 @@ import { createServer, type Server, type ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import type { ReadinessDatabase } from "./database.js";
 import type { RuntimeConfig } from "./runtime-config.js";
+import type { WooInstallationRouteHandler } from "./woocommerce/installation/routes.js";
 
 export interface ApiRuntime {
   server: Server;
@@ -17,6 +18,7 @@ interface ApiServerOptions {
   database: ReadinessDatabase;
   logger: StructuredLogger;
   readinessTimeoutMs: number;
+  wooRoutes?: WooInstallationRouteHandler;
 }
 
 function sendJson(
@@ -48,6 +50,7 @@ function createHttpServer({
   database,
   logger,
   readinessTimeoutMs,
+  wooRoutes,
 }: ApiServerOptions): Server {
   return createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
@@ -74,6 +77,15 @@ function createHttpServer({
       return;
     }
 
+    if (wooRoutes) {
+      void wooRoutes.handle(request, response).then((handled) => {
+        if (!handled) sendJson(response, 404, { error: "not_found" });
+      }).catch(() => {
+        if (!response.destroyed) sendJson(response, 500, { error: "internal_error" });
+      });
+      return;
+    }
+
     sendJson(response, 404, { error: "not_found" });
   });
 }
@@ -82,11 +94,13 @@ export function createApiRuntime(
   config: RuntimeConfig,
   database: ReadinessDatabase,
   logger: StructuredLogger,
+  wooRoutes?: WooInstallationRouteHandler,
 ): ApiRuntime {
   const server = createHttpServer({
     database,
     logger,
     readinessTimeoutMs: config.readinessTimeoutMs,
+    ...(wooRoutes ? { wooRoutes } : {}),
   });
   let startPromise: Promise<void> | undefined;
   let shutdownPromise: Promise<void> | undefined;

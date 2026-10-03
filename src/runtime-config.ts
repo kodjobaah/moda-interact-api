@@ -4,6 +4,7 @@ export interface RuntimeConfig {
   port: number;
   environment: string;
   readinessTimeoutMs: number;
+  woocommerceConnectionMode: "public" | "local-development";
 }
 
 export type RuntimeEnvironment = Readonly<Record<string, string | undefined>>;
@@ -40,11 +41,25 @@ export function loadRuntimeConfig(
   }
 
   const environmentName = environment.NODE_ENV?.trim() || "development";
+  const connectionMode =
+    environment.MODA_WOOCOMMERCE_CONNECTION_MODE?.trim() || "public";
+  if (connectionMode !== "public" && connectionMode !== "local-development") {
+    throw new Error(
+      "MODA_WOOCOMMERCE_CONNECTION_MODE must be public or local-development",
+    );
+  }
+  if (connectionMode === "local-development" && environmentName === "production") {
+    throw new Error(
+      "MODA_WOOCOMMERCE_CONNECTION_MODE local-development is forbidden in production",
+    );
+  }
+
   return {
     databaseUrl,
     host: "0.0.0.0",
     port,
     environment: environmentName,
     readinessTimeoutMs: READINESS_TIMEOUT_MS,
+    woocommerceConnectionMode: connectionMode,
   };
 }
