@@ -27,7 +27,7 @@ test("OpenAPI v1 matches the installation route paths, request limits and respon
   assert.deepEqual(Object.keys(requestSchema.properties ?? {}).sort(), [...CONNECT_REQUEST_FIELDS].sort());
   assert.equal(requestSchema.properties?.siteUrl?.maxLength, MAX_SITE_URL_BYTES);
   assert.equal(requestSchema["x-max-body-bytes"], MAX_CONNECT_BODY_BYTES);
-  assert.deepEqual(Object.keys(connect.responses).sort(), ["200", "201", "400", "409", "413", "422", "500"]);
+  assert.deepEqual(Object.keys(connect.responses).sort(), ["200", "201", "400", "409", "413", "422", "500", "503"]);
 
   const connectResponse = document.components.schemas.ConnectResponse;
   assert.ok(connectResponse);
@@ -38,12 +38,19 @@ test("OpenAPI v1 matches the installation route paths, request limits and respon
   assert.ok(probe);
   assert.deepEqual(Object.keys(probe.responses).sort(), ["200", "401", "500"]);
   assert.deepEqual(
-    Object.fromEntries(Object.entries(connect.responses).filter(([status]) => Number(status) >= 400).map(([status, response]) => [status, responseCode(document, response)])),
-    { "400": "invalid_request", "409": "connection_conflict", "413": "request_too_large", "422": "site_verification_failed", "500": "internal_error" },
+    Object.fromEntries(Object.entries(connect.responses).filter(([status]) => Number(status) >= 400).map(([status, response]) => [status, responseCodes(document, response)])),
+    {
+      "400": ["invalid_request"],
+      "409": ["connection_conflict", "INITIAL_FREE_ACTIVATION_CONFLICT"],
+      "413": ["request_too_large"],
+      "422": ["site_verification_failed"],
+      "500": ["internal_error"],
+      "503": ["FREE_PLAN_CONFIGURATION_UNAVAILABLE"],
+    },
   );
   assert.deepEqual(
-    Object.fromEntries(Object.entries(probe.responses).filter(([status]) => Number(status) >= 400).map(([status, response]) => [status, responseCode(document, response)])),
-    { "401": "unauthorized", "500": "internal_error" },
+    Object.fromEntries(Object.entries(probe.responses).filter(([status]) => Number(status) >= 400).map(([status, response]) => [status, responseCodes(document, response)])),
+    { "401": ["unauthorized"], "500": ["internal_error"] },
   );
   const principal = document.components.schemas.InstallationPrincipal;
   assert.ok(principal);
@@ -76,7 +83,7 @@ interface OpenApiDocument {
   }>;
   components: {
     responses: Record<string, {
-      content?: { "application/json"?: { schema?: { $ref?: string } } };
+      content?: { "application/json"?: { schema?: { $ref?: string; oneOf?: Array<{ $ref?: string }> } } };
     }>;
     schemas: Record<string, {
       allOf?: Array<{ $ref?: string; properties?: Record<string, { const?: string }> }>;
@@ -89,11 +96,18 @@ interface OpenApiDocument {
   };
 }
 
-function responseCode(document: OpenApiDocument, response: unknown): string | undefined {
-  if (!response || typeof response !== "object" || !("$ref" in response)) return undefined;
+function responseCodes(document: OpenApiDocument, response: unknown): string[] {
+  if (!response || typeof response !== "object" || !("$ref" in response)) return [];
   const responseName = String(response.$ref).split("/").at(-1) ?? "";
-  const schemaRef = document.components.responses[responseName]?.content?.["application/json"]?.schema?.$ref;
-  const schemaName = schemaRef?.split("/").at(-1) ?? "";
-  const schema = document.components.schemas[schemaName];
-  return schema?.allOf?.flatMap((part) => Object.values(part.properties ?? {})).find((property) => property.const !== undefined)?.const;
+  const responseSchema = document.components.responses[responseName]?.content?.["application/json"]?.schema;
+  const schemaRefs = responseSchema?.$ref
+    ? [responseSchema.$ref]
+    : responseSchema?.oneOf?.flatMap((entry) => entry.$ref ? [entry.$ref] : []) ?? [];
+  return schemaRefs.flatMap((schemaRef) => {
+    const schemaName = schemaRef.split("/").at(-1) ?? "";
+    const schema = document.components.schemas[schemaName];
+    const code = schema?.allOf?.flatMap((part) => Object.values(part.properties ?? {}))
+      .find((property) => property.const !== undefined)?.const;
+    return code ? [code] : [];
+  });
 }

@@ -8,6 +8,10 @@ import { createApiRuntime } from "../../server.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { digestSecret } from "./credential.js";
 import { createWooInstallationRoutes } from "./routes.js";
+import {
+  FreePlanConfigurationUnavailableError,
+  InitialFreeActivationConflictError,
+} from "../billing/initial-free-activation.service.js";
 
 const attemptId = "550e8400-e29b-41d4-a716-446655440000";
 const bootstrapSecret = Buffer.alloc(32, 2).toString("base64url");
@@ -18,6 +22,7 @@ async function withApi(
   probeFailure?: Error,
   bootstrapFailure?: Error,
   authenticatorOverride?: WooInstallationAuthenticator,
+  connectionFailure?: Error,
 ): Promise<void> {
   const logLines: string[] = [];
   const calls: string[] = [];
@@ -29,6 +34,7 @@ async function withApi(
   const connectionService = {
     connect: async (input: { site: { canonicalSiteUrl: string } }) => {
       calls.push(`connect:${input.site.canonicalSiteUrl}`);
+      if (connectionFailure) throw connectionFailure;
       return {
         installationId: "install_123",
         shopId: "shop_456",
@@ -162,6 +168,28 @@ test("connect returns the bounded response, canonical URL and no permissive CORS
     assert.equal(logsText.includes(installationCredential), false);
     assert.equal(logsText.includes("Example.COM/store"), false);
   });
+});
+
+test("connect returns stable bounded errors for Free configuration and activation conflicts", async () => {
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/woocommerce/installations/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: validConnectBody(),
+    });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "FREE_PLAN_CONFIGURATION_UNAVAILABLE" });
+  }, undefined, undefined, undefined, new FreePlanConfigurationUnavailableError());
+
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/woocommerce/installations/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: validConnectBody(),
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "INITIAL_FREE_ACTIVATION_CONFLICT" });
+  }, undefined, undefined, undefined, new InitialFreeActivationConflictError());
 });
 
 test("authentication probe returns only the principal and generic unauthorized body", async () => {

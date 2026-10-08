@@ -2,6 +2,11 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { CanonicalWooSite } from "./site-url.js";
 import { digestSecret, encodeSecret, randomSecret } from "./credential.js";
 import { SiteVerificationError, WooSiteVerifier } from "./site-verifier.js";
+import {
+  FreePlanConfigurationUnavailableError,
+  InitialWooFreeActivationService,
+  RetryFreeActivationTransactionError,
+} from "../billing/initial-free-activation.service.js";
 
 export type WooConnectionDatabase = Pick<PrismaClient, "$transaction" | "shop" | "wooCommerceInstallation">;
 
@@ -40,6 +45,7 @@ export class WooInstallationConnectionService {
     private readonly verifier: WooSiteVerifier,
     private readonly now: () => Date = () => new Date(),
     private readonly issueCredential: () => Buffer = randomSecret,
+    private readonly freeActivation: Pick<InitialWooFreeActivationService, "activate"> = new InitialWooFreeActivationService(),
   ) {}
 
   async connect(input: WooConnectInput): Promise<WooConnectResult> {
@@ -68,7 +74,7 @@ export class WooInstallationConnectionService {
 
     try {
       if (!observed) {
-        const created = await this.database.$transaction(async (transaction) => {
+        const created = await this.runTransaction(async (transaction) => {
           const shop = await transaction.shop.create({
             data: {
               domain: input.site.canonicalSiteUrl,
@@ -78,6 +84,7 @@ export class WooInstallationConnectionService {
             },
             select: { id: true },
           });
+          await this.freeActivation.activate(transaction, shop.id);
           return transaction.wooCommerceInstallation.create({
             data: {
               shopId: shop.id,
@@ -90,7 +97,7 @@ export class WooInstallationConnectionService {
             },
             select: { id: true, shopId: true, credentialVersion: true },
           });
-        }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+        });
 
         return {
           installationId: created.id,
@@ -102,7 +109,7 @@ export class WooInstallationConnectionService {
         };
       }
 
-      const reconnected = await this.database.$transaction(async (transaction) => {
+      const reconnected = await this.runTransaction(async (transaction) => {
         const shop = await transaction.shop.findUnique({
           where: { id: observed.shop.id },
           select: { id: true, status: true, platform: true, shopifyShopId: true },
@@ -110,6 +117,8 @@ export class WooInstallationConnectionService {
         if (!shop || shop.status === "SUSPENDED" || shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null) {
           throw new WooConnectionConflictError();
         }
+
+        await this.freeActivation.activate(transaction, shop.id);
 
         const updated = await transaction.wooCommerceInstallation.updateMany({
           where: {
@@ -139,7 +148,7 @@ export class WooInstallationConnectionService {
           where: { id: observed.id },
           select: { id: true, shopId: true, credentialVersion: true },
         });
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+      });
 
       return {
         installationId: reconnected.id,
@@ -159,6 +168,26 @@ export class WooInstallationConnectionService {
       }
       throw error;
     }
+  }
+
+  private async runTransaction<T>(
+    callback: (transaction: Prisma.TransactionClient) => Promise<T>,
+  ): Promise<T> {
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        return await this.database.$transaction(callback, {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+        });
+      } catch (error) {
+        const retryable = error instanceof RetryFreeActivationTransactionError || isPrismaError(error, "P2034");
+        if (retryable && attempt === 0) continue;
+        if (error instanceof RetryFreeActivationTransactionError) {
+          throw new FreePlanConfigurationUnavailableError();
+        }
+        throw error;
+      }
+    }
+    throw new FreePlanConfigurationUnavailableError();
   }
 }
 

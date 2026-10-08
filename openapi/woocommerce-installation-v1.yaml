@@ -65,6 +65,8 @@ paths:
           $ref: "#/components/responses/InvalidRequest"
         "409":
           $ref: "#/components/responses/ConnectionConflict"
+        "503":
+          $ref: "#/components/responses/FreePlanConfigurationUnavailable"
         "413":
           $ref: "#/components/responses/RequestTooLarge"
         "422":
@@ -190,6 +192,20 @@ components:
           properties:
             error:
               const: connection_conflict
+    InitialFreeActivationConflictError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: INITIAL_FREE_ACTIVATION_CONFLICT
+    FreePlanConfigurationUnavailableError:
+      allOf:
+        - $ref: "#/components/schemas/Error"
+        - type: object
+          properties:
+            error:
+              const: FREE_PLAN_CONFIGURATION_UNAVAILABLE
     InternalErrorResponse:
       allOf:
         - $ref: "#/components/schemas/Error"
@@ -239,11 +255,19 @@ components:
           schema:
             $ref: "#/components/schemas/SiteVerificationFailedError"
     ConnectionConflict:
-      description: The site identity or observed credential version was concurrently claimed or cannot be reconnected.
+      description: The site identity or observed credential version was concurrently claimed, cannot be reconnected, or contains conflicting initial billing state.
       content:
         application/json:
           schema:
-            $ref: "#/components/schemas/ConnectionConflictError"
+            oneOf:
+              - $ref: "#/components/schemas/ConnectionConflictError"
+              - $ref: "#/components/schemas/InitialFreeActivationConflictError"
+    FreePlanConfigurationUnavailable:
+      description: The local Free plan or required billing policy is unavailable or invalid; no connection or billing state is committed.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/FreePlanConfigurationUnavailableError"
     InternalError:
       description: Unexpected internal failure without sensitive details.
       content:

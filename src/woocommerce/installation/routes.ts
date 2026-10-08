@@ -3,6 +3,10 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
+import {
+  FreePlanConfigurationUnavailableError,
+  InitialFreeActivationConflictError,
+} from "../billing/initial-free-activation.service.js";
 import { decodeSecret } from "./credential.js";
 import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode } from "./site-url.js";
 
@@ -63,6 +67,10 @@ export function createWooInstallationRoutes({
             sendError(response, 400, "invalid_request");
           } else if (error instanceof WooSiteControlRejectedError) {
             sendError(response, 422, "site_verification_failed");
+          } else if (error instanceof FreePlanConfigurationUnavailableError) {
+            sendError(response, 503, "FREE_PLAN_CONFIGURATION_UNAVAILABLE");
+          } else if (error instanceof InitialFreeActivationConflictError) {
+            sendError(response, 409, "INITIAL_FREE_ACTIVATION_CONFLICT");
           } else if (error instanceof WooConnectionConflictError) {
             sendError(response, 409, "connection_conflict");
           } else {
