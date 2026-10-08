@@ -227,7 +227,7 @@ test("connect returns the bounded response, canonical URL and no permissive CORS
 });
 
 test("connect returns stable bounded errors for Free configuration and activation conflicts", async () => {
-  await withApi(async (baseUrl) => {
+  await withApi(async (baseUrl, logs) => {
     const response = await fetch(`${baseUrl}/v1/woocommerce/installations/connect`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -235,7 +235,21 @@ test("connect returns stable bounded errors for Free configuration and activatio
     });
     assert.equal(response.status, 503);
     assert.deepEqual(await response.json(), { error: "FREE_PLAN_CONFIGURATION_UNAVAILABLE" });
-  }, undefined, undefined, undefined, new FreePlanConfigurationUnavailableError());
+    const matchingLogs = logs.map((line) => JSON.parse(line) as {
+      event: string;
+      level: string;
+      data?: Record<string, unknown>;
+    }).filter((record) => record.event === "woocommerce.installation.connect.failed");
+    assert.equal(matchingLogs.length, 1);
+    assert.equal(matchingLogs[0]?.level, "error");
+    assert.equal(matchingLogs[0]?.data?.reason, "free_plan_configuration_unavailable");
+    assert.equal(matchingLogs[0]?.data?.errorCode, "FREE_PLAN_CONFIGURATION_UNAVAILABLE");
+    assert.equal(matchingLogs[0]?.data?.configurationReason, "free_catalogue_missing");
+    assert.ok(typeof matchingLogs[0]?.data?.durationMs === "number");
+    assert.equal(logs.join("\n").includes(bootstrapSecret), false);
+    assert.equal(logs.join("\n").includes(installationCredential), false);
+    assert.equal(logs.join("\n").includes("Example.COM/store"), false);
+  }, undefined, undefined, undefined, new FreePlanConfigurationUnavailableError("free_catalogue_missing"));
 
   await withApi(async (baseUrl) => {
     const response = await fetch(`${baseUrl}/v1/woocommerce/installations/connect`, {

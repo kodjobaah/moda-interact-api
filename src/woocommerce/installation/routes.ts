@@ -77,6 +77,12 @@ export function createWooInstallationRoutes({
           } else if (error instanceof WooSiteControlRejectedError) {
             sendError(response, 422, "site_verification_failed");
           } else if (error instanceof FreePlanConfigurationUnavailableError) {
+            logger.error("woocommerce.installation.connect.failed", {
+              reason: "free_plan_configuration_unavailable",
+              errorCode: "FREE_PLAN_CONFIGURATION_UNAVAILABLE",
+              configurationReason: error.reason,
+              durationMs: Math.max(0, now() - startedAt),
+            });
             sendError(response, 503, "FREE_PLAN_CONFIGURATION_UNAVAILABLE");
           } else if (error instanceof InitialFreeActivationConflictError) {
             sendError(response, 409, "INITIAL_FREE_ACTIVATION_CONFLICT");

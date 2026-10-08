@@ -182,12 +182,12 @@ export class WooInstallationConnectionService {
         const retryable = error instanceof RetryFreeActivationTransactionError || isPrismaError(error, "P2034");
         if (retryable && attempt === 0) continue;
         if (error instanceof RetryFreeActivationTransactionError) {
-          throw new FreePlanConfigurationUnavailableError();
+          throw new FreePlanConfigurationUnavailableError("activation_retry_exhausted");
         }
         throw error;
       }
     }
-    throw new FreePlanConfigurationUnavailableError();
+    throw new FreePlanConfigurationUnavailableError("activation_retry_exhausted");
   }
 }
 

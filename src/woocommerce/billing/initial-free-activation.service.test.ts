@@ -223,7 +223,7 @@ test("invalid Free catalogue cardinality fails closed", async () => {
   const { tx } = makeTransaction({ merchantPricingPlan: { findMany: async () => [] } });
   await assert.rejects(
     new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    FreePlanConfigurationUnavailableError,
+    { name: "FreePlanConfigurationUnavailableError", reason: "free_catalogue_missing" },
   );
 });
 
@@ -233,7 +233,7 @@ test("multiple Free catalogue records fail closed instead of selecting arbitrari
   });
   await assert.rejects(
     new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    FreePlanConfigurationUnavailableError,
+    { name: "FreePlanConfigurationUnavailableError", reason: "multiple_free_catalogue_plans" },
   );
 });
 
@@ -249,7 +249,7 @@ test("inactive, non-lifetime, recurring, metered, or unsafe-credit Free catalogu
     const { tx } = makeTransaction({ merchantPricingPlan: { findMany: async () => [invalidPlan] } });
     await assert.rejects(
       new InitialWooFreeActivationService().activate(tx, "shop-1"),
-      FreePlanConfigurationUnavailableError,
+      { name: "FreePlanConfigurationUnavailableError", reason: "free_catalogue_invalid" },
     );
   }
 });
@@ -263,7 +263,7 @@ test("Free plan materialisation rejects missing required or unresolved feature m
     const { tx } = makeTransaction({ merchantPricingPlan: { findMany: async () => [{ ...plan, features }] } });
     await assert.rejects(
       new InitialWooFreeActivationService().activate(tx, "shop-1"),
-      FreePlanConfigurationUnavailableError,
+      { name: "FreePlanConfigurationUnavailableError", reason: "free_feature_configuration_invalid" },
     );
   }
 });
@@ -347,11 +347,24 @@ test("reuses an active operational Free plan and sets materializedAt only when a
   assert.equal(subscription.create.planId, "existing-free");
 });
 
+test("rejects an inactive operational Free plan with a bounded diagnostic reason", async () => {
+  const { tx, writes } = makeTransaction({
+    billingPlan: {
+      findUnique: async () => ({ id: "existing-free", kind: BillingPlanKind.FREE, active: false }),
+    },
+  });
+  await assert.rejects(
+    new InitialWooFreeActivationService().activate(tx, "shop-1"),
+    { name: "FreePlanConfigurationUnavailableError", reason: "operational_free_plan_invalid" },
+  );
+  assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
+});
+
 test("missing first-grant policy fails before subscription or onboarding writes", async () => {
   const { tx, writes } = makeTransaction({ platformBillingPolicy: { findUnique: async () => null } });
   await assert.rejects(
     new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    FreePlanConfigurationUnavailableError,
+    { name: "FreePlanConfigurationUnavailableError", reason: "free_recovery_policy_invalid" },
   );
   assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
   assert.equal(writes.some((write) => write.model === "shop.update"), false);
@@ -364,7 +377,7 @@ test("invalid first-grant policy values fail before subscription or onboarding w
     });
     await assert.rejects(
       new InitialWooFreeActivationService().activate(tx, "shop-1"),
-      FreePlanConfigurationUnavailableError,
+      { name: "FreePlanConfigurationUnavailableError", reason: "free_recovery_policy_invalid" },
     );
     assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
     assert.equal(writes.some((write) => write.model === "shop.update"), false);

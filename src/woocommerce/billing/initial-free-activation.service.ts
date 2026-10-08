@@ -10,8 +10,19 @@ import {
 } from "@prisma/client";
 import { MerchantKnowledgeFeatureConfigurationSchema } from "@modainteract/moda-interact-shared/merchant-knowledge";
 
+export type FreePlanConfigurationFailureReason =
+  | "shop_missing"
+  | "free_catalogue_missing"
+  | "multiple_free_catalogue_plans"
+  | "free_catalogue_invalid"
+  | "operational_free_plan_invalid"
+  | "free_feature_configuration_invalid"
+  | "free_recovery_policy_invalid"
+  | "activation_retry_exhausted"
+  | "unspecified";
+
 export class FreePlanConfigurationUnavailableError extends Error {
-  constructor() {
+  constructor(readonly reason: FreePlanConfigurationFailureReason = "unspecified") {
     super("free_plan_configuration_unavailable");
     this.name = "FreePlanConfigurationUnavailableError";
   }
@@ -51,7 +62,7 @@ export class InitialWooFreeActivationService {
       where: { id: shopId },
       select: { id: true, onboardingCompleted: true },
     });
-    if (!shop) throw new FreePlanConfigurationUnavailableError();
+    if (!shop) throw new FreePlanConfigurationUnavailableError("shop_missing");
     if (shop.onboardingCompleted) return "ALREADY_ONBOARDED";
 
     await transaction.$queryRaw(Prisma.sql`
@@ -71,10 +82,14 @@ export class InitialWooFreeActivationService {
       where: { planKind: MerchantPricingPlanKind.FREE },
       include: { features: { include: { feature: true } } },
     });
-    if (cataloguePlans.length !== 1) throw new FreePlanConfigurationUnavailableError();
+    if (cataloguePlans.length !== 1) {
+      throw new FreePlanConfigurationUnavailableError(
+        cataloguePlans.length === 0 ? "free_catalogue_missing" : "multiple_free_catalogue_plans",
+      );
+    }
     const catalogue = cataloguePlans[0] as FreeCataloguePlan | undefined;
     if (!catalogue || !isValidFreeCataloguePlan(catalogue)) {
-      throw new FreePlanConfigurationUnavailableError();
+      throw new FreePlanConfigurationUnavailableError("free_catalogue_invalid");
     }
 
     const plan = await this.resolveOperationalPlan(transaction, catalogue);
@@ -93,7 +108,7 @@ export class InitialWooFreeActivationService {
       !lifetimeCounter &&
       (!policy || !Number.isSafeInteger(policy.lifetimeFreeRecoveryAllowance) || policy.lifetimeFreeRecoveryAllowance < 0)
     ) {
-      throw new FreePlanConfigurationUnavailableError();
+      throw new FreePlanConfigurationUnavailableError("free_recovery_policy_invalid");
     }
 
     await transaction.subscription.upsert({
@@ -134,14 +149,14 @@ export class InitialWooFreeActivationService {
     });
     if (existing) {
       if (!existing.active || existing.kind !== BillingPlanKind.FREE) {
-        throw new FreePlanConfigurationUnavailableError();
+        throw new FreePlanConfigurationUnavailableError("operational_free_plan_invalid");
       }
       await markCatalogueMaterialized(transaction, catalogue);
       return existing;
     }
 
     if (!(await isValidMaterializationConfiguration(transaction, catalogue))) {
-      throw new FreePlanConfigurationUnavailableError();
+      throw new FreePlanConfigurationUnavailableError("free_feature_configuration_invalid");
     }
     try {
       const plan = await transaction.billingPlan.create({
