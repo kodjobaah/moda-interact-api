@@ -63,6 +63,10 @@ try {
     env: { ...environment, WOO_INSTALLATION_TEST_DATABASE_URL: databaseUrl },
     stdio: "inherit",
   });
+  run("node", ["--import", "tsx", "--test", "src/billing/presentation/billing-read.postgres.test.ts"], {
+    env: { ...environment, WOO_INSTALLATION_TEST_DATABASE_URL: databaseUrl },
+    stdio: "inherit",
+  });
 } finally {
   if (containerStarted) docker(["rm", "--force", containerName]);
 }
