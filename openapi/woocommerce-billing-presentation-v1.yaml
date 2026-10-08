@@ -1,0 +1,302 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Billing Presentation API
+  version: 1.0.0
+  description: Authenticated, provider-neutral billing presentation reads for WooCommerce installations.
+servers:
+  - url: https://api.moda.example
+paths:
+  /v1/billing:
+    get:
+      operationId: readWooBillingPresentation
+      summary: Read current billing presentation
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      responses:
+        '200':
+          description: Current provider-neutral Moda billing presentation.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingPresentation'
+        '400':
+          $ref: '#/components/responses/BillingError'
+        '401':
+          $ref: '#/components/responses/BillingError'
+        '409':
+          $ref: '#/components/responses/BillingError'
+        '500':
+          $ref: '#/components/responses/BillingError'
+  /v1/billing/plans:
+    get:
+      operationId: readWooBillingPlans
+      summary: Read active WooCommerce-selectable Moda plans
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - name: locale
+          in: query
+          required: false
+          description: Presentation-only BCP-47 locale. Maximum 64 UTF-8 bytes.
+          schema:
+            type: string
+            maxLength: 64
+            x-max-utf8-bytes: 64
+      responses:
+        '200':
+          description: Active WooCommerce-selectable plans in one complete locale.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BillingPlanCatalogue'
+        '400':
+          $ref: '#/components/responses/BillingError'
+        '401':
+          $ref: '#/components/responses/BillingError'
+        '409':
+          $ref: '#/components/responses/BillingError'
+        '500':
+          $ref: '#/components/responses/BillingError'
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: Moda installation credential
+  responses:
+    BillingError:
+      description: Bounded request, authentication, billing integrity, catalogue, or internal error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/BillingError'
+  schemas:
+    BillingError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - unauthorized
+            - billing_not_initialized
+            - billing_integrity_invalid
+            - billing_catalogue_mapping_invalid
+            - billing_operation_conflict
+            - billing_catalogue_invalid
+            - billing_catalogue_translation_unavailable
+            - billing_locale_invalid
+            - internal_error
+    BillingPresentation:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, experienceState, surfaces, currentPlan, pendingPlan, pendingCancellation, capacity, topUps]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        experienceState:
+          type: string
+          enum: [ACTIVE, NO_CONTRACT, FROZEN, BILLING_ATTENTION]
+        surfaces:
+          type: object
+          additionalProperties: false
+          required: [usageHistoryAllowed, purchaseHistoryAllowed, managePlansAllowed, cancelSubscriptionAllowed]
+          properties:
+            usageHistoryAllowed: { type: boolean }
+            purchaseHistoryAllowed: { type: boolean }
+            managePlansAllowed: { type: boolean }
+            cancelSubscriptionAllowed: { type: boolean }
+        currentPlan:
+          oneOf:
+            - $ref: '#/components/schemas/CurrentPlan'
+            - type: 'null'
+        pendingPlan:
+          oneOf:
+            - $ref: '#/components/schemas/PendingPlan'
+            - type: 'null'
+        pendingCancellation:
+          oneOf:
+            - $ref: '#/components/schemas/PendingCancellation'
+            - type: 'null'
+        capacity:
+          type: object
+          additionalProperties: false
+          required: [paidIncluded, freeLifetime, promotional, purchased]
+          properties:
+            paidIncluded:
+              oneOf:
+                - $ref: '#/components/schemas/PaidIncludedBalance'
+                - type: 'null'
+            freeLifetime:
+              $ref: '#/components/schemas/CapacityBalance'
+            promotional:
+              $ref: '#/components/schemas/CapacityBalance'
+            purchased:
+              $ref: '#/components/schemas/PurchasedBalance'
+        topUps:
+          type: object
+          additionalProperties: false
+          required: [configured, purchaseEligible, offers, latestPurchase, unresolvedPurchases]
+          properties:
+            configured: { type: boolean }
+            purchaseEligible: { type: boolean }
+            offers:
+              type: array
+              items: { $ref: '#/components/schemas/TopUpOffer' }
+            latestPurchase:
+              oneOf:
+                - $ref: '#/components/schemas/PurchasePresentation'
+                - type: 'null'
+            unresolvedPurchases:
+              type: array
+              maxItems: 100
+              items: { $ref: '#/components/schemas/PurchasePresentation' }
+    CurrentPlan:
+      type: object
+      additionalProperties: false
+      required: [merchantPricingPlanId, displayName, planKind, recurringAmountMinor, currency, billingPeriod, currentPeriodEnd, cancelAtPeriodEnd, cancellationEffectiveAt]
+      properties:
+        merchantPricingPlanId: { type: string, minLength: 1, maxLength: 128 }
+        displayName: { type: string, minLength: 1, maxLength: 255 }
+        planKind: { type: string, enum: [FREE, PAID_METERED] }
+        recurringAmountMinor: { type: integer, minimum: 0 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billingPeriod: { type: string, const: EVERY_30_DAYS }
+        currentPeriodEnd: { type: [string, 'null'], format: date-time }
+        cancelAtPeriodEnd: { type: boolean }
+        cancellationEffectiveAt: { type: [string, 'null'], format: date-time }
+    PendingPlan:
+      type: object
+      additionalProperties: false
+      required: [merchantPricingPlanId, displayName, recurringAmountMinor, currency, billingPeriod, state]
+      properties:
+        merchantPricingPlanId: { type: string, minLength: 1, maxLength: 128 }
+        displayName: { type: string, minLength: 1, maxLength: 255 }
+        recurringAmountMinor: { type: integer, minimum: 0 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        billingPeriod: { type: string, const: EVERY_30_DAYS }
+        state: { type: string, enum: [INITIATING, AWAITING_CONFIRMATION, OUTCOME_UNKNOWN] }
+    PendingCancellation:
+      type: object
+      additionalProperties: false
+      required: [state]
+      properties:
+        state: { type: string, enum: [INITIATING, AWAITING_CONFIRMATION, OUTCOME_UNKNOWN, CONFIRMED] }
+    CapacityBalance:
+      type: object
+      additionalProperties: false
+      required: [granted, committed, reserved, remaining]
+      properties:
+        granted: { type: integer, minimum: 0 }
+        committed: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        remaining: { type: integer, minimum: 0 }
+    PaidIncludedBalance:
+      type: object
+      additionalProperties: false
+      required: [granted, currentAllowance, committed, reserved, forfeited, remaining]
+      properties:
+        granted: { type: integer, minimum: 0 }
+        currentAllowance: { type: integer, minimum: 0 }
+        committed: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        forfeited: { type: integer, minimum: 0 }
+        remaining: { type: integer, minimum: 0 }
+    PurchasedBalance:
+      type: object
+      additionalProperties: false
+      required: [granted, committed, reserved, refunding, available]
+      properties:
+        granted: { type: integer, minimum: 0 }
+        committed: { type: integer, minimum: 0 }
+        reserved: { type: integer, minimum: 0 }
+        refunding: { type: integer, minimum: 0 }
+        available: { type: integer, minimum: 0 }
+    TopUpOffer:
+      type: object
+      additionalProperties: false
+      required: [merchantPricingUsageEventId, label, creditsGranted, amountMinor, currency, purchaseEligible, unavailableReason]
+      properties:
+        merchantPricingUsageEventId: { type: string, minLength: 1, maxLength: 128 }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        creditsGranted: { type: integer, minimum: 1 }
+        amountMinor: { type: integer, minimum: 1 }
+        currency: { type: string, const: USD }
+        purchaseEligible: { type: boolean }
+        unavailableReason:
+          oneOf:
+            - type: string
+              const: PENDING_PURCHASE
+            - type: 'null'
+    PurchasePresentation:
+      type: object
+      additionalProperties: false
+      required: [id, status, merchantPricingUsageEventId, label, creditsGranted, currentAmount, reservedAmount, createdAt, activatedAt, operationState]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [REQUESTED, ACTIVE, COMPLETED, WITHDRAWN, REFUNDED] }
+        merchantPricingUsageEventId: { type: string, minLength: 1, maxLength: 128 }
+        label: { type: string, minLength: 1, maxLength: 120 }
+        creditsGranted: { type: integer, minimum: 0 }
+        currentAmount: { type: integer, minimum: 0 }
+        reservedAmount: { type: integer, minimum: 0 }
+        createdAt: { type: string, format: date-time }
+        activatedAt: { type: [string, 'null'], format: date-time }
+        operationState: { type: string, enum: [INITIATING, AWAITING_CONFIRMATION, OUTCOME_UNKNOWN, CONFIRMED, FAILED] }
+    BillingPlanCatalogue:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, resolvedLocale, plans]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        resolvedLocale: { type: string, minLength: 1, maxLength: 64 }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/BillingPlan' }
+    BillingPlan:
+      type: object
+      additionalProperties: false
+      required: [merchantPricingPlanId, displayName, planKind, cataloguePosition, featured, localizedDescription, includedRecoveryCredits, allowancePeriod, billingPeriod, recurringAmountMinor, currency, highlights]
+      properties:
+        merchantPricingPlanId: { type: string, minLength: 1, maxLength: 128 }
+        displayName: { type: string, minLength: 1, maxLength: 255 }
+        planKind: { type: string, enum: [FREE, PAID_METERED] }
+        cataloguePosition: { type: integer, minimum: 0 }
+        featured: { type: boolean }
+        localizedDescription: { type: string, minLength: 1, maxLength: 2000 }
+        includedRecoveryCredits: { type: integer, minimum: 0 }
+        allowancePeriod: { type: string, enum: [LIFETIME, EVERY_30_DAYS] }
+        billingPeriod: { type: string, const: EVERY_30_DAYS }
+        recurringAmountMinor: { type: integer, minimum: 0 }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        highlights:
+          type: array
+          items: { $ref: '#/components/schemas/BillingPlanHighlight' }
+    BillingPlanHighlight:
+      type: object
+      additionalProperties: false
+      required: [contentKey, position, title, description]
+      properties:
+        contentKey: { type: string, minLength: 1, maxLength: 128 }
+        position: { type: integer, minimum: 0 }
+        title: { type: string, minLength: 1, maxLength: 120 }
+        description: { type: string, minLength: 1, maxLength: 2000 }

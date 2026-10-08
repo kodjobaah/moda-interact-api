@@ -7,7 +7,9 @@ import { MerchantBootstrapIntegrityError } from "../../merchant/bootstrap/bootst
 import { createApiRuntime } from "../../server.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { digestSecret } from "./credential.js";
-import { createWooInstallationRoutes } from "./routes.js";
+import { BILLING_PLANS_ROUTE_PATH, BILLING_PRESENTATION_ROUTE_PATH, createWooInstallationRoutes } from "./routes.js";
+import { BillingPresentationError } from "../../billing/presentation/billing-read.service.js";
+import { BillingCatalogueError } from "../../billing/presentation/plan-catalogue-read.service.js";
 import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
@@ -23,6 +25,8 @@ async function withApi(
   bootstrapFailure?: Error,
   authenticatorOverride?: WooInstallationAuthenticator,
   connectionFailure?: Error,
+  billingFailure?: Error,
+  catalogueFailure?: Error,
 ): Promise<void> {
   const logLines: string[] = [];
   const calls: string[] = [];
@@ -78,10 +82,62 @@ async function withApi(
       };
     },
   };
+  const billingReadService = {
+    read: async (principal: { shopId: string }) => {
+      calls.push(`billing:${principal.shopId}`);
+      if (billingFailure) throw billingFailure;
+      return {
+        schemaVersion: 1,
+        experienceState: "ACTIVE",
+        surfaces: {
+          usageHistoryAllowed: true,
+          purchaseHistoryAllowed: true,
+          managePlansAllowed: true,
+          cancelSubscriptionAllowed: false,
+        },
+        currentPlan: null,
+        pendingPlan: null,
+        pendingCancellation: null,
+        capacity: {
+          paidIncluded: null,
+          freeLifetime: { granted: 5, committed: 1, reserved: 0, remaining: 4 },
+          promotional: { granted: 0, committed: 0, reserved: 0, remaining: 0 },
+          purchased: { granted: 0, committed: 0, reserved: 0, refunding: 0, available: 0 },
+        },
+        topUps: { configured: false, purchaseEligible: false, offers: [], latestPurchase: null, unresolvedPurchases: [] },
+      };
+    },
+  };
+  const billingPlanCatalogueReadService = {
+    read: async (principal: { shopId: string }, locale?: string) => {
+      calls.push(`plans:${principal.shopId}:${locale ?? "default"}`);
+      if (catalogueFailure) throw catalogueFailure;
+      return {
+        schemaVersion: 1,
+        resolvedLocale: "en",
+        plans: [{
+          merchantPricingPlanId: "mp_free",
+          displayName: "Free",
+          planKind: "FREE",
+          cataloguePosition: 0,
+          featured: false,
+          localizedDescription: "Start free",
+          includedRecoveryCredits: 5,
+          allowancePeriod: "LIFETIME",
+          billingPeriod: "EVERY_30_DAYS",
+          recurringAmountMinor: 0,
+          currency: "USD",
+          highlights: [],
+        }],
+      };
+    },
+  };
   const routes = createWooInstallationRoutes({
     mode: "public",
     connectionService: connectionService as never,
     bootstrapReadService: bootstrapReadService as never,
+    billingReadService: billingReadService as never,
+    billingPlanCatalogueReadService: billingPlanCatalogueReadService as never,
     authenticator: authenticatorOverride ?? authenticator as never,
     logger,
   });
@@ -327,4 +383,92 @@ test("merchant bootstrap HTTP route uses the API-002 authenticator principal as 
     assert.deepEqual(calls, ["bootstrap:shop_456"]);
     assert.deepEqual(authenticationQueries.map((query) => (query as { where: unknown }).where), [{ id: "install_123" }]);
   }, undefined, undefined, authenticator);
+});
+
+test("billing routes authenticate, use only principal.shopId, and return private no-store responses", async () => {
+  await withApi(async (baseUrl, logs, calls) => {
+    const billing = await fetch(`${baseUrl}${BILLING_PRESENTATION_ROUTE_PATH}`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+        "X-Shop-Id": "caller-controlled",
+      },
+    });
+    assert.equal(billing.status, 200);
+    assert.equal(billing.headers.get("cache-control"), "no-store");
+    assert.equal(billing.headers.get("access-control-allow-origin"), null);
+    assert.deepEqual(calls.slice(0, 2), ["authenticate", "billing:shop_456"]);
+    assert.equal(logs.join("\n").includes("caller-controlled"), false);
+
+    const plans = await fetch(`${baseUrl}${BILLING_PLANS_ROUTE_PATH}?locale=pt-BR`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+    });
+    assert.equal(plans.status, 200);
+    assert.equal(plans.headers.get("cache-control"), "no-store");
+    assert.deepEqual(calls.slice(2), ["authenticate", "plans:shop_456:pt-BR"]);
+  });
+});
+
+test("billing routes reject unauthenticated requests and caller-controlled query parameters", async () => {
+  await withApi(async (baseUrl, _logs, calls) => {
+    const unauthenticated = await fetch(`${baseUrl}${BILLING_PRESENTATION_ROUTE_PATH}`);
+    assert.equal(unauthenticated.status, 401);
+    assert.deepEqual(await unauthenticated.json(), { error: "unauthorized" });
+
+    const tenantQuery = await fetch(`${baseUrl}${BILLING_PRESENTATION_ROUTE_PATH}?shopId=caller-controlled`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+    });
+    assert.equal(tenantQuery.status, 400);
+    assert.deepEqual(await tenantQuery.json(), { error: "invalid_request" });
+
+    const unknownPlanQuery = await fetch(`${baseUrl}${BILLING_PLANS_ROUTE_PATH}?locale=en&shopId=caller-controlled`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+    });
+    assert.equal(unknownPlanQuery.status, 400);
+    assert.deepEqual(calls, ["authenticate", "authenticate", "authenticate"]);
+  });
+});
+
+test("billing routes map service failures to bounded API errors", async () => {
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}${BILLING_PRESENTATION_ROUTE_PATH}`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "billing_operation_conflict" });
+  }, undefined, undefined, undefined, undefined, new BillingPresentationError("billing_operation_conflict"));
+
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}${BILLING_PLANS_ROUTE_PATH}?locale=en`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "billing_locale_invalid" });
+  }, undefined, undefined, undefined, undefined, undefined, new BillingCatalogueError("billing_locale_invalid"));
+
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}${BILLING_PLANS_ROUTE_PATH}?locale=en`, {
+      headers: {
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "billing_catalogue_invalid" });
+  }, undefined, undefined, undefined, undefined, undefined, new BillingCatalogueError("billing_catalogue_invalid"));
 });
