@@ -1,5 +1,7 @@
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createDatabase } from "./database.js";
+import { BillingPresentationReadService } from "./billing/presentation/billing-read.service.js";
+import { BillingPlanCatalogueReadService } from "./billing/presentation/plan-catalogue-read.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
@@ -21,10 +23,14 @@ async function main(): Promise<void> {
     const connectionService = new WooInstallationConnectionService(database.prisma, verifier);
     const authenticator = new WooInstallationAuthenticator(database.prisma);
     const bootstrapReadService = new MerchantBootstrapReadService(database.prisma);
+    const billingReadService = new BillingPresentationReadService(database.prisma);
+    const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
     const wooRoutes = createWooInstallationRoutes({
       mode: config.woocommerceConnectionMode,
       connectionService,
       bootstrapReadService,
+      billingReadService,
+      billingPlanCatalogueReadService,
       authenticator,
       logger,
     });

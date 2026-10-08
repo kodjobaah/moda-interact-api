@@ -1,5 +1,8 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { BillingPresentationError, BillingPresentationReadService } from "../../billing/presentation/billing-read.service.js";
+import { BillingCatalogueError, BillingPlanCatalogueReadService } from "../../billing/presentation/plan-catalogue-read.service.js";
+import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from "../../billing/presentation/schemas.js";
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
@@ -13,6 +16,8 @@ import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode 
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
 export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";
+export const BILLING_PRESENTATION_ROUTE_PATH = "/v1/billing";
+export const BILLING_PLANS_ROUTE_PATH = "/v1/billing/plans";
 export const MAX_CONNECT_BODY_BYTES = 8192;
 export const MAX_SITE_URL_BYTES = 512;
 export const CONNECT_REQUEST_FIELDS = ["siteUrl", "attemptId", "bootstrapSecret"] as const;
@@ -26,6 +31,8 @@ interface WooInstallationRouteOptions {
   mode: WooConnectionMode;
   connectionService: WooInstallationConnectionService;
   bootstrapReadService: MerchantBootstrapReadService;
+  billingReadService?: BillingPresentationReadService;
+  billingPlanCatalogueReadService?: BillingPlanCatalogueReadService;
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
   now?: () => number;
@@ -35,6 +42,8 @@ export function createWooInstallationRoutes({
   mode,
   connectionService,
   bootstrapReadService,
+  billingReadService,
+  billingPlanCatalogueReadService,
   authenticator,
   logger,
   now = Date.now,
@@ -119,6 +128,78 @@ export function createWooInstallationRoutes({
             logger.error("merchant.bootstrap.read.failed", {
               reason: error instanceof MerchantBootstrapIntegrityError ? "integrity" : "internal",
             });
+            sendError(response, 500, "internal_error");
+          }
+        }
+        return true;
+      }
+
+      if (requestUrl.pathname === BILLING_PRESENTATION_ROUTE_PATH && request.method === "GET" && billingReadService) {
+        const startedAt = now();
+        try {
+          const principal = await authenticator.authenticate(request);
+          if (requestUrl.search || requestHasBody(request)) throw new HttpFailure(400, "invalid_request");
+          const billing = await billingReadService.read(principal, new Date(now()));
+          if (!isBillingPresentationResponse(billing)) throw new BillingPresentationError("billing_integrity_invalid");
+          logger.info("billing.presentation.read", {
+            shopId: principal.shopId,
+            experienceState: billing.experienceState,
+            planKind: billing.currentPlan?.planKind ?? null,
+            planId: billing.currentPlan?.merchantPricingPlanId ?? null,
+            returnedTopUpCount: billing.topUps.offers.length,
+            outcome: "success",
+            durationMs: Math.max(0, now() - startedAt),
+          });
+          sendJson(response, 200, billing);
+        } catch (error) {
+          if (error instanceof WooUnauthenticatedError) {
+            sendError(response, 401, "unauthorized");
+          } else if (error instanceof HttpFailure) {
+            sendError(response, error.statusCode, error.code);
+          } else if (error instanceof BillingPresentationError) {
+            logger.warn("billing.presentation.read.failed", { reason: error.code });
+            sendError(response, 409, error.code);
+          } else {
+            logger.error("billing.presentation.read.failed", { reason: "internal" });
+            sendError(response, 500, "internal_error");
+          }
+        }
+        return true;
+      }
+
+      if (requestUrl.pathname === BILLING_PLANS_ROUTE_PATH && request.method === "GET" && billingPlanCatalogueReadService) {
+        const startedAt = now();
+        try {
+          const principal = await authenticator.authenticate(request);
+          const localeValues = requestUrl.searchParams.getAll("locale");
+          if (
+            requestHasBody(request) || requestUrl.searchParams.size !== localeValues.length || localeValues.length > 1
+          ) throw new HttpFailure(400, "invalid_request");
+          const catalogue = await billingPlanCatalogueReadService.read(principal, localeValues[0]);
+          if (!isBillingPlanCatalogueResponse(catalogue)) throw new BillingCatalogueError("billing_catalogue_invalid");
+          logger.info("billing.plans.read", {
+            shopId: principal.shopId,
+            resolvedLocale: catalogue.resolvedLocale,
+            returnedPlanCount: catalogue.plans.length,
+            outcome: "success",
+            durationMs: Math.max(0, now() - startedAt),
+          });
+          sendJson(response, 200, catalogue);
+        } catch (error) {
+          if (error instanceof WooUnauthenticatedError) {
+            sendError(response, 401, "unauthorized");
+          } else if (error instanceof HttpFailure) {
+            sendError(response, error.statusCode, error.code);
+          } else if (error instanceof BillingCatalogueError) {
+            if (error.code !== "billing_locale_invalid") {
+              logger.warn("billing.plans.read.failed", { reason: error.code });
+            }
+            sendError(response, error.code === "billing_locale_invalid" ? 400 : 409, error.code);
+          } else if (error instanceof BillingPresentationError) {
+            logger.warn("billing.plans.read.failed", { reason: error.code });
+            sendError(response, 409, error.code);
+          } else {
+            logger.error("billing.plans.read.failed", { reason: "internal" });
             sendError(response, 500, "internal_error");
           }
         }
@@ -232,6 +313,16 @@ function singleHeader(request: IncomingMessage, name: string): { count: number; 
   return values.length === 1 && value !== undefined
     ? { count: 1, value }
     : { count: values.length };
+}
+
+function requestHasBody(request: IncomingMessage): boolean {
+  for (let index = 0; index < request.rawHeaders.length; index += 2) {
+    const name = request.rawHeaders[index]?.toLowerCase();
+    const value = request.rawHeaders[index + 1];
+    if (name === "transfer-encoding") return true;
+    if (name === "content-length" && value !== undefined && (!/^\d+$/.test(value) || Number(value) > 0)) return true;
+  }
+  return false;
 }
 
 class HttpFailure extends Error {
