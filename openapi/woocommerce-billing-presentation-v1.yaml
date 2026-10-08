@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: Authenticated, provider-neutral billing presentation reads for WooCommerce installations.
 servers:
-  - url: https://api.moda.example
+  - url: https://api.moda-interact.example
 paths:
   /v1/billing:
     get:

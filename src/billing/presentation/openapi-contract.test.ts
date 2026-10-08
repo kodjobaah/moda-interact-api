@@ -14,10 +14,22 @@ import { BILLING_PLANS_ROUTE_PATH, BILLING_PRESENTATION_ROUTE_PATH } from "../..
 test("billing OpenAPI 3.1 matches both authenticated strict GET contracts", async () => {
   const path = new URL("../../../openapi/woocommerce-billing-presentation-v1.yaml", import.meta.url);
   const document = parse(await readFile(fileURLToPath(path), "utf8")) as Record<string, unknown>;
+  const installationPath = new URL("../../../openapi/woocommerce-installation-v1.yaml", import.meta.url);
+  const installationDocument = parse(await readFile(fileURLToPath(installationPath), "utf8")) as Record<string, unknown>;
+  const bootstrapPath = new URL("../../../openapi/merchant-bootstrap-v1.yaml", import.meta.url);
+  const bootstrapDocument = parse(await readFile(fileURLToPath(bootstrapPath), "utf8")) as Record<string, unknown>;
   const paths = document.paths as Record<string, unknown>;
   const components = document.components as Record<string, unknown>;
   const schemas = components.schemas as Record<string, Record<string, unknown>>;
   assert.equal(document.openapi, "3.1.0");
+  assert.equal(
+    ((document.servers as Array<Record<string, unknown>>)[0])?.url,
+    ((installationDocument.servers as Array<Record<string, unknown>>)[0])?.url,
+  );
+  assert.equal(
+    ((document.servers as Array<Record<string, unknown>>)[0])?.url,
+    ((bootstrapDocument.servers as Array<Record<string, unknown>>)[0])?.url,
+  );
   assert.deepEqual(Object.keys(paths).sort(), [BILLING_PLANS_ROUTE_PATH, BILLING_PRESENTATION_ROUTE_PATH].sort());
   assert.equal(paths[BILLING_PRESENTATION_ROUTE_PATH] && paths[BILLING_PLANS_ROUTE_PATH] ? true : false, true);
 
