@@ -127,6 +127,7 @@ test("PostgreSQL first connect atomically creates Shop, installation, ACTIVE Fre
     assert.equal(subscription.status, "ACTIVE");
     assert.equal(subscription.planId, billingPlan.id);
     assert.equal(subscription.providerSubscriptionId, null);
+    assert.equal(subscription.providerCoverageEndAt, null);
     assert.equal(subscription.observedShopifyPlanHandle, null);
     assert.equal(subscription.billingPeriodId, null);
     assert.equal(subscription.currentPeriodStart, null);
@@ -430,6 +431,75 @@ test("PostgreSQL never-onboarded subscription conflict preserves billing and cre
     );
     assert.deepEqual(await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } }), subscriptionBefore);
     assert.equal((await database().shop.findUniqueOrThrow({ where: { id: initial.shopId } })).onboardingCompleted, false);
+  } finally {
+    await removeSite(siteUrl);
+  }
+});
+
+test("PostgreSQL provider-coverage-only shell conflicts and rolls back reconnect state", {
+  skip: !databaseUrl,
+}, async () => {
+  const siteUrl = uniqueSite();
+  try {
+    const initial = await service().connect(makeInput(siteUrl));
+    await database().shop.update({
+      where: { id: initial.shopId },
+      data: { onboardingCompleted: false, status: "UNINSTALLED" },
+    });
+    await database().subscription.update({
+      where: { shopId: initial.shopId },
+      data: {
+        status: "NO_CONTRACT",
+        planId: null,
+        observedShopifyPlanHandle: null,
+        billingPeriodId: null,
+        currentPeriodStart: null,
+        currentPeriodEnd: null,
+        trialEndsAt: null,
+        cancelAtPeriodEnd: false,
+        providerSubscriptionId: null,
+        providerCoverageEndAt: new Date("2026-10-01T00:00:00.000Z"),
+        lastSyncedAt: null,
+        lastSyncErrorCode: null,
+        lastSyncErrorAt: null,
+        pendingShopifyPlanHandle: null,
+        pendingPlanId: null,
+        pendingEffectiveAt: null,
+        nextReconcileAt: null,
+        lastProviderLifecycleState: null,
+        lastProviderLifecycleEventId: null,
+        lastProviderLifecycleEventAt: null,
+      },
+    });
+    const counterKey = {
+      shopId_counter: {
+        shopId: initial.shopId,
+        counter: "LIFETIME_FREE_RECOVERY_CREDITS" as const,
+      },
+    };
+    await database().shopEntitlementCounter.update({
+      where: counterKey,
+      data: { committedQuantity: 2, reservedQuantity: 1, refundingQuantity: 3 },
+    });
+
+    const [shopBefore, installationBefore, subscriptionBefore, counterBefore] = await Promise.all([
+      database().shop.findUniqueOrThrow({ where: { id: initial.shopId } }),
+      database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } }),
+      database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } }),
+      database().shopEntitlementCounter.findUniqueOrThrow({ where: counterKey }),
+    ]);
+
+    await assert.rejects(service().connect(makeInput(siteUrl)), InitialFreeActivationConflictError);
+
+    assert.deepEqual(await database().shop.findUniqueOrThrow({ where: { id: initial.shopId } }), shopBefore);
+    assert.deepEqual(
+      await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } }),
+      installationBefore,
+    );
+    assert.deepEqual(await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } }), subscriptionBefore);
+    assert.deepEqual(await database().shopEntitlementCounter.findUniqueOrThrow({ where: counterKey }), counterBefore);
+    assert.equal(subscriptionBefore.providerCoverageEndAt?.toISOString(), "2026-10-01T00:00:00.000Z");
+    assert.equal(await database().subscription.count({ where: { shopId: initial.shopId } }), 1);
   } finally {
     await removeSite(siteUrl);
   }

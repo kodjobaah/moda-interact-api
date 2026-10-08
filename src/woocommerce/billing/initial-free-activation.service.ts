@@ -185,6 +185,7 @@ function isEmptyInitialSubscription(subscription: {
   trialEndsAt: Date | null;
   cancelAtPeriodEnd: boolean;
   providerSubscriptionId: string | null;
+  providerCoverageEndAt: Date | null;
   lastSyncedAt: Date | null;
   lastSyncErrorCode: string | null;
   lastSyncErrorAt: Date | null;
@@ -205,6 +206,7 @@ function isEmptyInitialSubscription(subscription: {
     subscription.trialEndsAt === null &&
     subscription.cancelAtPeriodEnd === false &&
     subscription.providerSubscriptionId === null &&
+    subscription.providerCoverageEndAt === null &&
     subscription.lastSyncedAt === null &&
     subscription.lastSyncErrorCode === null &&
     subscription.lastSyncErrorAt === null &&
@@ -289,6 +291,7 @@ function freeSubscriptionProjection(planId: string) {
     trialEndsAt: null,
     cancelAtPeriodEnd: false,
     providerSubscriptionId: null,
+    providerCoverageEndAt: null,
     lastSyncedAt: null,
     lastSyncErrorCode: null,
     lastSyncErrorAt: null,

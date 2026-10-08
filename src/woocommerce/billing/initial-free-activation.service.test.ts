@@ -25,6 +25,31 @@ const plan = {
   }],
 };
 
+function emptyInitialSubscription(providerCoverageEndAt: Date | null) {
+  return {
+    status: SubscriptionProjectionStatus.NO_CONTRACT,
+    planId: null,
+    observedShopifyPlanHandle: null,
+    billingPeriodId: null,
+    currentPeriodStart: null,
+    currentPeriodEnd: null,
+    trialEndsAt: null,
+    cancelAtPeriodEnd: false,
+    providerSubscriptionId: null,
+    providerCoverageEndAt,
+    lastSyncedAt: null,
+    lastSyncErrorCode: null,
+    lastSyncErrorAt: null,
+    pendingShopifyPlanHandle: null,
+    pendingPlanId: null,
+    pendingEffectiveAt: null,
+    nextReconcileAt: null,
+    lastProviderLifecycleState: null,
+    lastProviderLifecycleEventId: null,
+    lastProviderLifecycleEventAt: null,
+  };
+}
+
 function makeTransaction(overrides: Record<string, unknown> = {}) {
   const events: string[] = [];
   const writes: Array<{ model: string; args: unknown }> = [];
@@ -92,6 +117,7 @@ test("activates a new Shop with an operational Free plan, local subscription, an
   const subscription = writes.find((write) => write.model === "subscription.upsert")?.args as { create: Record<string, unknown> };
   assert.equal(subscription.create.status, SubscriptionProjectionStatus.ACTIVE);
   assert.equal(subscription.create.providerSubscriptionId, null);
+  assert.equal(subscription.create.providerCoverageEndAt, null);
   assert.equal(subscription.create.billingPeriodId, null);
   assert.equal(subscription.create.observedShopifyPlanHandle, null);
   const counter = writes.find((write) => write.model === "shopEntitlementCounter.create")?.args as { data: Record<string, unknown> };
@@ -124,27 +150,7 @@ test("already-onboarded reconnect is a strict billing and entitlement no-op", as
 test("never-onboarded Shop with established subscription state fails closed before catalogue access", async () => {
   const { tx, events } = makeTransaction({
     subscription: {
-      findUnique: async () => ({
-        status: SubscriptionProjectionStatus.NO_CONTRACT,
-        planId: null,
-        observedShopifyPlanHandle: null,
-        billingPeriodId: null,
-        currentPeriodStart: null,
-        currentPeriodEnd: null,
-        trialEndsAt: null,
-        cancelAtPeriodEnd: false,
-        providerSubscriptionId: "provider-contract",
-        lastSyncedAt: null,
-        lastSyncErrorCode: null,
-        lastSyncErrorAt: null,
-        pendingShopifyPlanHandle: null,
-        pendingPlanId: null,
-        pendingEffectiveAt: null,
-        nextReconcileAt: null,
-        lastProviderLifecycleState: null,
-        lastProviderLifecycleEventId: null,
-        lastProviderLifecycleEventAt: null,
-      }),
+      findUnique: async () => ({ ...emptyInitialSubscription(null), providerSubscriptionId: "provider-contract" }),
     },
     merchantPricingPlan: { findMany: async () => { throw new Error("must not read catalogue"); } },
   });
@@ -153,6 +159,41 @@ test("never-onboarded Shop with established subscription state fails closed befo
     InitialFreeActivationConflictError,
   );
   assert.deepEqual(events, ["lock", "shop.findUnique", "lock"]);
+});
+
+test("never-onboarded Shop with provider coverage alone fails closed", async () => {
+  const coverageEndAt = new Date("2026-10-01T00:00:00.000Z");
+  const { tx, events } = makeTransaction({
+    subscription: {
+      findUnique: async () => emptyInitialSubscription(coverageEndAt),
+    },
+    merchantPricingPlan: { findMany: async () => { throw new Error("must not read catalogue"); } },
+  });
+
+  await assert.rejects(
+    new InitialWooFreeActivationService().activate(tx, "shop-1"),
+    InitialFreeActivationConflictError,
+  );
+  assert.deepEqual(events, ["lock", "shop.findUnique", "lock"]);
+});
+
+test("eligible empty initial subscription shell with null coverage activates as Free", async () => {
+  const { tx, writes } = makeTransaction({
+    subscription: {
+      findUnique: async () => emptyInitialSubscription(null),
+      upsert: async (args: unknown) => {
+        writes.push({ model: "subscription.upsert", args });
+        return { id: "subscription-1" };
+      },
+    },
+  });
+
+  await new InitialWooFreeActivationService().activate(tx, "shop-1");
+  const subscription = writes.find((write) => write.model === "subscription.upsert")?.args as {
+    update: Record<string, unknown>;
+  };
+  assert.equal(subscription.update.status, SubscriptionProjectionStatus.ACTIVE);
+  assert.equal(subscription.update.providerCoverageEndAt, null);
 });
 
 test("an existing lifetime counter is authoritative and does not require policy or get rewritten", async () => {
