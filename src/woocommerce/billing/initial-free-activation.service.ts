@@ -72,12 +72,6 @@ export class InitialWooFreeActivationService {
     shopId: string,
     prepared: PreparedFreePlan | null,
   ): Promise<"ACTIVATED_FREE" | "ALREADY_ONBOARDED"> {
-    await transaction.$queryRaw(Prisma.sql`
-      SELECT "id"
-      FROM "commerce"."Shop"
-      WHERE "id" = ${shopId}
-      FOR UPDATE
-    `);
     const shop = await transaction.shop.findUnique({
       where: { id: shopId },
       select: { id: true, onboardingCompleted: true },
@@ -85,12 +79,6 @@ export class InitialWooFreeActivationService {
     if (!shop) throw new FreePlanConfigurationUnavailableError("shop_missing");
     if (shop.onboardingCompleted) return "ALREADY_ONBOARDED";
 
-    await transaction.$queryRaw(Prisma.sql`
-      SELECT "id"
-      FROM "billing"."Subscription"
-      WHERE "shopId" = ${shopId}
-      FOR UPDATE
-    `);
     const subscription = await transaction.subscription.findUnique({ where: { shopId } });
     if (subscription && !isEmptyInitialSubscription(subscription)) {
       throw new InitialFreeActivationConflictError();
