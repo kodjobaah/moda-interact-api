@@ -497,11 +497,11 @@ test("billing routes map service failures to bounded API errors", async () => {
 });
 
 test("recurring command routes authenticate and expose only bounded command results", async () => {
-  const responses = {
+  let responses = {
     create: { schemaVersion: 1, operationId: "op-create", kind: "SUBSCRIPTION_CREATE", state: "AWAITING_CONFIRMATION", confirmationUrl: "https://woocommerce.com/checkout" },
     switch: { schemaVersion: 1, operationId: "op-switch", kind: "PLAN_SWITCH", state: "AWAITING_CONFIRMATION", confirmationUrl: "https://woocommerce.com/switch" },
     cancel: { schemaVersion: 1, operationId: "op-cancel", kind: "CANCEL", state: "CONFIRMED", confirmationUrl: null },
-  } as const;
+  };
   const commandCalls: string[] = [];
   const commandService = {
     create: async (principal: { shopId: string }, key: string, planId: string) => {
@@ -545,12 +545,31 @@ test("recurring command routes authenticate and expose only bounded command resu
     });
     assert.equal(cancelled.status, 200);
     assert.deepEqual(await cancelled.json(), responses.cancel);
+
+    responses = {
+      ...responses,
+      create: { ...responses.create, state: "CONFIRMED" },
+      switch: { ...responses.switch, state: "CONFIRMED" },
+    };
+    const confirmedCreate = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "POST", headers, body: JSON.stringify({ merchantPricingPlanId: "opaque-paid-id" }),
+    });
+    assert.equal(confirmedCreate.status, 200);
+    assert.deepEqual(await confirmedCreate.json(), responses.create);
+    const confirmedSwitch = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH}`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "request-2" },
+      body: JSON.stringify({ merchantPricingPlanId: "opaque-target-id" }),
+    });
+    assert.equal(confirmedSwitch.status, 200);
+    assert.deepEqual(await confirmedSwitch.json(), responses.switch);
     assert.deepEqual(commandCalls, [
       "create:shop_456:request-1:opaque-paid-id",
       "switch:shop_456:request-2:opaque-target-id",
       "cancel:shop_456:request-3",
+      "create:shop_456:request-1:opaque-paid-id",
+      "switch:shop_456:request-2:opaque-target-id",
     ]);
-    assert.equal(calls.filter((call) => call === "authenticate").length, 3);
+    assert.equal(calls.filter((call) => call === "authenticate").length, 5);
     assert.equal(logs.join("\n").includes("caller-controlled"), false);
     assert.equal(logs.join("\n").includes("woocommerce.com"), false);
   }, undefined, undefined, undefined, undefined, undefined, undefined, commandService);

@@ -212,13 +212,23 @@ export class RecurringSubscriptionCommandService {
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
           select: { kind: true, state: true },
         });
-        if (operations.some((operation) =>
+        const hasUnresolvedOperation = operations.some((operation) =>
           operation.state === BillingOperationState.INITIATING ||
           operation.state === BillingOperationState.AWAITING_CONFIRMATION ||
           operation.state === BillingOperationState.OUTCOME_UNKNOWN,
-        ) || operations.some((operation) =>
+        );
+        const hasConfirmedCancellation = operations.some((operation) =>
           operation.kind === BillingOperationKind.CANCEL && operation.state === BillingOperationState.CONFIRMED,
-        )) throw new RecurringBillingCommandError(409, "billing_operation_conflict");
+        );
+        const canCreateAfterTerminalCancellation = kind === "SUBSCRIPTION_CREATE" &&
+          subscription?.status === SubscriptionProjectionStatus.ACTIVE &&
+          subscription?.plan?.kind === BillingPlanKind.FREE &&
+          subscription.providerSubscriptionId === null &&
+          subscription.billingPeriodId === null &&
+          !subscription.cancelAtPeriodEnd;
+        if (hasUnresolvedOperation || (hasConfirmedCancellation && !canCreateAfterTerminalCancellation)) {
+          throw new RecurringBillingCommandError(409, "billing_operation_conflict");
+        }
         if (!subscription?.plan || subscription.planId !== subscription.plan.id) {
           throw new RecurringBillingCommandError(409, "billing_subscription_invalid");
         }

@@ -16,7 +16,7 @@ interface OpenApiCommandDocument {
     schemas: Record<string, {
       additionalProperties?: boolean;
       required?: string[];
-      properties?: Record<string, { type?: string; const?: string; maxLength?: number }>;
+      properties?: Record<string, { type?: string; const?: string; enum?: string[]; maxLength?: number }>;
     }>;
   };
 }
@@ -48,14 +48,14 @@ test("recurring billing OpenAPI documents only the exact authenticated command c
     assert.deepEqual(operation.security, [{ WooInstallationId: [], WooInstallationCredential: [] }]);
     assert.deepEqual(operation.parameters, [{ $ref: "#/components/parameters/IdempotencyKey" }]);
   }
-  assert.deepEqual(Object.keys(create.responses).sort(), ["202", "400", "401", "409", "413", "422", "500", "502", "503"]);
-  assert.deepEqual(Object.keys(switchPlan.responses).sort(), ["202", "400", "401", "409", "413", "422", "500", "502", "503"]);
+  assert.deepEqual(Object.keys(create.responses).sort(), ["200", "202", "400", "401", "409", "413", "422", "500", "502", "503"]);
+  assert.deepEqual(Object.keys(switchPlan.responses).sort(), ["200", "202", "400", "401", "409", "413", "422", "500", "502", "503"]);
   assert.deepEqual(Object.keys(cancel.responses).sort(), ["200", "400", "401", "409", "422", "500", "502", "503"]);
   const confirmationResult = document.components.schemas.ConfirmationResult;
   const cancellationResult = document.components.schemas.CancellationResult;
   const commandError = document.components.schemas.CommandError;
   assert.ok(confirmationResult && cancellationResult && commandError);
-  assert.equal(confirmationResult.properties?.state?.const, "AWAITING_CONFIRMATION");
+  assert.deepEqual(confirmationResult.properties?.state?.enum, ["AWAITING_CONFIRMATION", "CONFIRMED"]);
   assert.equal(cancellationResult.properties?.confirmationUrl?.type, "null");
   assert.equal(commandError.additionalProperties, false);
   assert.ok(commandError.properties?.providerErrorCode);
