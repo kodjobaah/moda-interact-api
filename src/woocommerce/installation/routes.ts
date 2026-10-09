@@ -13,6 +13,7 @@ import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from ".
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
 import type { createStoreCategoriesRoute } from "../../merchant/store-categories/routes.js";
+import type { createStoreCategorySelectionRoute } from "../../merchant/store-categories/selection-routes.js";
 import { MerchantStoreContextConflictError, MerchantStoreContextService } from "../../merchant/store-context/store-context.service.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
@@ -48,6 +49,7 @@ interface WooInstallationRouteOptions {
   bootstrapReadService: MerchantBootstrapReadService;
   storeContextService: MerchantStoreContextService;
   storeCategoriesRoute?: ReturnType<typeof createStoreCategoriesRoute>;
+  storeCategorySelectionRoute?: ReturnType<typeof createStoreCategorySelectionRoute>;
   billingReadService?: BillingPresentationReadService;
   billingPlanCatalogueReadService?: BillingPlanCatalogueReadService;
   recurringSubscriptionCommandService?: RecurringSubscriptionCommandService;
@@ -63,6 +65,7 @@ export function createWooInstallationRoutes({
   bootstrapReadService,
   storeContextService,
   storeCategoriesRoute,
+  storeCategorySelectionRoute,
   billingReadService,
   billingPlanCatalogueReadService,
   recurringSubscriptionCommandService,
@@ -74,6 +77,7 @@ export function createWooInstallationRoutes({
   return {
     async handle(request, response) {
       if (storeCategoriesRoute && await storeCategoriesRoute.handle(request, response)) return true;
+      if (storeCategorySelectionRoute && await storeCategorySelectionRoute.handle(request, response)) return true;
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
       if (requestUrl.pathname === CONNECT_ROUTE_PATH && request.method === "POST") {
         const startedAt = now();

@@ -18,7 +18,7 @@
     "prisma:generate": "prisma generate --schema database/prisma/schema.prisma"
   },
   "dependencies": {
-    "@modainteract/moda-interact-shared": "1.1.0",
+    "@modainteract/moda-interact-shared": "1.3.0",
     "@prisma/client": "6.19.3"
   },
   "devDependencies": {

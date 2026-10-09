@@ -8,6 +8,8 @@ import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-rea
 import { MerchantStoreContextService } from "./merchant/store-context/store-context.service.js";
 import { StoreCategoriesReadService, commerceEnvironmentForApi } from "./merchant/store-categories/store-categories-read.service.js";
 import { createStoreCategoriesRoute } from "./merchant/store-categories/routes.js";
+import { StoreCategorySelectionService } from "./merchant/store-categories/store-category-selection.service.js";
+import { createStoreCategorySelectionRoute } from "./merchant/store-categories/selection-routes.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
 import { WooInstallationAuthenticator } from "./woocommerce/installation/authenticator.js";
@@ -34,6 +36,12 @@ async function main(): Promise<void> {
     const storeContextService = new MerchantStoreContextService(database.prisma);
     const storeCategoriesService = new StoreCategoriesReadService(database.prisma, commerceEnvironmentForApi(config.environment));
     const storeCategoriesRoute = createStoreCategoriesRoute({ service: storeCategoriesService, authenticator, logger });
+    const storeCategorySelectionService = new StoreCategorySelectionService(
+      database.prisma, commerceEnvironmentForApi(config.environment),
+    );
+    const storeCategorySelectionRoute = createStoreCategorySelectionRoute({
+      service: storeCategorySelectionService, authenticator, logger,
+    });
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
     const wooBillingClient = config.wooBilling ? new WooBillingClient(config.wooBilling) : undefined;
@@ -49,6 +57,7 @@ async function main(): Promise<void> {
       bootstrapReadService,
       storeContextService,
       storeCategoriesRoute,
+      storeCategorySelectionRoute,
       billingReadService,
       billingPlanCatalogueReadService,
       ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),

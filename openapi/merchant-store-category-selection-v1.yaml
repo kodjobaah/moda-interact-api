@@ -1,0 +1,122 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact Woo Merchant Category Selection API
+  version: 1.0.0
+  description: Authenticated, generation-checked category selection and immediate prompt publication for WooCommerce shops.
+paths:
+  /v1/merchant/store-category:
+    post:
+      operationId: selectMerchantStoreCategory
+      summary: Select the canonical category and atomically activate its CommerceAgent prompt
+      description: >-
+        Uses the active Woo installation credential to derive the Shop. The caller may not
+        specify a Shop or Commerce environment. Requires an existing ACTIVE/TRIALING
+        subscription with a non-null plan. Both first selection and later changes publish
+        immediately; no plan chooser or billing/credit mutation occurs. The generation must
+        match the Store Profile returned from GET /v1/merchant/store-categories.
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SelectionRequest' }
+      responses:
+        '200':
+          description: Category and its published Shop prompt are active atomically
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SelectionResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/RequestTooLarge' }
+        '422': { $ref: '#/components/responses/CategoryUnavailable' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url(32-byte credential)
+  schemas:
+    SelectionRequest:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, categoryId, selectedMappingIds, expectedPendingSelectionGeneration]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        categoryId: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+        selectedMappingIds:
+          type: array
+          uniqueItems: true
+          maxItems: 50
+          items: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+        expectedPendingSelectionGeneration: { type: integer, minimum: 0, maximum: 9007199254740990 }
+    SelectionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, activeCategoryId, activePromptRevisionId, activeMappingIds, pendingSelectionGeneration]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        activeCategoryId: { type: string, minLength: 1, maxLength: 128 }
+        activePromptRevisionId: { type: string, minLength: 1, maxLength: 128 }
+        activeMappingIds:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+        pendingSelectionGeneration: { type: integer, minimum: 1 }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, unauthorized, request_too_large, category_unavailable, subscription_not_active, store_category_conflict, store_category_integrity_invalid, internal_error]
+  responses:
+    InvalidRequest:
+      description: Malformed JSON or unknown/invalid fields
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: invalid_request }
+    Unauthorized:
+      description: Invalid or revoked Woo installation bearer credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: unauthorized }
+    Conflict:
+      description: Generation, subscription, Shop continuity or catalogue drift conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: store_category_conflict }
+    CategoryUnavailable:
+      description: Disabled/missing category, invalid mapping or invalid template
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: category_unavailable }
+    RequestTooLarge:
+      description: JSON request exceeds 4096 bytes
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: request_too_large }
+    InternalError:
+      description: Unexpected server exception; no internal details disclosed
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: internal_error }

@@ -22,3 +22,26 @@ export function selectedMappingIds(context: unknown, expectedCategoryId: string 
   }
   return selected;
 }
+
+/** Wire-compatible with Shopify's STORE_CATEGORY_SELECTION source-context v1. */
+export function createStoreCategorySelectionSourceContext(input: {
+  categoryId: string;
+  categoryEditVersion: number;
+  templateId: string;
+  templateEditVersion: number;
+  mappings: ReadonlyArray<{ id: string; editVersion: number; conditionKey: string }>;
+}) {
+  return {
+    schemaVersion: 1 as const,
+    kind: "STORE_CATEGORY_SELECTION" as const,
+    categoryId: input.categoryId,
+    categoryEditVersion: input.categoryEditVersion,
+    templateId: input.templateId,
+    templateEditVersion: input.templateEditVersion,
+    mappings: [...input.mappings].sort((a, b) => a.id.localeCompare(b.id)).map((mapping) => ({
+      mappingId: mapping.id,
+      mappingEditVersion: mapping.editVersion,
+      conditionKey: mapping.conditionKey,
+    })),
+  };
+}
