@@ -18,6 +18,7 @@ import {
 import { BillingPresentationError } from "../../billing/presentation/billing-read.service.js";
 import { BillingCatalogueError } from "../../billing/presentation/plan-catalogue-read.service.js";
 import { RecurringBillingCommandError } from "../../billing/commands/recurring-subscription-command.service.js";
+import { RecoveryCreditPurchaseCommandError } from "../../billing/commands/recovery-credit-purchase-command.service.js";
 import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
@@ -36,6 +37,7 @@ async function withApi(
   billingFailure?: Error,
   catalogueFailure?: Error,
   recurringCommandOverride?: object,
+  recoveryCreditPurchaseCommandOverride?: object,
 ): Promise<void> {
   const logLines: string[] = [];
   const calls: string[] = [];
@@ -148,6 +150,7 @@ async function withApi(
     billingReadService: billingReadService as never,
     billingPlanCatalogueReadService: billingPlanCatalogueReadService as never,
     ...(recurringCommandOverride ? { recurringSubscriptionCommandService: recurringCommandOverride as never } : {}),
+    ...(recoveryCreditPurchaseCommandOverride ? { recoveryCreditPurchaseCommandService: recoveryCreditPurchaseCommandOverride as never } : {}),
     authenticator: authenticatorOverride ?? authenticator as never,
     logger,
   });
@@ -166,6 +169,123 @@ async function withApi(
     await runtime.shutdown();
   }
 }
+
+test("recovery-credit purchase route authenticates, accepts one bundle id and returns the bounded result", async () => {
+  const calls: string[] = [];
+  let state: "AWAITING_CONFIRMATION" | "CONFIRMED" = "AWAITING_CONFIRMATION";
+  const command = {
+    initiate: async (principal: { shopId: string }, key: string, eventId: string) => {
+      calls.push(`${principal.shopId}:${key}:${eventId}`);
+      return {
+        schemaVersion: 1 as const,
+        purchaseId: "purchase-safe-id",
+        operationId: "operation-safe-id",
+        state,
+        confirmationUrl: "https://woocommerce.com/confirm/secret-provider-id",
+      };
+    },
+  };
+  await withApi(async (baseUrl, logs) => {
+    const headers = {
+      "content-type": "application/json",
+      "Idempotency-Key": "request-top-up-1",
+      "X-Moda-Installation-Id": "install_123",
+      Authorization: `Bearer ${installationCredential}`,
+    };
+    const response = await fetch(`${baseUrl}/v1/billing/recovery-credit-purchases`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ merchantPricingUsageEventId: "usage-bronze" }),
+    });
+    assert.equal(response.status, 202);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), {
+      schemaVersion: 1,
+      purchaseId: "purchase-safe-id",
+      operationId: "operation-safe-id",
+      state: "AWAITING_CONFIRMATION",
+      confirmationUrl: "https://woocommerce.com/confirm/secret-provider-id",
+    });
+    state = "CONFIRMED";
+    const confirmedReplay = await fetch(`${baseUrl}/v1/billing/recovery-credit-purchases`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ merchantPricingUsageEventId: "usage-bronze" }),
+    });
+    assert.equal(confirmedReplay.status, 200);
+    assert.deepEqual(await confirmedReplay.json(), {
+      schemaVersion: 1,
+      purchaseId: "purchase-safe-id",
+      operationId: "operation-safe-id",
+      state: "CONFIRMED",
+      confirmationUrl: "https://woocommerce.com/confirm/secret-provider-id",
+    });
+    assert.equal(logs.join("\n").includes("secret-provider-id"), false);
+  }, undefined, undefined, undefined, undefined, undefined, undefined, undefined, command);
+  assert.deepEqual(calls, ["shop_456:request-top-up-1:usage-bronze", "shop_456:request-top-up-1:usage-bronze"]);
+});
+
+test("recovery-credit purchase route rejects missing keys, unknown fields and query parameters", async () => {
+  await withApi(async (baseUrl, _logs, calls) => {
+    const headers = {
+      "content-type": "application/json",
+      "X-Moda-Installation-Id": "install_123",
+      Authorization: `Bearer ${installationCredential}`,
+    };
+    const missingKey = await fetch(`${baseUrl}/v1/billing/recovery-credit-purchases`, {
+      method: "POST", headers, body: JSON.stringify({ merchantPricingUsageEventId: "usage-bronze" }),
+    });
+    assert.equal(missingKey.status, 400);
+    assert.deepEqual(await missingKey.json(), { error: "invalid_idempotency_key" });
+
+    const unknownField = await fetch(`${baseUrl}/v1/billing/recovery-credit-purchases`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "request-top-up-2" },
+      body: JSON.stringify({ merchantPricingUsageEventId: "usage-bronze", quantity: 2 }),
+    });
+    assert.equal(unknownField.status, 400);
+
+    const query = await fetch(`${baseUrl}/v1/billing/recovery-credit-purchases?shopId=other`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "request-top-up-3" },
+      body: JSON.stringify({ merchantPricingUsageEventId: "usage-bronze" }),
+    });
+    assert.equal(query.status, 400);
+    assert.deepEqual(calls, ["authenticate", "authenticate", "authenticate"]);
+  });
+});
+
+test("recovery-credit provider errors include only bounded operation and purchase identifiers", async () => {
+  const command = {
+    initiate: async () => {
+      throw new RecoveryCreditPurchaseCommandError(
+        502,
+        "billing_provider_outcome_unknown",
+        "operation-safe-id",
+        "PROVIDER_SERVER_ERROR",
+        "purchase-safe-id",
+      );
+    },
+  };
+  await withApi(async (baseUrl, logs) => {
+    const response = await fetch(`${baseUrl}/v1/billing/recovery-credit-purchases`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": "request-top-up-4",
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+      body: JSON.stringify({ merchantPricingUsageEventId: "usage-bronze" }),
+    });
+    assert.equal(response.status, 502);
+    assert.deepEqual(await response.json(), {
+      error: "billing_provider_outcome_unknown",
+      operationId: "operation-safe-id",
+      providerErrorCode: "PROVIDER_SERVER_ERROR",
+      purchaseId: "purchase-safe-id",
+    });
+    assert.equal(logs.join("\n").includes("PROVIDER_SERVER_ERROR"), false);
+  }, undefined, undefined, undefined, undefined, undefined, undefined, undefined, command);
+});
 
 function validConnectBody(): string {
   return JSON.stringify({

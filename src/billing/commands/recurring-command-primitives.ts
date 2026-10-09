@@ -2,6 +2,27 @@ import { createHash } from "node:crypto";
 
 export type RecurringOperationKind = "SUBSCRIPTION_CREATE" | "PLAN_SWITCH" | "CANCEL";
 
+export function recoveryCreditPurchaseFingerprint(input: {
+  shopId: string;
+  merchantPricingUsageEventId: string;
+  quotedAmountMinor: number;
+  quotedCurrency: string;
+}): Buffer {
+  for (const value of [
+    input.shopId,
+    input.merchantPricingUsageEventId,
+    String(input.quotedAmountMinor),
+    input.quotedCurrency,
+  ]) assertCanonicalField(value);
+  if (!Number.isSafeInteger(input.quotedAmountMinor) || input.quotedAmountMinor < 1) {
+    throw new TypeError("quotedAmountMinor must be a positive safe integer");
+  }
+  return createHash("sha256").update(
+    `arch027-topup-v1\nONE_TIME_CHARGE\n${input.shopId}\n${input.merchantPricingUsageEventId}\n${input.quotedAmountMinor}\n${input.quotedCurrency}\n`,
+    "utf8",
+  ).digest();
+}
+
 export function validateIdempotencyKey(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();

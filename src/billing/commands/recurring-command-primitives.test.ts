@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   createWooReturnUrl,
   formatUsdMinorUnits,
+  recoveryCreditPurchaseFingerprint,
   recurringRequestFingerprint,
   validateIdempotencyKey,
 } from "./recurring-command-primitives.js";
@@ -53,6 +54,24 @@ test("recurring fingerprints use the exact versioned field order and raw SHA-256
   }
   assert.throws(() => recurringRequestFingerprint({
     kind: "CANCEL", shopId: "shop\nforged", providerReference: "contract",
+  }), TypeError);
+});
+
+test("top-up fingerprint uses the canonical intent field order and raw SHA-256 bytes", () => {
+  const intent = "arch027-topup-v1\nONE_TIME_CHARGE\nshop_1\nusage_bronze\n1999\nUSD\n";
+  const fingerprint = recoveryCreditPurchaseFingerprint({
+    shopId: "shop_1",
+    merchantPricingUsageEventId: "usage_bronze",
+    quotedAmountMinor: 1999,
+    quotedCurrency: "USD",
+  });
+  assert.equal(fingerprint.length, 32);
+  assert.deepEqual(fingerprint, createHash("sha256").update(intent, "utf8").digest());
+  assert.throws(() => recoveryCreditPurchaseFingerprint({
+    shopId: "shop_1",
+    merchantPricingUsageEventId: "usage_bronze",
+    quotedAmountMinor: Number.MAX_SAFE_INTEGER + 1,
+    quotedCurrency: "USD",
   }), TypeError);
 });
 

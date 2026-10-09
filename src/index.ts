@@ -3,6 +3,7 @@ import { createDatabase } from "./database.js";
 import { BillingPresentationReadService } from "./billing/presentation/billing-read.service.js";
 import { BillingPlanCatalogueReadService } from "./billing/presentation/plan-catalogue-read.service.js";
 import { RecurringSubscriptionCommandService } from "./billing/commands/recurring-subscription-command.service.js";
+import { RecoveryCreditPurchaseCommandService } from "./billing/commands/recovery-credit-purchase-command.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
@@ -27,12 +28,12 @@ async function main(): Promise<void> {
     const bootstrapReadService = new MerchantBootstrapReadService(database.prisma);
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
-    const recurringSubscriptionCommandService = config.wooBilling
-      ? new RecurringSubscriptionCommandService(
-          database.prisma,
-          new WooBillingClient(config.wooBilling),
-          config.wooBilling.environment,
-        )
+    const wooBillingClient = config.wooBilling ? new WooBillingClient(config.wooBilling) : undefined;
+    const recurringSubscriptionCommandService = wooBillingClient && config.wooBilling
+      ? new RecurringSubscriptionCommandService(database.prisma, wooBillingClient, config.wooBilling.environment)
+      : undefined;
+    const recoveryCreditPurchaseCommandService = wooBillingClient && config.wooBilling
+      ? new RecoveryCreditPurchaseCommandService(database.prisma, wooBillingClient, config.wooBilling.environment)
       : undefined;
     const wooRoutes = createWooInstallationRoutes({
       mode: config.woocommerceConnectionMode,
@@ -41,6 +42,7 @@ async function main(): Promise<void> {
       billingReadService,
       billingPlanCatalogueReadService,
       ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),
+      ...(recoveryCreditPurchaseCommandService ? { recoveryCreditPurchaseCommandService } : {}),
       authenticator,
       logger,
     });
