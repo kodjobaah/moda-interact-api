@@ -1,0 +1,207 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Billing Commands API
+  version: 1.0.0
+  description: Authenticated recurring subscription create, switch, and cancellation commands for WooCommerce installations.
+servers:
+  - url: https://api.moda-interact.example
+paths:
+  /v1/billing/subscription:
+    post:
+      operationId: createWooRecurringSubscription
+      summary: Initiate a paid recurring subscription
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecurringPlanRequest'
+      responses:
+        '202':
+          description: Woo accepted a paid recurring contract intent; merchant confirmation is required.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmationResult'
+        '400': { $ref: '#/components/responses/CommandError' }
+        '401': { $ref: '#/components/responses/CommandError' }
+        '409': { $ref: '#/components/responses/CommandError' }
+        '413': { $ref: '#/components/responses/CommandError' }
+        '422': { $ref: '#/components/responses/CommandError' }
+        '502': { $ref: '#/components/responses/CommandError' }
+        '503': { $ref: '#/components/responses/CommandError' }
+        '500': { $ref: '#/components/responses/CommandError' }
+    delete:
+      operationId: cancelWooRecurringSubscription
+      summary: Initiate cancellation of the current recurring contract
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Woo accepted the cancellation command; paid Moda entitlement remains unchanged until verified lifecycle evidence.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CancellationResult'
+        '400': { $ref: '#/components/responses/CommandError' }
+        '401': { $ref: '#/components/responses/CommandError' }
+        '409': { $ref: '#/components/responses/CommandError' }
+        '422': { $ref: '#/components/responses/CommandError' }
+        '502': { $ref: '#/components/responses/CommandError' }
+        '503': { $ref: '#/components/responses/CommandError' }
+        '500': { $ref: '#/components/responses/CommandError' }
+  /v1/billing/subscription/switch:
+    post:
+      operationId: switchWooRecurringSubscriptionPlan
+      summary: Initiate a paid recurring plan switch
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecurringPlanRequest'
+      responses:
+        '202':
+          description: Woo accepted a plan-switch intent; merchant confirmation is required.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmationResult'
+        '400': { $ref: '#/components/responses/CommandError' }
+        '401': { $ref: '#/components/responses/CommandError' }
+        '409': { $ref: '#/components/responses/CommandError' }
+        '413': { $ref: '#/components/responses/CommandError' }
+        '422': { $ref: '#/components/responses/CommandError' }
+        '502': { $ref: '#/components/responses/CommandError' }
+        '503': { $ref: '#/components/responses/CommandError' }
+        '500': { $ref: '#/components/responses/CommandError' }
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: Moda installation credential
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Caller-generated per-command idempotency key. The accepted value is trimmed, then stored unchanged.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+        pattern: '^[A-Za-z0-9._:-]+$'
+  responses:
+    CommandError:
+      description: Bounded request, authentication, eligibility, provider, or internal error.
+      headers:
+        Cache-Control:
+          schema: { type: string, const: no-store }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/CommandError'
+  schemas:
+    RecurringPlanRequest:
+      type: object
+      additionalProperties: false
+      required: [merchantPricingPlanId]
+      properties:
+        merchantPricingPlanId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Opaque Moda catalogue identifier. Price and provider identity are resolved by the API.
+    ConfirmationResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, operationId, kind, state, confirmationUrl]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        operationId: { type: string, minLength: 1, maxLength: 128 }
+        kind: { type: string, enum: [SUBSCRIPTION_CREATE, PLAN_SWITCH] }
+        state: { type: string, const: AWAITING_CONFIRMATION }
+        confirmationUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: Validated HTTPS Woo confirmation URL for the configured environment.
+    CancellationResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, operationId, kind, state, confirmationUrl]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        operationId: { type: string, minLength: 1, maxLength: 128 }
+        kind: { type: string, const: CANCEL }
+        state: { type: string, const: CONFIRMED }
+        confirmationUrl: { type: 'null' }
+    CommandError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_request
+            - invalid_idempotency_key
+            - request_too_large
+            - unauthorized
+            - billing_provider_unavailable
+            - billing_shop_invalid
+            - billing_not_initialized
+            - billing_subscription_invalid
+            - billing_plan_unavailable
+            - billing_plan_materialization_invalid
+            - billing_plan_materialization_conflict
+            - billing_operation_conflict
+            - idempotency_conflict
+            - billing_operation_in_progress
+            - billing_operation_failed
+            - billing_provider_rejected
+            - billing_provider_outcome_unknown
+            - free_plan_uses_cancellation
+            - subscription_create_not_allowed
+            - subscription_switch_not_allowed
+            - billing_catalogue_mapping_invalid
+            - billing_plan_unchanged
+            - no_recurring_subscription
+            - internal_error
+        operationId:
+          type: string
+          minLength: 1
+          maxLength: 128
+        providerErrorCode:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Z0-9_]+$'
+          description: Bounded normalized provider result code; never a raw provider response.

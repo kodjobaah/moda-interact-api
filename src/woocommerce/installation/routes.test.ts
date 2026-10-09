@@ -7,9 +7,16 @@ import { MerchantBootstrapIntegrityError } from "../../merchant/bootstrap/bootst
 import { createApiRuntime } from "../../server.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { digestSecret } from "./credential.js";
-import { BILLING_PLANS_ROUTE_PATH, BILLING_PRESENTATION_ROUTE_PATH, createWooInstallationRoutes } from "./routes.js";
+import {
+  BILLING_PLANS_ROUTE_PATH,
+  BILLING_PRESENTATION_ROUTE_PATH,
+  BILLING_SUBSCRIPTION_ROUTE_PATH,
+  BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH,
+  createWooInstallationRoutes,
+} from "./routes.js";
 import { BillingPresentationError } from "../../billing/presentation/billing-read.service.js";
 import { BillingCatalogueError } from "../../billing/presentation/plan-catalogue-read.service.js";
+import { RecurringBillingCommandError } from "../../billing/commands/recurring-subscription-command.service.js";
 import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
@@ -27,6 +34,7 @@ async function withApi(
   connectionFailure?: Error,
   billingFailure?: Error,
   catalogueFailure?: Error,
+  recurringCommandOverride?: object,
 ): Promise<void> {
   const logLines: string[] = [];
   const calls: string[] = [];
@@ -138,6 +146,7 @@ async function withApi(
     bootstrapReadService: bootstrapReadService as never,
     billingReadService: billingReadService as never,
     billingPlanCatalogueReadService: billingPlanCatalogueReadService as never,
+    ...(recurringCommandOverride ? { recurringSubscriptionCommandService: recurringCommandOverride as never } : {}),
     authenticator: authenticatorOverride ?? authenticator as never,
     logger,
   });
@@ -485,4 +494,152 @@ test("billing routes map service failures to bounded API errors", async () => {
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { error: "billing_catalogue_invalid" });
   }, undefined, undefined, undefined, undefined, undefined, new BillingCatalogueError("billing_catalogue_invalid"));
+});
+
+test("recurring command routes authenticate and expose only bounded command results", async () => {
+  const responses = {
+    create: { schemaVersion: 1, operationId: "op-create", kind: "SUBSCRIPTION_CREATE", state: "AWAITING_CONFIRMATION", confirmationUrl: "https://woocommerce.com/checkout" },
+    switch: { schemaVersion: 1, operationId: "op-switch", kind: "PLAN_SWITCH", state: "AWAITING_CONFIRMATION", confirmationUrl: "https://woocommerce.com/switch" },
+    cancel: { schemaVersion: 1, operationId: "op-cancel", kind: "CANCEL", state: "CONFIRMED", confirmationUrl: null },
+  } as const;
+  const commandCalls: string[] = [];
+  const commandService = {
+    create: async (principal: { shopId: string }, key: string, planId: string) => {
+      commandCalls.push(`create:${principal.shopId}:${key}:${planId}`);
+      return responses.create;
+    },
+    switchPlan: async (principal: { shopId: string }, key: string, planId: string) => {
+      commandCalls.push(`switch:${principal.shopId}:${key}:${planId}`);
+      return responses.switch;
+    },
+    cancel: async (principal: { shopId: string }, key: string) => {
+      commandCalls.push(`cancel:${principal.shopId}:${key}`);
+      return responses.cancel;
+    },
+  };
+
+  await withApi(async (baseUrl, logs, calls) => {
+    const headers = {
+      "content-type": "application/json",
+      "Idempotency-Key": "request-1",
+      "X-Moda-Installation-Id": "install_123",
+      Authorization: `Bearer ${installationCredential}`,
+      "X-Shop-Id": "caller-controlled",
+    };
+    const create = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "POST", headers, body: JSON.stringify({ merchantPricingPlanId: "opaque-paid-id" }),
+    });
+    assert.equal(create.status, 202);
+    assert.equal(create.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await create.json(), responses.create);
+
+    const switched = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH}`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "request-2" },
+      body: JSON.stringify({ merchantPricingPlanId: "opaque-target-id" }),
+    });
+    assert.equal(switched.status, 202);
+    assert.deepEqual(await switched.json(), responses.switch);
+
+    const cancelled = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "DELETE", headers: { ...headers, "Idempotency-Key": "request-3", "content-type": "" },
+    });
+    assert.equal(cancelled.status, 200);
+    assert.deepEqual(await cancelled.json(), responses.cancel);
+    assert.deepEqual(commandCalls, [
+      "create:shop_456:request-1:opaque-paid-id",
+      "switch:shop_456:request-2:opaque-target-id",
+      "cancel:shop_456:request-3",
+    ]);
+    assert.equal(calls.filter((call) => call === "authenticate").length, 3);
+    assert.equal(logs.join("\n").includes("caller-controlled"), false);
+    assert.equal(logs.join("\n").includes("woocommerce.com"), false);
+  }, undefined, undefined, undefined, undefined, undefined, undefined, commandService);
+});
+
+test("recurring command routes reject missing keys, unknown fields, query parameters and DELETE bodies", async () => {
+  await withApi(async (baseUrl, _logs, calls) => {
+    const headers = {
+      "content-type": "application/json",
+      "X-Moda-Installation-Id": "install_123",
+      Authorization: `Bearer ${installationCredential}`,
+    };
+    const missingKey = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "POST", headers, body: JSON.stringify({ merchantPricingPlanId: "opaque-paid-id" }),
+    });
+    assert.equal(missingKey.status, 400);
+    assert.deepEqual(await missingKey.json(), { error: "invalid_idempotency_key" });
+
+    const unknownField = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "request-1" },
+      body: JSON.stringify({ merchantPricingPlanId: "opaque-paid-id", price: 1 }),
+    });
+    assert.equal(unknownField.status, 400);
+
+    const query = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH}?shopId=other`, {
+      method: "POST", headers: { ...headers, "Idempotency-Key": "request-2" },
+      body: JSON.stringify({ merchantPricingPlanId: "opaque-target-id" }),
+    });
+    assert.equal(query.status, 400);
+
+    const deleteBody = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "DELETE", headers: { ...headers, "Idempotency-Key": "request-3", "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(deleteBody.status, 400);
+    assert.deepEqual(calls, ["authenticate", "authenticate", "authenticate", "authenticate"]);
+  });
+
+  await withApi(async (baseUrl) => {
+    const unavailable = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "Idempotency-Key": "request-1", "X-Moda-Installation-Id": "install_123", Authorization: `Bearer ${installationCredential}` },
+      body: JSON.stringify({ merchantPricingPlanId: "opaque-paid-id" }),
+    });
+    assert.equal(unavailable.status, 503);
+    assert.deepEqual(await unavailable.json(), { error: "billing_provider_unavailable" });
+  });
+});
+
+test("recurring command errors remain bounded and unauthorized requests never reach the service", async () => {
+  const commandService = {
+    create: async () => { throw new RecurringBillingCommandError(409, "billing_operation_failed", "operation-safe-id", "PROVIDER_REJECTED"); },
+    switchPlan: async () => { throw new Error("must not be reached"); },
+    cancel: async () => { throw new Error("must not be reached"); },
+  };
+  await withApi(async (baseUrl, logs) => {
+    const response = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "Idempotency-Key": "safe-key",
+        "X-Moda-Installation-Id": "install_123",
+        Authorization: `Bearer ${installationCredential}`,
+      },
+      body: JSON.stringify({ merchantPricingPlanId: "opaque-plan" }),
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), {
+      error: "billing_operation_failed",
+      operationId: "operation-safe-id",
+      providerErrorCode: "PROVIDER_REJECTED",
+    });
+    assert.equal(logs.join("\n").includes("PROVIDER_REJECTED"), false);
+  }, undefined, undefined, undefined, undefined, undefined, undefined, commandService);
+
+  let reached = false;
+  const forbiddenService = {
+    create: async () => { reached = true; throw new Error("must not be reached"); },
+    switchPlan: async () => { reached = true; throw new Error("must not be reached"); },
+    cancel: async () => { reached = true; throw new Error("must not be reached"); },
+  };
+  await withApi(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}${BILLING_SUBSCRIPTION_ROUTE_PATH}`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "Idempotency-Key": "safe-key" },
+      body: JSON.stringify({ merchantPricingPlanId: "opaque-plan" }),
+    });
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { error: "unauthorized" });
+  }, undefined, undefined, { authenticate: async () => { throw new WooUnauthenticatedError(); } } as never, undefined, undefined, undefined, forbiddenService);
+  assert.equal(reached, false);
 });

@@ -17,6 +17,9 @@ export type FreePlanConfigurationFailureReason =
   | "free_catalogue_invalid"
   | "operational_free_plan_invalid"
   | "free_feature_configuration_invalid"
+  | "paid_catalogue_invalid"
+  | "operational_paid_plan_invalid"
+  | "paid_feature_configuration_invalid"
   | "free_recovery_policy_invalid"
   | "activation_retry_exhausted"
   | "unspecified";
@@ -42,7 +45,7 @@ export class RetryFreeActivationTransactionError extends Error {
   }
 }
 
-type FreeCataloguePlan = MerchantPricingPlan & {
+export type OperationalCataloguePlan = MerchantPricingPlan & {
   features: Array<{
     featureId: string;
     configuration: Prisma.JsonValue;
@@ -87,12 +90,12 @@ export class InitialWooFreeActivationService {
         cataloguePlans.length === 0 ? "free_catalogue_missing" : "multiple_free_catalogue_plans",
       );
     }
-    const catalogue = cataloguePlans[0] as FreeCataloguePlan | undefined;
+    const catalogue = cataloguePlans[0] as OperationalCataloguePlan | undefined;
     if (!catalogue || !isValidFreeCataloguePlan(catalogue)) {
       throw new FreePlanConfigurationUnavailableError("free_catalogue_invalid");
     }
 
-    const plan = await this.resolveOperationalPlan(transaction, catalogue);
+    const plan = await this.resolveOperationalPlan(transaction, catalogue, BillingPlanKind.FREE);
     const lifetimeCounter = await transaction.shopEntitlementCounter.findUnique({
       where: {
         shopId_counter: {
@@ -140,33 +143,56 @@ export class InitialWooFreeActivationService {
     return "ACTIVATED_FREE";
   }
 
+  async resolvePaidPlan(
+    transaction: Prisma.TransactionClient,
+    catalogue: OperationalCataloguePlan,
+  ): Promise<BillingPlan> {
+    if (
+      catalogue.planKind !== MerchantPricingPlanKind.PAID_METERED || !catalogue.isActive ||
+      catalogue.allowancePeriod !== MerchantPricingAllowancePeriod.EVERY_30_DAYS ||
+      catalogue.billingPeriod !== "EVERY_30_DAYS" || !Number.isSafeInteger(catalogue.includedRecoveryCredits) ||
+      catalogue.includedRecoveryCredits < 0 || !Number.isSafeInteger(catalogue.recurringAmountMinor) ||
+      catalogue.recurringAmountMinor <= 0 || catalogue.currency !== "USD"
+    ) throw new FreePlanConfigurationUnavailableError("paid_catalogue_invalid");
+    return this.resolveOperationalPlan(transaction, catalogue, BillingPlanKind.PAID_METERED);
+  }
+
   private async resolveOperationalPlan(
     transaction: Prisma.TransactionClient,
-    catalogue: FreeCataloguePlan,
+    catalogue: OperationalCataloguePlan,
+    expectedKind: BillingPlanKind,
   ): Promise<BillingPlan> {
     const existing = await transaction.billingPlan.findUnique({
       where: { shopifyPlanHandle: catalogue.shopifyPlanHandle },
     });
     if (existing) {
-      if (!existing.active || existing.kind !== BillingPlanKind.FREE) {
-        throw new FreePlanConfigurationUnavailableError("operational_free_plan_invalid");
+      if (!existing.active || existing.kind !== expectedKind) {
+        throw new FreePlanConfigurationUnavailableError(
+          expectedKind === BillingPlanKind.FREE ? "operational_free_plan_invalid" : "operational_paid_plan_invalid",
+        );
       }
       await markCatalogueMaterialized(transaction, catalogue);
       return existing;
     }
 
     if (!(await isValidMaterializationConfiguration(transaction, catalogue))) {
-      throw new FreePlanConfigurationUnavailableError("free_feature_configuration_invalid");
+      throw new FreePlanConfigurationUnavailableError(
+        expectedKind === BillingPlanKind.FREE ? "free_feature_configuration_invalid" : "paid_feature_configuration_invalid",
+      );
     }
     try {
       const plan = await transaction.billingPlan.create({
         data: {
           shopifyPlanHandle: catalogue.shopifyPlanHandle,
           name: catalogue.displayName,
-          kind: BillingPlanKind.FREE,
+          kind: expectedKind,
           active: true,
-          shopifyUsageEventHandle: null,
-          includedRecoveryConversationAllowance: null,
+          shopifyUsageEventHandle: expectedKind === BillingPlanKind.PAID_METERED
+            ? catalogue.shopifyRecoveryUsageEventHandle
+            : null,
+          includedRecoveryConversationAllowance: expectedKind === BillingPlanKind.PAID_METERED
+            ? catalogue.includedRecoveryCredits
+            : null,
           recoveryCreditPackEnabled: false,
           recoveryCreditsPerPack: null,
           shopifyRecoveryCreditPackEventHandle: null,
@@ -234,7 +260,7 @@ function isEmptyInitialSubscription(subscription: {
     subscription.lastProviderLifecycleEventAt === null;
 }
 
-function isValidFreeCataloguePlan(catalogue: FreeCataloguePlan): boolean {
+function isValidFreeCataloguePlan(catalogue: OperationalCataloguePlan): boolean {
   return catalogue.planKind === MerchantPricingPlanKind.FREE &&
     catalogue.isActive &&
     catalogue.allowancePeriod === MerchantPricingAllowancePeriod.LIFETIME &&
@@ -246,7 +272,7 @@ function isValidFreeCataloguePlan(catalogue: FreeCataloguePlan): boolean {
 
 async function isValidMaterializationConfiguration(
   transaction: Prisma.TransactionClient,
-  catalogue: FreeCataloguePlan,
+  catalogue: OperationalCataloguePlan,
 ): Promise<boolean> {
   if (
     !catalogue.features.some((mapping) =>
@@ -285,7 +311,7 @@ async function isValidMaterializationConfiguration(
 
 async function markCatalogueMaterialized(
   transaction: Prisma.TransactionClient,
-  catalogue: FreeCataloguePlan,
+  catalogue: OperationalCataloguePlan,
 ): Promise<void> {
   if (catalogue.materializedAt === null) {
     await transaction.merchantPricingPlan.updateMany({

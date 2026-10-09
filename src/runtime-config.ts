@@ -1,3 +1,5 @@
+import { loadWooBillingConfig, type WooBillingConfig } from "./woocommerce/billing/woo-billing-config.js";
+
 export interface RuntimeConfig {
   databaseUrl: string;
   host: "0.0.0.0";
@@ -5,6 +7,7 @@ export interface RuntimeConfig {
   environment: string;
   readinessTimeoutMs: number;
   woocommerceConnectionMode: "public" | "local-development";
+  wooBilling: WooBillingConfig | null;
 }
 
 export type RuntimeEnvironment = Readonly<Record<string, string | undefined>>;
@@ -54,6 +57,8 @@ export function loadRuntimeConfig(
     );
   }
 
+  const wooBilling = loadWooBillingConfig(environment);
+
   return {
     databaseUrl,
     host: "0.0.0.0",
@@ -61,5 +66,6 @@ export function loadRuntimeConfig(
     environment: environmentName,
     readinessTimeoutMs: READINESS_TIMEOUT_MS,
     woocommerceConnectionMode: connectionMode,
+    wooBilling,
   };
 }
