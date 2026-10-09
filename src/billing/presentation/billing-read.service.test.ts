@@ -246,6 +246,38 @@ test("one unresolved top-up purchase disables only its own predefined bundle", a
   assert.equal(JSON.stringify(response).includes("providerReference"), false);
 });
 
+test("a FAILED one-time operation remains historical but does not block its bundle", async () => {
+  const failedPurchase = {
+    id: "purchase_failed",
+    shopId: principal.shopId,
+    status: "REQUESTED",
+    creditsGranted: 10,
+    currentAmount: 0,
+    reservedAmount: 0,
+    createdAt: new Date("2026-10-07T12:00:00.000Z"),
+    activatedAt: null,
+    billingOperation: {
+      shopId: principal.shopId,
+      kind: "ONE_TIME_CHARGE",
+      state: "FAILED",
+      recoveryCreditPurchaseId: "purchase_failed",
+      merchantPricingUsageEventId: "usage_bronze",
+      merchantPricingUsageEvent: {
+        id: "usage_bronze",
+        adminLabel: "Bronze",
+        creditsGrantedPerUnit: 10,
+        merchantPricingPlanId: "mp_free",
+      },
+    },
+  };
+  const { service } = projectionService({ latestPurchase: failedPurchase, requestedPurchases: [failedPurchase] });
+  const response = await service.read(principal);
+  assert.equal(response.topUps.offers[0]?.purchaseEligible, true);
+  assert.equal(response.topUps.offers[0]?.unavailableReason, null);
+  assert.deepEqual(response.topUps.unresolvedPurchases, []);
+  assert.equal(response.topUps.latestPurchase?.operationState, "FAILED");
+});
+
 test("paid downgrade uses current allowance without rejecting historical overage", async () => {
   const periodStart = new Date("2026-10-01T00:00:00.000Z");
   const periodEnd = new Date("2026-10-31T00:00:00.000Z");

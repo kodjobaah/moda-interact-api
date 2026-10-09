@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: Moda Interact WooCommerce Billing Commands API
   version: 1.0.0
-  description: Authenticated recurring subscription create, switch, and cancellation commands for WooCommerce installations.
+  description: Authenticated recurring subscription and predefined recovery-credit purchase commands for WooCommerce installations.
 servers:
   - url: https://api.moda-interact.example
 paths:
@@ -115,6 +115,49 @@ paths:
         '502': { $ref: '#/components/responses/CommandError' }
         '503': { $ref: '#/components/responses/CommandError' }
         '500': { $ref: '#/components/responses/CommandError' }
+  /v1/billing/recovery-credit-purchases:
+    post:
+      operationId: initiateWooRecoveryCreditPurchase
+      summary: Initiate one predefined recovery-credit bundle charge
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryCreditPurchaseRequest'
+      responses:
+        '200':
+          description: The idempotent command already reached CONFIRMED; the persisted result is returned without another provider write.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCreditPurchaseResult'
+        '202':
+          description: Woo accepted one predefined bundle charge; merchant confirmation is required.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryCreditPurchaseResult'
+        '400': { $ref: '#/components/responses/CommandError' }
+        '401': { $ref: '#/components/responses/CommandError' }
+        '404': { $ref: '#/components/responses/CommandError' }
+        '409': { $ref: '#/components/responses/CommandError' }
+        '413': { $ref: '#/components/responses/CommandError' }
+        '422': { $ref: '#/components/responses/CommandError' }
+        '502': { $ref: '#/components/responses/CommandError' }
+        '503': { $ref: '#/components/responses/CommandError' }
+        '500': { $ref: '#/components/responses/CommandError' }
 components:
   securitySchemes:
     WooInstallationId:
@@ -157,6 +200,30 @@ components:
           minLength: 1
           maxLength: 128
           description: Opaque Moda catalogue identifier. Price and provider identity are resolved by the API.
+    RecoveryCreditPurchaseRequest:
+      type: object
+      additionalProperties: false
+      required: [merchantPricingUsageEventId]
+      properties:
+        merchantPricingUsageEventId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          description: Opaque identifier for one current-plan predefined recovery-credit bundle.
+    RecoveryCreditPurchaseResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, purchaseId, operationId, state, confirmationUrl]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        purchaseId: { type: string, minLength: 1, maxLength: 128 }
+        operationId: { type: string, minLength: 1, maxLength: 128 }
+        state: { type: string, enum: [AWAITING_CONFIRMATION, CONFIRMED] }
+        confirmationUrl:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: Validated HTTPS Woo confirmation URL; purchase activation requires later verified provider evidence.
     ConfirmationResult:
       type: object
       additionalProperties: false
@@ -212,6 +279,10 @@ components:
             - billing_catalogue_mapping_invalid
             - billing_plan_unchanged
             - no_recurring_subscription
+            - top_up_purchase_unavailable
+            - top_up_bundle_not_found
+            - top_up_bundle_unavailable
+            - top_up_purchase_pending
             - internal_error
         operationId:
           type: string
@@ -223,3 +294,7 @@ components:
           maxLength: 128
           pattern: '^[A-Z0-9_]+$'
           description: Bounded normalized provider result code; never a raw provider response.
+        purchaseId:
+          type: string
+          minLength: 1
+          maxLength: 128

@@ -40,6 +40,32 @@ test("provider client sends Basic auth, JSON and disables redirects", async () =
   assert.ok(call?.init.signal);
 });
 
+test("provider client creates one-time charges with no quantity or caller-controlled price fields", async () => {
+  let call: { url: URL; init: RequestInit } | undefined;
+  const client = new WooBillingClient(sandbox, async (input, init) => {
+    call = { url: new URL(String(input)), init: init! };
+    return new Response(JSON.stringify({ id: "charge-id", confirmation_url: "https://sandbox.woocommerce.com/confirm" }), {
+      status: 201,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  await client.createCharge({
+    name: "Bronze recovery credits",
+    price: "19.99",
+    return_url: "https://merchant.example/wp-admin/admin.php",
+  });
+  assert.equal(call?.url.href, "https://sandbox.woocommerce.com/wp-json/wccom/billing/1.0/charges");
+  assert.equal(call?.init.method, "POST");
+  assert.deepEqual(JSON.parse(String(call?.init.body)), {
+    name: "Bronze recovery credits",
+    price: "19.99",
+    return_url: "https://merchant.example/wp-admin/admin.php",
+  });
+  assert.equal("quantity" in JSON.parse(String(call?.init.body)), false);
+  assert.equal((call?.init.headers as Record<string, string>).authorization, `Basic ${Buffer.from("test-key:test-secret").toString("base64")}`);
+  assert.equal(call?.init.redirect, "manual");
+});
+
 test("provider client rejects redirects/5xx ambiguously and complete 4xx definitely", async () => {
   for (const [status, outcome] of [[302, "OUTCOME_UNKNOWN"], [503, "OUTCOME_UNKNOWN"], [422, "DEFINITE_REJECTION"]] as const) {
     const client = new WooBillingClient(sandbox, async () => new Response("secret-provider-body", { status }));

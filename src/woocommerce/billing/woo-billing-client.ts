@@ -26,6 +26,12 @@ export interface WooSubscriptionResponse {
   confirmation_url: string;
 }
 
+export interface WooChargeRequest {
+  name: string;
+  price: string;
+  return_url: string;
+}
+
 export class WooBillingClient {
   constructor(
     private readonly config: WooBillingConfig,
@@ -36,6 +42,10 @@ export class WooBillingClient {
     return this.request("POST", "subscriptions", body);
   }
 
+  createCharge(body: WooChargeRequest): Promise<unknown> {
+    return this.request("POST", "charges", body);
+  }
+
   switchSubscription(contractId: string, body: WooSubscriptionRequest): Promise<unknown> {
     return this.request("POST", `subscriptions/${encodeURIComponent(contractId)}`, body);
   }
@@ -44,7 +54,7 @@ export class WooBillingClient {
     await this.request("DELETE", `subscriptions/${encodeURIComponent(contractId)}`);
   }
 
-  private async request(method: "POST" | "DELETE", path: string, body?: WooSubscriptionRequest): Promise<unknown> {
+  private async request(method: "POST" | "DELETE", path: string, body?: WooSubscriptionRequest | WooChargeRequest): Promise<unknown> {
     const authorization = Buffer.from(`${this.config.apiKey}:${this.config.apiSecret}`, "utf8").toString("base64");
     let response: Response;
     try {
