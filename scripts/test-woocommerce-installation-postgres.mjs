@@ -75,6 +75,7 @@ try {
     env: { ...environment, WOO_INSTALLATION_TEST_DATABASE_URL: databaseUrl },
     stdio: "inherit",
   });
+  run("node", ["--import", "tsx", "--test", "--test-concurrency=1", "src/woocommerce/billing/webhooks/webhook-receipt.service.postgres.test.ts"], {
   run("node", ["--import", "tsx", "--test", "--test-concurrency=1", "src/merchant/store-context/store-context.service.postgres.test.ts"], {
     env: { ...environment, WOO_INSTALLATION_TEST_DATABASE_URL: databaseUrl },
     stdio: "inherit",

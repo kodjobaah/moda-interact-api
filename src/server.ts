@@ -3,6 +3,7 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import type { ReadinessDatabase } from "./database.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import type { WooInstallationRouteHandler } from "./woocommerce/installation/routes.js";
+import type { WooBillingWebhookRouteHandler } from "./woocommerce/billing/webhooks/woo-billing-webhook-route.js";
 
 export interface ApiRuntime {
   server: Server;
@@ -19,6 +20,7 @@ interface ApiServerOptions {
   logger: StructuredLogger;
   readinessTimeoutMs: number;
   wooRoutes?: WooInstallationRouteHandler;
+  wooBillingWebhookRoutes?: WooBillingWebhookRouteHandler;
 }
 
 function sendJson(
@@ -51,6 +53,7 @@ function createHttpServer({
   logger,
   readinessTimeoutMs,
   wooRoutes,
+  wooBillingWebhookRoutes,
 }: ApiServerOptions): Server {
   return createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
@@ -77,6 +80,21 @@ function createHttpServer({
       return;
     }
 
+    if (wooBillingWebhookRoutes) {
+      void wooBillingWebhookRoutes.handle(request, response).then((handled) => {
+        if (handled) return;
+        if (wooRoutes) {
+          return wooRoutes.handle(request, response).then((installationHandled) => {
+            if (!installationHandled) sendJson(response, 404, { error: "not_found" });
+          });
+        }
+        sendJson(response, 404, { error: "not_found" });
+      }).catch(() => {
+        if (!response.destroyed) sendJson(response, 500, { error: "internal_error" });
+      });
+      return;
+    }
+
     if (wooRoutes) {
       void wooRoutes.handle(request, response).then((handled) => {
         if (!handled) sendJson(response, 404, { error: "not_found" });
@@ -95,12 +113,14 @@ export function createApiRuntime(
   database: ReadinessDatabase,
   logger: StructuredLogger,
   wooRoutes?: WooInstallationRouteHandler,
+  wooBillingWebhookRoutes?: WooBillingWebhookRouteHandler,
 ): ApiRuntime {
   const server = createHttpServer({
     database,
     logger,
     readinessTimeoutMs: config.readinessTimeoutMs,
     ...(wooRoutes ? { wooRoutes } : {}),
+    ...(wooBillingWebhookRoutes ? { wooBillingWebhookRoutes } : {}),
   });
   let startPromise: Promise<void> | undefined;
   let shutdownPromise: Promise<void> | undefined;
