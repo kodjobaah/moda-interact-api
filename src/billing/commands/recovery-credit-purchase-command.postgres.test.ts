@@ -295,6 +295,7 @@ test("PostgreSQL paid top-up snapshots the current open period and rejects a clo
   const { catalogue, plan } = await createCatalogue("paid", "PAID_METERED");
   const shop = await createShop("paid", plan.id, "PAID_METERED", `woo-contract-${suffix}`);
   const bundle = await createBundle(catalogue.id, "Paid Bronze", 0);
+  await db.subscription.update({ where: { shopId: shop.shopId }, data: { cancelAtPeriodEnd: true } });
   const calls: WooChargeRequest[] = [];
   const service = billingService({
     createCharge: async (body) => {
@@ -317,6 +318,33 @@ test("PostgreSQL paid top-up snapshots the current open period and rejects a clo
     409,
   );
   assert.equal(calls.length, 1);
+});
+
+test("PostgreSQL admits scheduled-cancellation paid top-ups and rejects unavailable subscription states", {
+  skip: !databaseUrl,
+}, async () => {
+  const db = database();
+  const { catalogue, plan } = await createCatalogue("eligibility_states", "FREE");
+  const shop = await createShop("eligibility_states", plan.id, "FREE");
+  const bundle = await createBundle(catalogue.id, "Eligible Free Bundle", 0);
+  let calls = 0;
+  const service = billingService({
+    createCharge: async () => {
+      calls += 1;
+      return { id: randomUUID(), confirmation_url: "https://woocommerce.com/checkout/state" };
+    },
+  });
+  for (const [index, status] of (["FROZEN", "NO_CONTRACT", "UNMAPPED", "SYNC_ERROR"] as const).entries()) {
+    await db.subscription.update({ where: { shopId: shop.shopId }, data: { status } });
+    await assertCommandError(
+      service.initiate(principal(shop.shopId, shop.domain), `ineligible-${index}-${suffix}`, bundle.id),
+      "top_up_purchase_unavailable",
+      409,
+    );
+  }
+  assert.equal(calls, 0);
+  assert.equal(await db.billingOperation.count({ where: { shopId: shop.shopId } }), 0);
+  assert.equal(await db.recoveryCreditPurchase.count({ where: { shopId: shop.shopId } }), 0);
 });
 
 test("PostgreSQL catalogue validation hides foreign bundles and rejects non-FIXED or invalid USD offers", {
