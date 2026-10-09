@@ -5,6 +5,8 @@ import { BillingPlanCatalogueReadService } from "./billing/presentation/plan-cat
 import { RecurringSubscriptionCommandService } from "./billing/commands/recurring-subscription-command.service.js";
 import { RecoveryCreditPurchaseCommandService } from "./billing/commands/recovery-credit-purchase-command.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
+import { MerchantRecoverySummaryService } from "./merchant/recovery-summary/recovery-summary.service.js";
+import { createMerchantRecoverySummaryRoute } from "./merchant/recovery-summary/routes.js";
 import { MerchantStoreContextService } from "./merchant/store-context/store-context.service.js";
 import { StoreCategoriesReadService, commerceEnvironmentForApi } from "./merchant/store-categories/store-categories-read.service.js";
 import { createStoreCategoriesRoute } from "./merchant/store-categories/routes.js";
@@ -42,6 +44,9 @@ async function main(): Promise<void> {
     const storeCategorySelectionRoute = createStoreCategorySelectionRoute({
       service: storeCategorySelectionService, authenticator, logger,
     });
+    const recoverySummaryRoute = createMerchantRecoverySummaryRoute({
+      service: new MerchantRecoverySummaryService(database.prisma), authenticator, logger,
+    });
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
     const wooBillingClient = config.wooBilling ? new WooBillingClient(config.wooBilling) : undefined;
@@ -58,6 +63,7 @@ async function main(): Promise<void> {
       storeContextService,
       storeCategoriesRoute,
       storeCategorySelectionRoute,
+      recoverySummaryRoute,
       billingReadService,
       billingPlanCatalogueReadService,
       ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),

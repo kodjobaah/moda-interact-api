@@ -1,0 +1,70 @@
+openapi: 3.1.0
+info:
+  title: Moda WooCommerce Merchant Recovery Summary
+  version: 1.0.0
+paths:
+  /v1/merchant/recovery-summary:
+    get:
+      operationId: readMerchantRecoverySummary
+      summary: Read the shop's effective recovery policy (including active Admin override)
+      description: Authenticated via X-Moda-Installation-Id and a server-side Bearer credential; never accepts a browser shopId. Read only.
+      security:
+        - installationBearer: []
+      parameters:
+        - name: X-Moda-Installation-Id
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Effective recovery policy snapshot
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoverySummary'
+        '400':
+          description: Invalid query or body
+        '401':
+          description: Missing or invalid installation credential
+        '409':
+          description: Installation or shop integrity failure
+        '500':
+          description: Invalid underlying policy or unexpected database error
+components:
+  securitySchemes:
+    installationBearer:
+      type: http
+      scheme: bearer
+  schemas:
+    RecoverySummary:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, recoveryDelayMinutes, recoveryOfferMode, followUpEnabled, followUpDelayMinutes, source]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        recoveryDelayMinutes:
+          type: integer
+          minimum: 0
+          maximum: 10080
+        recoveryOfferMode:
+          type: string
+          enum: [NONE, FIXED, AI_BEST_APPLICABLE]
+        followUpEnabled:
+          type: boolean
+        followUpDelayMinutes:
+          anyOf:
+            - type: integer
+              minimum: 1
+              maximum: 10080
+            - type: 'null'
+        source:
+          type: string
+          enum: [MERCHANT, ADMIN_OVERRIDE]
