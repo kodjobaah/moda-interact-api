@@ -210,15 +210,18 @@ export class RecurringSubscriptionCommandService {
             kind: { in: [BillingOperationKind.SUBSCRIPTION_CREATE, BillingOperationKind.PLAN_SWITCH, BillingOperationKind.CANCEL] },
           },
           orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          select: { kind: true, state: true },
+          select: { kind: true, state: true, providerReference: true },
         });
         const hasUnresolvedOperation = operations.some((operation) =>
           operation.state === BillingOperationState.INITIATING ||
           operation.state === BillingOperationState.AWAITING_CONFIRMATION ||
           operation.state === BillingOperationState.OUTCOME_UNKNOWN,
         );
-        const hasConfirmedCancellation = operations.some((operation) =>
-          operation.kind === BillingOperationKind.CANCEL && operation.state === BillingOperationState.CONFIRMED,
+        const currentProviderReference = nonBlank(subscription?.providerSubscriptionId ?? null);
+        const hasConfirmedCancellationForCurrentContract = operations.some((operation) =>
+          operation.kind === BillingOperationKind.CANCEL && operation.state === BillingOperationState.CONFIRMED &&
+          (subscription?.cancelAtPeriodEnd === true || !currentProviderReference ||
+            operation.providerReference === currentProviderReference),
         );
         const canCreateAfterTerminalCancellation = kind === "SUBSCRIPTION_CREATE" &&
           subscription?.status === SubscriptionProjectionStatus.ACTIVE &&
@@ -226,7 +229,8 @@ export class RecurringSubscriptionCommandService {
           subscription.providerSubscriptionId === null &&
           subscription.billingPeriodId === null &&
           !subscription.cancelAtPeriodEnd;
-        if (hasUnresolvedOperation || (hasConfirmedCancellation && !canCreateAfterTerminalCancellation)) {
+        if (hasUnresolvedOperation ||
+          (hasConfirmedCancellationForCurrentContract && !canCreateAfterTerminalCancellation)) {
           throw new RecurringBillingCommandError(409, "billing_operation_conflict");
         }
         if (!subscription?.plan || subscription.planId !== subscription.plan.id) {

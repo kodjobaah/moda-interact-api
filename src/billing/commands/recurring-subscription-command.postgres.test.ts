@@ -311,6 +311,129 @@ test("PostgreSQL recurring create, replay, switch and cancel persist operations 
     counters: await db.shopEntitlementCounter.findMany({ where: { shopId: cancelShop.shopId }, orderBy: { counter: "asc" } }),
   }, terminalFreeProjection, "new create intent must not change the terminal Free entitlement projection");
 
+  const paidOperationalPlan = await db.billingPlan.findUniqueOrThrow({
+    where: { shopifyPlanHandle: paidCatalogue.shopifyPlanHandle },
+  });
+  const activatedAt = new Date(Date.now() - 60_000);
+  const coveredUntil = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+  const resubscriptionOperation = await db.billingOperation.findUniqueOrThrow({ where: { id: resubscribed.operationId } });
+  assert.equal(resubscriptionOperation.providerReference, `woo_resubscribed_${suffix}`);
+  await db.billingOperation.update({ where: { id: resubscribed.operationId }, data: { state: "CONFIRMED" } });
+  const resubscription = await db.subscription.findUniqueOrThrow({ where: { shopId: cancelShop.shopId } });
+  const activatedPeriod = await db.billingPeriod.create({
+    data: {
+      shopId: cancelShop.shopId,
+      subscriptionId: resubscription.id,
+      planId: paidOperationalPlan.id,
+      shopifyPlanHandleSnapshot: paidCatalogue.shopifyPlanHandle,
+      planNameSnapshot: paidCatalogue.displayName,
+      planKindSnapshot: "PAID_METERED",
+      includedRecoveryCreditsGranted: paidCatalogue.includedRecoveryCredits,
+      periodStart: activatedAt,
+      periodEnd: coveredUntil,
+      entitlementCounters: {
+        create: {
+          shopId: cancelShop.shopId,
+          counter: "INCLUDED_RECOVERY_CREDITS",
+          grantedQuantity: paidCatalogue.includedRecoveryCredits,
+          currentAllowanceQuantity: paidCatalogue.includedRecoveryCredits,
+          committedQuantity: 0,
+          reservedQuantity: 0,
+          forfeitedQuantity: 0,
+        },
+      },
+    },
+  });
+  await db.shopEntitlementCounter.create({
+    data: {
+      shopId: cancelShop.shopId,
+      counter: "LIFETIME_FREE_RECOVERY_CREDITS",
+      grantedQuantity: 2,
+      committedQuantity: 1,
+      reservedQuantity: 0,
+    },
+  });
+  await db.subscription.update({
+    where: { shopId: cancelShop.shopId },
+    data: {
+      planId: paidOperationalPlan.id,
+      status: "ACTIVE",
+      providerSubscriptionId: `woo_resubscribed_${suffix}`,
+      billingPeriodId: activatedPeriod.id,
+      currentPeriodStart: activatedAt,
+      currentPeriodEnd: coveredUntil,
+      cancelAtPeriodEnd: false,
+    },
+  });
+
+  const bProjectionBeforeSwitch = {
+    subscription: await db.subscription.findUniqueOrThrow({ where: { shopId: cancelShop.shopId } }),
+    periods: await db.billingPeriod.findMany({ where: { shopId: cancelShop.shopId }, include: { entitlementCounters: true } }),
+    counters: await db.shopEntitlementCounter.findMany({ where: { shopId: cancelShop.shopId }, orderBy: { counter: "asc" } }),
+  };
+  const bSwitch = await service.switchPlan(
+    principal(cancelShop.shopId, cancelShop.domain),
+    `switch-contract-b-${suffix}`,
+    secondPaidCatalogue.id,
+  );
+  assert.equal(bSwitch.state, "AWAITING_CONFIRMATION");
+  const bSwitchCall = providerCalls[4];
+  assert.equal(bSwitchCall?.kind, "switch");
+  assert.equal(bSwitchCall?.reference, `woo_resubscribed_${suffix}`);
+  assert.deepEqual(bSwitchCall?.body && {
+    name: (bSwitchCall.body as { name: string }).name,
+    price: (bSwitchCall.body as { price: string }).price,
+    billing_period: (bSwitchCall.body as { billing_period: string }).billing_period,
+    billing_interval: (bSwitchCall.body as { billing_interval: number }).billing_interval,
+  }, { name: secondPaidCatalogue.displayName, price: "49.00", billing_period: "month", billing_interval: 1 });
+  assert.match((bSwitchCall?.body as { return_url: string }).return_url, new RegExp(`operation=${bSwitch.operationId}$`));
+  const bSwitchOperation = await db.billingOperation.findUniqueOrThrow({ where: { id: bSwitch.operationId } });
+  assert.equal(bSwitchOperation.providerReference, `woo_resubscribed_${suffix}`);
+  assert.equal(await db.billingOperation.count({ where: { shopId: cancelShop.shopId } }), 3);
+  assert.deepEqual({
+    subscription: await db.subscription.findUniqueOrThrow({ where: { shopId: cancelShop.shopId } }),
+    periods: await db.billingPeriod.findMany({ where: { shopId: cancelShop.shopId }, include: { entitlementCounters: true } }),
+    counters: await db.shopEntitlementCounter.findMany({ where: { shopId: cancelShop.shopId }, orderBy: { counter: "asc" } }),
+  }, bProjectionBeforeSwitch, "switch of contract B must not synchronously alter entitlement state");
+
+  const secondPaidOperationalPlan = await db.billingPlan.findUniqueOrThrow({
+    where: { shopifyPlanHandle: secondPaidCatalogue.shopifyPlanHandle },
+  });
+  await db.billingOperation.update({ where: { id: bSwitch.operationId }, data: { state: "CONFIRMED" } });
+  await db.billingPeriod.update({
+    where: { id: activatedPeriod.id },
+    data: { planId: secondPaidOperationalPlan.id, shopifyPlanHandleSnapshot: secondPaidCatalogue.shopifyPlanHandle },
+  });
+  await db.subscription.update({ where: { shopId: cancelShop.shopId }, data: { planId: secondPaidOperationalPlan.id } });
+  const bProjectionBeforeCancel = {
+    subscription: await db.subscription.findUniqueOrThrow({ where: { shopId: cancelShop.shopId } }),
+    periods: await db.billingPeriod.findMany({ where: { shopId: cancelShop.shopId }, include: { entitlementCounters: true } }),
+    counters: await db.shopEntitlementCounter.findMany({ where: { shopId: cancelShop.shopId }, orderBy: { counter: "asc" } }),
+  };
+  const bCancelled = await service.cancel(principal(cancelShop.shopId, cancelShop.domain), `cancel-contract-b-${suffix}`);
+  assert.equal(bCancelled.state, "CONFIRMED");
+  assert.deepEqual(providerCalls[5], { kind: "cancel", reference: `woo_resubscribed_${suffix}` });
+  const bCancelOperation = await db.billingOperation.findUniqueOrThrow({ where: { id: bCancelled.operationId } });
+  assert.equal(bCancelOperation.providerReference, `woo_resubscribed_${suffix}`);
+  assert.equal(await db.billingOperation.count({ where: { shopId: cancelShop.shopId } }), 4);
+  assert.deepEqual({
+    subscription: await db.subscription.findUniqueOrThrow({ where: { shopId: cancelShop.shopId } }),
+    periods: await db.billingPeriod.findMany({ where: { shopId: cancelShop.shopId }, include: { entitlementCounters: true } }),
+    counters: await db.shopEntitlementCounter.findMany({ where: { shopId: cancelShop.shopId }, orderBy: { counter: "asc" } }),
+  }, bProjectionBeforeCancel, "cancel of contract B must not synchronously alter entitlement state");
+  assert.deepEqual(await db.billingOperation.findUniqueOrThrow({ where: { id: cancelOperation.id } }), cancelOperation,
+    "historical cancellation A remains unchanged after commands on contract B");
+  await assert.rejects(
+    service.switchPlan(principal(cancelShop.shopId, cancelShop.domain), `blocked-after-current-cancel-${suffix}`, paidCatalogue.id),
+    (error: unknown) => error instanceof RecurringBillingCommandError && error.code === "billing_operation_conflict",
+  );
+  await assert.rejects(
+    service.cancel(principal(cancelShop.shopId, cancelShop.domain), `blocked-repeat-current-cancel-${suffix}`),
+    (error: unknown) => error instanceof RecurringBillingCommandError && error.code === "billing_operation_conflict",
+  );
+  assert.equal(providerCalls.length, 6, "current contract B confirmed cancellation must continue fencing provider writes");
+  assert.equal(await db.billingOperation.count({ where: { shopId: cancelShop.shopId } }), 4);
+
   const after = await Promise.all([freeShop, paidShop].map(async ({ shopId }) => ({
     subscription: await db.subscription.findUniqueOrThrow({ where: { shopId } }),
     periods: await db.billingPeriod.count({ where: { shopId } }),
@@ -319,7 +442,7 @@ test("PostgreSQL recurring create, replay, switch and cancel persist operations 
   assert.deepEqual(after, before.slice(0, 2), "provider commands must not change Subscription, BillingPeriod or entitlement counters");
   assert.equal(await db.billingOperation.count({ where: { shopId: freeShop.shopId } }), 1);
   assert.equal(await db.billingOperation.count({ where: { shopId: paidShop.shopId } }), 1);
-  assert.equal(await db.billingOperation.count({ where: { shopId: cancelShop.shopId } }), 2);
+  assert.equal(await db.billingOperation.count({ where: { shopId: cancelShop.shopId } }), 4);
 });
 
 test("PostgreSQL serializes different recurring keys before any second provider write", {
