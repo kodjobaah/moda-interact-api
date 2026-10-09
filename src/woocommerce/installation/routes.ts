@@ -12,6 +12,7 @@ import { BillingCatalogueError, BillingPlanCatalogueReadService } from "../../bi
 import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from "../../billing/presentation/schemas.js";
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
+import type { createStoreCategoriesRoute } from "../../merchant/store-categories/routes.js";
 import { MerchantStoreContextConflictError, MerchantStoreContextService } from "../../merchant/store-context/store-context.service.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
@@ -46,6 +47,7 @@ interface WooInstallationRouteOptions {
   connectionService: WooInstallationConnectionService;
   bootstrapReadService: MerchantBootstrapReadService;
   storeContextService: MerchantStoreContextService;
+  storeCategoriesRoute?: ReturnType<typeof createStoreCategoriesRoute>;
   billingReadService?: BillingPresentationReadService;
   billingPlanCatalogueReadService?: BillingPlanCatalogueReadService;
   recurringSubscriptionCommandService?: RecurringSubscriptionCommandService;
@@ -60,6 +62,7 @@ export function createWooInstallationRoutes({
   connectionService,
   bootstrapReadService,
   storeContextService,
+  storeCategoriesRoute,
   billingReadService,
   billingPlanCatalogueReadService,
   recurringSubscriptionCommandService,
@@ -70,6 +73,7 @@ export function createWooInstallationRoutes({
 }: WooInstallationRouteOptions): WooInstallationRouteHandler {
   return {
     async handle(request, response) {
+      if (storeCategoriesRoute && await storeCategoriesRoute.handle(request, response)) return true;
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
       if (requestUrl.pathname === CONNECT_ROUTE_PATH && request.method === "POST") {
         const startedAt = now();

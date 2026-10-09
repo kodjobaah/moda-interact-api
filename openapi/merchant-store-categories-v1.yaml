@@ -1,0 +1,159 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact Woo Merchant Store Categories Read API
+  version: 1.0.0
+  description: Read-only localized canonical category choices and selected shop profile.
+paths:
+  /v1/merchant/store-categories:
+    get:
+      operationId: getMerchantStoreCategories
+      summary: List selectable store categories and current profile for this installation
+      description: >-
+        Authenticate the active WooCommerce installation. The Shop is derived exclusively
+        from its credential; category selection, prompt publication, onboarding and billing
+        are never changed by GET. The locale is the administrator's UI preference and
+        is independent of the provider-native Shop language. No prompt text is returned.
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - in: query
+          name: locale
+          required: false
+          description: Bounded UI locale, accepting WordPress underscore or BCP-47 forms.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 64
+          example: en_GB
+      responses:
+        '200':
+          description: Localized selectable categories and this Shop's category state
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StoreCategoriesReadResponse'
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/IntegrityConflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url(32-byte credential)
+  schemas:
+    CategoryIdentity:
+      type: object
+      additionalProperties: false
+      required: [id, slug, localizedDisplayName, localizedDescription]
+      properties:
+        id: { type: string, maxLength: 128 }
+        slug: { type: string, maxLength: 128 }
+        localizedDisplayName: { type: string, maxLength: 255 }
+        localizedDescription: { type: string, maxLength: 4096 }
+    StoreCategoryChoice:
+      type: object
+      additionalProperties: false
+      required: [id, slug, localizedDisplayName, localizedDescription, mappings, defaultTemplate]
+      properties:
+        id: { type: string, maxLength: 128 }
+        slug: { type: string, maxLength: 128 }
+        localizedDisplayName: { type: string, maxLength: 255 }
+        localizedDescription: { type: string, maxLength: 4096 }
+        mappings:
+          type: array
+          maxItems: 50
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, conditionKey, localizedDisplayName]
+            properties:
+              id: { type: string, maxLength: 128 }
+              conditionKey: { type: string, maxLength: 128 }
+              localizedDisplayName: { type: string, maxLength: 255 }
+        defaultTemplate:
+          type: object
+          additionalProperties: false
+          required: [id, key, displayName, editVersion]
+          properties:
+            id: { type: string, maxLength: 128 }
+            key: { type: string, maxLength: 128 }
+            displayName: { type: string, maxLength: 255 }
+            editVersion: { type: integer, minimum: 1 }
+    PendingTemplate:
+      type: [object, 'null']
+      additionalProperties: false
+      required: [id, key, displayName, editVersion]
+      properties:
+        id: { type: string, maxLength: 128 }
+        key: { type: string, maxLength: 128 }
+        displayName: { type: string, maxLength: 255 }
+        editVersion: { type: [integer, 'null'], minimum: 1 }
+    StoreCategoryProfile:
+      type: object
+      additionalProperties: false
+      required: [activeCategory, pendingCategory, activeMappingIds, pendingMappingIds, pendingSelectionGeneration, pendingSelectedAt, pendingState, pendingTemplate]
+      properties:
+        activeCategory:
+          anyOf: [{ $ref: '#/components/schemas/CategoryIdentity' }, { type: 'null' }]
+        pendingCategory:
+          anyOf: [{ $ref: '#/components/schemas/CategoryIdentity' }, { type: 'null' }]
+        activeMappingIds: { type: array, items: { type: string, maxLength: 128 }, maxItems: 256 }
+        pendingMappingIds: { type: array, items: { type: string, maxLength: 128 }, maxItems: 256 }
+        pendingSelectionGeneration: { type: integer, minimum: 0 }
+        pendingSelectedAt: { type: [string, 'null'], format: date-time }
+        pendingState: { type: string, enum: [NONE, PENDING_PUBLICATION] }
+        pendingTemplate: { $ref: '#/components/schemas/PendingTemplate' }
+    StoreCategoriesReadResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, requestedLocale, resolvedLocale, categories, storeProfile]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        requestedLocale: { type: [string, 'null'], maxLength: 64 }
+        resolvedLocale: { type: string, maxLength: 16 }
+        categories:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/StoreCategoryChoice' }
+        storeProfile: { $ref: '#/components/schemas/StoreCategoryProfile' }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string }
+  responses:
+    InvalidRequest:
+      description: Unexpected or invalid query parameter or body.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: invalid_locale }
+    Unauthorized:
+      description: Missing/revoked/invalid Woo installation credential.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: unauthorized }
+    IntegrityConflict:
+      description: Installation/Shop state or store category read integrity mismatch.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: store_category_integrity_invalid }
+    InternalError:
+      description: Unexpected failure without internal exception details.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: internal_error }
