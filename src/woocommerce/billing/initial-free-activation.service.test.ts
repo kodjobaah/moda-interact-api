@@ -79,7 +79,6 @@ function makeTransaction(options: {
     return result;
   };
   const transaction = {
-    $queryRaw: async () => { events.push("lock"); return []; },
     shop: {
       findUnique: operation("shop.findUnique", { id: "shop-1", onboardingCompleted: options.onboarded ?? false }),
       update: operation("shop.update", {}),
@@ -117,7 +116,7 @@ async function activate(transaction: never, plan: typeof prepared | null = prepa
 test("short Shop transaction creates subscription, lifetime grant, and onboarding without global writes", async () => {
   const { transaction, events, writes } = makeTransaction();
   assert.equal(await activate(transaction), "ACTIVATED_FREE");
-  assert.deepEqual(events.slice(0, 4), ["lock", "shop.findUnique", "lock", "subscription.findUnique"]);
+  assert.deepEqual(events.slice(0, 2), ["shop.findUnique", "subscription.findUnique"]);
   assert.equal(events.includes("merchantKnowledgePurposeDataFormat.findMany"), false);
   assert.equal(events.includes("billingPlan.create"), false);
   assert.equal(events.includes("merchantPricingPlan.updateMany"), false);
@@ -143,7 +142,7 @@ test("short Shop transaction creates subscription, lifetime grant, and onboardin
 test("already-onboarded reconnect is a complete Free activation no-op without prepared plan", async () => {
   const { transaction, events, writes } = makeTransaction({ onboarded: true });
   assert.equal(await activate(transaction, null), "ALREADY_ONBOARDED");
-  assert.deepEqual(events, ["lock", "shop.findUnique"]);
+  assert.deepEqual(events, ["shop.findUnique"]);
   assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
 });
 
@@ -154,7 +153,7 @@ test("never-onboarded established subscription fails closed before catalogue rec
   ]) {
     const { transaction, events } = makeTransaction({ subscription });
     await assert.rejects(activate(transaction), InitialFreeActivationConflictError);
-    assert.deepEqual(events, ["lock", "shop.findUnique", "lock", "subscription.findUnique"]);
+    assert.deepEqual(events, ["shop.findUnique", "subscription.findUnique"]);
   }
 });
 
@@ -183,29 +182,49 @@ test("first-grant policy must still be valid inside the transaction before Shop 
   }
 });
 
-<<<<<<< Updated upstream
-test("paid plan materialisation snapshots the operational allowance and feature configuration", async () => {
-  const paidPlan = {
-    ...plan,
-    id: "catalogue-paid",
-    shopifyPlanHandle: "internal-paid-handle",
-    displayName: "Growth",
-    planKind: MerchantPricingPlanKind.PAID_METERED,
-    allowancePeriod: MerchantPricingAllowancePeriod.EVERY_30_DAYS,
-    billingPeriod: "EVERY_30_DAYS",
-    recurringAmountMinor: 4900,
-    currency: "USD",
-    shopifyRecoveryUsageEventHandle: "usage_growth",
-    includedRecoveryCredits: 120,
-  };
-  const { tx, writes, operation } = makeTransaction({
+const paidPlan = {
+  ...catalogue,
+  id: "catalogue-paid",
+  shopifyPlanHandle: "internal-paid-handle",
+  displayName: "Growth",
+  planKind: MerchantPricingPlanKind.PAID_METERED,
+  allowancePeriod: MerchantPricingAllowancePeriod.EVERY_30_DAYS,
+  billingPeriod: "EVERY_30_DAYS",
+  recurringAmountMinor: 4900,
+  currency: "USD",
+  shopifyRecoveryUsageEventHandle: "usage_growth",
+  includedRecoveryCredits: 120,
+  materializedAt: null,
+  features: [{
+    featureId: "feature-checkout",
+    configuration: null,
+    feature: { key: "checkout_recovery", systemRequired: true },
+  }],
+};
+
+function makePaidPlanTransaction(existing: { id: string; kind: BillingPlanKind; active: boolean } | null = null) {
+  const writes: Array<{ model: string; args: unknown }> = [];
+  const transaction = {
     billingPlan: {
-      findUnique: async () => null,
+      findUnique: async () => existing,
+      create: async (args: unknown) => {
+        writes.push({ model: "billingPlan.create", args });
+        return { id: "paid-operational", kind: BillingPlanKind.PAID_METERED, active: true };
+      },
     },
-  });
-  (tx as unknown as { billingPlan: { create: (args: unknown) => Promise<unknown> } }).billingPlan.create =
-    operation("billingPlan.create", { id: "paid-operational", kind: BillingPlanKind.PAID_METERED, active: true });
-  const result = await new InitialWooFreeActivationService().resolvePaidPlan(tx, paidPlan as never);
+    merchantPricingPlan: {
+      updateMany: async (args: unknown) => {
+        writes.push({ model: "merchantPricingPlan.updateMany", args });
+        return { count: 1 };
+      },
+    },
+  };
+  return { transaction: transaction as never, writes };
+}
+
+test("paid plan materialisation snapshots the operational allowance and feature configuration", async () => {
+  const { transaction, writes } = makePaidPlanTransaction();
+  const result = await new InitialWooFreeActivationService().resolvePaidPlan(transaction, paidPlan as never);
   assert.equal(result.kind, BillingPlanKind.PAID_METERED);
   const created = writes.find((write) => write.model === "billingPlan.create")?.args as { data: Record<string, unknown> };
   assert.deepEqual(created.data, {
@@ -226,39 +245,15 @@ test("paid plan materialisation snapshots the operational allowance and feature 
 });
 
 test("paid plan materialisation reuses an active operational plan", async () => {
-  const paidPlan = {
-    ...plan,
-    id: "catalogue-paid",
-    shopifyPlanHandle: "internal-paid-handle",
-    planKind: MerchantPricingPlanKind.PAID_METERED,
-    allowancePeriod: MerchantPricingAllowancePeriod.EVERY_30_DAYS,
-    billingPeriod: "EVERY_30_DAYS",
-    recurringAmountMinor: 4900,
-    currency: "USD",
-  };
-  const { tx, writes } = makeTransaction({
-    billingPlan: {
-      findUnique: async () => ({ id: "existing-paid", kind: BillingPlanKind.PAID_METERED, active: true }),
-      create: async () => { throw new Error("must reuse the active operational plan"); },
-    },
-  });
-  const result = await new InitialWooFreeActivationService().resolvePaidPlan(tx, paidPlan as never);
+  const existing = { id: "existing-paid", kind: BillingPlanKind.PAID_METERED, active: true };
+  const { transaction, writes } = makePaidPlanTransaction(existing);
+  const result = await new InitialWooFreeActivationService().resolvePaidPlan(transaction, paidPlan as never);
   assert.equal(result.id, "existing-paid");
   assert.equal(writes.some((write) => write.model === "billingPlan.create"), false);
   assert.ok(writes.some((write) => write.model === "merchantPricingPlan.updateMany"));
 });
 
 test("paid plan materialisation rejects invalid catalogue invariants", async () => {
-  const paidPlan = {
-    ...plan,
-    id: "catalogue-paid",
-    shopifyPlanHandle: "internal-paid-handle",
-    planKind: MerchantPricingPlanKind.PAID_METERED,
-    allowancePeriod: MerchantPricingAllowancePeriod.EVERY_30_DAYS,
-    billingPeriod: "EVERY_30_DAYS",
-    recurringAmountMinor: 4900,
-    currency: "USD",
-  };
   for (const invalid of [
     { isActive: false },
     { recurringAmountMinor: 0 },
@@ -266,15 +261,15 @@ test("paid plan materialisation rejects invalid catalogue invariants", async () 
     { currency: "EUR" },
     { billingPeriod: "EVERY_MONTH" },
   ]) {
-    const { tx, writes } = makeTransaction();
+    const { transaction, writes } = makePaidPlanTransaction();
     await assert.rejects(
-      new InitialWooFreeActivationService().resolvePaidPlan(tx, { ...paidPlan, ...invalid } as never),
+      new InitialWooFreeActivationService().resolvePaidPlan(transaction, { ...paidPlan, ...invalid } as never),
       { name: "FreePlanConfigurationUnavailableError", reason: "paid_catalogue_invalid" },
     );
     assert.equal(writes.some((write) => write.model === "billingPlan.create"), false);
   }
 });
-=======
+
 test("missing preparation or changed catalogue after preparation fails closed", async () => {
   const changes = [
     { id: "other-free" },
@@ -310,4 +305,3 @@ test("counter uniqueness conflicts remain retryable at the Shop transaction boun
   const { transaction } = makeTransaction({ counterCreateError: conflict });
   await assert.rejects(activate(transaction), RetryFreeActivationTransactionError);
 });
->>>>>>> Stashed changes
