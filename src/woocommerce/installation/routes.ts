@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { RecurringBillingCommandError, RecurringSubscriptionCommandService } from "../../billing/commands/recurring-subscription-command.service.js";
 import { validateIdempotencyKey } from "../../billing/commands/recurring-command-primitives.js";
@@ -95,7 +96,12 @@ export function createWooInstallationRoutes({
           } else if (error instanceof WooConnectionConflictError) {
             sendError(response, 409, "connection_conflict");
           } else {
-            logger.error("woocommerce.installation.connect.failed", { reason: "internal" });
+            logger.error("woocommerce.installation.connect.failed", {
+              reason: "internal",
+              errorName: error instanceof Error ? error.name : "unknown",
+              ...(error instanceof Prisma.PrismaClientKnownRequestError ? { prismaCode: error.code } : {}),
+              durationMs: Math.max(0, now() - startedAt),
+            });
             sendError(response, 500, "internal_error");
           }
         }

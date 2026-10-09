@@ -1,28 +1,40 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { BillingPlanKind, EntitlementCounter, MerchantPricingAllowancePeriod, MerchantPricingPlanKind, Prisma, SubscriptionProjectionStatus } from "@prisma/client";
+import {
+  BillingPlanKind,
+  EntitlementCounter,
+  MerchantPricingAllowancePeriod,
+  MerchantPricingPlanKind,
+  Prisma,
+  SubscriptionProjectionStatus,
+} from "@prisma/client";
 import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
   InitialWooFreeActivationService,
+  RetryFreeActivationTransactionError,
 } from "./initial-free-activation.service.js";
 
-const plan = {
-  id: "catalogue-free",
+const prepared = {
+  catalogueId: "catalogue-free",
+  operationalPlanId: "billing-free",
   shopifyPlanHandle: "internal-free-handle",
-  displayName: "Free",
+};
+const catalogue = {
+  id: prepared.catalogueId,
+  shopifyPlanHandle: prepared.shopifyPlanHandle,
   planKind: MerchantPricingPlanKind.FREE,
   isActive: true,
   allowancePeriod: MerchantPricingAllowancePeriod.LIFETIME,
   recurringAmountMinor: 0,
   shopifyRecoveryUsageEventHandle: null,
   includedRecoveryCredits: 20,
-  materializedAt: null,
-  features: [{
-    featureId: "feature-checkout",
-    configuration: null,
-    feature: { key: "checkout_recovery", systemRequired: true },
-  }],
+};
+const billingPlan = {
+  id: prepared.operationalPlanId,
+  shopifyPlanHandle: prepared.shopifyPlanHandle,
+  active: true,
+  kind: BillingPlanKind.FREE,
 };
 
 function emptyInitialSubscription(providerCoverageEndAt: Date | null) {
@@ -50,77 +62,73 @@ function emptyInitialSubscription(providerCoverageEndAt: Date | null) {
   };
 }
 
-function makeTransaction(overrides: Record<string, unknown> = {}) {
+function makeTransaction(options: {
+  onboarded?: boolean;
+  subscription?: unknown;
+  counter?: unknown;
+  policy?: unknown;
+  catalogues?: unknown[];
+  billingPlan?: unknown;
+  counterCreateError?: unknown;
+} = {}) {
   const events: string[] = [];
   const writes: Array<{ model: string; args: unknown }> = [];
-  const operation = (model: string, result: unknown) => async (args?: unknown) => {
-    events.push(model);
-    if (args !== undefined) writes.push({ model, args });
+  const operation = (name: string, result: unknown) => async (args?: unknown) => {
+    events.push(name);
+    if (args !== undefined) writes.push({ model: name, args });
     return result;
   };
-  const tx = {
+  const transaction = {
     $queryRaw: async () => { events.push("lock"); return []; },
     shop: {
-      findUnique: operation("shop.findUnique", { id: "shop-1", onboardingCompleted: false }),
+      findUnique: operation("shop.findUnique", { id: "shop-1", onboardingCompleted: options.onboarded ?? false }),
       update: operation("shop.update", {}),
     },
     subscription: {
-      findUnique: operation("subscription.findUnique", null),
+      findUnique: operation("subscription.findUnique", options.subscription ?? null),
       upsert: operation("subscription.upsert", { id: "subscription-1" }),
     },
     merchantPricingPlan: {
-      findMany: operation("merchantPricingPlan.findMany", [plan]),
-      updateMany: operation("merchantPricingPlan.updateMany", { count: 1 }),
+      findMany: operation("merchantPricingPlan.findMany", options.catalogues ?? [catalogue]),
     },
     billingPlan: {
-      findUnique: operation("billingPlan.findUnique", null),
-      create: operation("billingPlan.create", {
-        id: "billing-free",
-        kind: BillingPlanKind.FREE,
-        active: true,
-      }),
-    },
-    merchantKnowledgePurposeDataFormat: {
-      findMany: operation("merchantKnowledgePurposeDataFormat.findMany", []),
+      findUnique: operation("billingPlan.findUnique", "billingPlan" in options ? options.billingPlan : billingPlan),
     },
     shopEntitlementCounter: {
-      findUnique: operation("shopEntitlementCounter.findUnique", null),
-      create: operation("shopEntitlementCounter.create", { id: "counter-1" }),
+      findUnique: operation("counter.findUnique", options.counter ?? null),
+      create: async (args: unknown) => {
+        events.push("counter.create");
+        writes.push({ model: "counter.create", args });
+        if (options.counterCreateError) throw options.counterCreateError;
+        return { id: "counter-1" };
+      },
     },
     platformBillingPolicy: {
-      findUnique: operation("platformBillingPolicy.findUnique", { lifetimeFreeRecoveryAllowance: 7 }),
+      findUnique: operation("policy.findUnique", "policy" in options ? options.policy : { lifetimeFreeRecoveryAllowance: 7 }),
     },
-    ...overrides,
   };
-  return { tx: tx as never, events, writes, operation };
+  return { transaction: transaction as never, events, writes };
 }
 
-test("activates a new Shop with an operational Free plan, local subscription, and one lifetime grant", async () => {
-  const { tx, events, writes } = makeTransaction();
-  const outcome = await new InitialWooFreeActivationService().activate(tx, "shop-1");
+async function activate(transaction: never, plan: typeof prepared | null = prepared) {
+  return new InitialWooFreeActivationService().activate(transaction, "shop-1", plan);
+}
 
-  assert.equal(outcome, "ACTIVATED_FREE");
+test("short Shop transaction creates subscription, lifetime grant, and onboarding without global writes", async () => {
+  const { transaction, events, writes } = makeTransaction();
+  assert.equal(await activate(transaction), "ACTIVATED_FREE");
   assert.deepEqual(events.slice(0, 4), ["lock", "shop.findUnique", "lock", "subscription.findUnique"]);
-  const planCreate = writes.find((write) => write.model === "billingPlan.create")?.args as { data: Record<string, unknown> };
-  assert.deepEqual(planCreate.data, {
-    shopifyPlanHandle: "internal-free-handle",
-    name: "Free",
-    kind: BillingPlanKind.FREE,
-    active: true,
-    shopifyUsageEventHandle: null,
-    includedRecoveryConversationAllowance: null,
-    recoveryCreditPackEnabled: false,
-    recoveryCreditsPerPack: null,
-    shopifyRecoveryCreditPackEventHandle: null,
-    features: { create: [{ featureId: "feature-checkout", enabled: true, configuration: Prisma.JsonNull }] },
-  });
-  const subscription = writes.find((write) => write.model === "subscription.upsert")?.args as { create: Record<string, unknown> };
+  assert.equal(events.includes("merchantKnowledgePurposeDataFormat.findMany"), false);
+  assert.equal(events.includes("billingPlan.create"), false);
+  assert.equal(events.includes("merchantPricingPlan.updateMany"), false);
+  const subscription = writes.find((write) => write.model === "subscription.upsert")?.args as
+    { create: Record<string, unknown>; update: Record<string, unknown> };
+  assert.equal(subscription.create.planId, prepared.operationalPlanId);
   assert.equal(subscription.create.status, SubscriptionProjectionStatus.ACTIVE);
   assert.equal(subscription.create.providerSubscriptionId, null);
   assert.equal(subscription.create.providerCoverageEndAt, null);
   assert.equal(subscription.create.billingPeriodId, null);
-  assert.equal(subscription.create.observedShopifyPlanHandle, null);
-  const counter = writes.find((write) => write.model === "shopEntitlementCounter.create")?.args as { data: Record<string, unknown> };
+  const counter = writes.find((write) => write.model === "counter.create")?.args as { data: unknown };
   assert.deepEqual(counter.data, {
     shopId: "shop-1",
     counter: EntitlementCounter.LIFETIME_FREE_RECOVERY_CREDITS,
@@ -129,261 +137,53 @@ test("activates a new Shop with an operational Free plan, local subscription, an
     reservedQuantity: 0,
     refundingQuantity: 0,
   });
-  assert.equal(writes.some((write) => write.model.includes("billingPeriod")), false);
-  assert.equal(writes.some((write) => write.model.includes("billingOperation")), false);
+  assert.equal(writes.some((write) => write.model === "shop.update"), true);
 });
 
-test("already-onboarded reconnect is a strict billing and entitlement no-op", async () => {
-  const { tx, events, writes } = makeTransaction({
-    shop: {
-      findUnique: async () => ({ id: "shop-1", onboardingCompleted: true }),
-      update: async () => { throw new Error("must not update onboarded Shop"); },
-    },
-    subscription: { findUnique: async () => { throw new Error("must not inspect subscription"); } },
-  });
-  const outcome = await new InitialWooFreeActivationService().activate(tx, "shop-1");
-  assert.equal(outcome, "ALREADY_ONBOARDED");
-  assert.deepEqual(events, ["lock"]);
-  assert.deepEqual(writes, []);
+test("already-onboarded reconnect is a complete Free activation no-op without prepared plan", async () => {
+  const { transaction, events, writes } = makeTransaction({ onboarded: true });
+  assert.equal(await activate(transaction, null), "ALREADY_ONBOARDED");
+  assert.deepEqual(events, ["lock", "shop.findUnique"]);
+  assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
 });
 
-test("never-onboarded Shop with established subscription state fails closed before catalogue access", async () => {
-  const { tx, events } = makeTransaction({
-    subscription: {
-      findUnique: async () => ({ ...emptyInitialSubscription(null), providerSubscriptionId: "provider-contract" }),
-    },
-    merchantPricingPlan: { findMany: async () => { throw new Error("must not read catalogue"); } },
-  });
-  await assert.rejects(
-    new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    InitialFreeActivationConflictError,
-  );
-  assert.deepEqual(events, ["lock", "shop.findUnique", "lock"]);
+test("never-onboarded established subscription fails closed before catalogue recheck", async () => {
+  for (const subscription of [
+    { ...emptyInitialSubscription(null), providerSubscriptionId: "provider-contract" },
+    emptyInitialSubscription(new Date("2026-10-01T00:00:00.000Z")),
+  ]) {
+    const { transaction, events } = makeTransaction({ subscription });
+    await assert.rejects(activate(transaction), InitialFreeActivationConflictError);
+    assert.deepEqual(events, ["lock", "shop.findUnique", "lock", "subscription.findUnique"]);
+  }
 });
 
-test("never-onboarded Shop with provider coverage alone fails closed", async () => {
-  const coverageEndAt = new Date("2026-10-01T00:00:00.000Z");
-  const { tx, events } = makeTransaction({
-    subscription: {
-      findUnique: async () => emptyInitialSubscription(coverageEndAt),
-    },
-    merchantPricingPlan: { findMany: async () => { throw new Error("must not read catalogue"); } },
-  });
-
-  await assert.rejects(
-    new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    InitialFreeActivationConflictError,
-  );
-  assert.deepEqual(events, ["lock", "shop.findUnique", "lock"]);
-});
-
-test("eligible empty initial subscription shell with null coverage activates as Free", async () => {
-  const { tx, writes } = makeTransaction({
-    subscription: {
-      findUnique: async () => emptyInitialSubscription(null),
-      upsert: async (args: unknown) => {
-        writes.push({ model: "subscription.upsert", args });
-        return { id: "subscription-1" };
-      },
-    },
-  });
-
-  await new InitialWooFreeActivationService().activate(tx, "shop-1");
-  const subscription = writes.find((write) => write.model === "subscription.upsert")?.args as {
-    update: Record<string, unknown>;
-  };
-  assert.equal(subscription.update.status, SubscriptionProjectionStatus.ACTIVE);
+test("eligible initial placeholder can activate without erasing provider coverage", async () => {
+  const { transaction, writes } = makeTransaction({ subscription: emptyInitialSubscription(null) });
+  await activate(transaction);
+  const subscription = writes.find((write) => write.model === "subscription.upsert")?.args as
+    { create: Record<string, unknown>; update: Record<string, unknown> };
   assert.equal(subscription.update.providerCoverageEndAt, null);
 });
 
-test("an existing lifetime counter is authoritative and does not require policy or get rewritten", async () => {
-  const existingCounter = {
-    id: "counter-existing",
-    grantedQuantity: 7,
-    committedQuantity: 3,
-    reservedQuantity: 2,
-    refundingQuantity: 1,
-    version: 4,
-  };
-  const { tx, writes } = makeTransaction({
-    shopEntitlementCounter: {
-      findUnique: async () => existingCounter,
-      create: async () => { throw new Error("must not create a second counter"); },
-    },
-    platformBillingPolicy: {
-      findUnique: async () => { throw new Error("policy is only needed for a first grant"); },
-    },
-  });
-  await new InitialWooFreeActivationService().activate(tx, "shop-1");
-  assert.equal(writes.some((write) => write.model === "shopEntitlementCounter.create"), false);
-  assert.equal(writes.some((write) => write.model === "shopEntitlementCounter.update"), false);
+test("an existing lifetime counter is authoritative even when policy is missing", async () => {
+  const counter = { id: "counter-existing", grantedQuantity: 7, committedQuantity: 3, reservedQuantity: 2, refundingQuantity: 1 };
+  const { transaction, writes, events } = makeTransaction({ counter, policy: null });
+  await activate(transaction);
+  assert.equal(events.includes("policy.findUnique"), false);
+  assert.equal(writes.some((write) => write.model === "counter.create"), false);
 });
 
-test("invalid Free catalogue cardinality fails closed", async () => {
-  const { tx } = makeTransaction({ merchantPricingPlan: { findMany: async () => [] } });
-  await assert.rejects(
-    new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    { name: "FreePlanConfigurationUnavailableError", reason: "free_catalogue_missing" },
-  );
-});
-
-test("multiple Free catalogue records fail closed instead of selecting arbitrarily", async () => {
-  const { tx } = makeTransaction({
-    merchantPricingPlan: { findMany: async () => [plan, { ...plan, id: "second-free-plan" }] },
-  });
-  await assert.rejects(
-    new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    { name: "FreePlanConfigurationUnavailableError", reason: "multiple_free_catalogue_plans" },
-  );
-});
-
-test("inactive, non-lifetime, recurring, metered, or unsafe-credit Free catalogue fails closed", async () => {
-  const invalidPlans = [
-    { ...plan, isActive: false },
-    { ...plan, allowancePeriod: "EVERY_30_DAYS" },
-    { ...plan, recurringAmountMinor: 1 },
-    { ...plan, shopifyRecoveryUsageEventHandle: "usage-event" },
-    { ...plan, includedRecoveryCredits: Number.MAX_SAFE_INTEGER + 1 },
-  ];
-  for (const invalidPlan of invalidPlans) {
-    const { tx } = makeTransaction({ merchantPricingPlan: { findMany: async () => [invalidPlan] } });
-    await assert.rejects(
-      new InitialWooFreeActivationService().activate(tx, "shop-1"),
-      { name: "FreePlanConfigurationUnavailableError", reason: "free_catalogue_invalid" },
-    );
-  }
-});
-
-test("Free plan materialisation rejects missing required or unresolved feature mappings", async () => {
-  const invalidFeatures = [
-    [{ featureId: "optional-feature", configuration: null, feature: { key: "other", systemRequired: false } }],
-    [{ featureId: "missing-feature", configuration: null, feature: null }],
-  ];
-  for (const features of invalidFeatures) {
-    const { tx } = makeTransaction({ merchantPricingPlan: { findMany: async () => [{ ...plan, features }] } });
-    await assert.rejects(
-      new InitialWooFreeActivationService().activate(tx, "shop-1"),
-      { name: "FreePlanConfigurationUnavailableError", reason: "free_feature_configuration_invalid" },
-    );
-  }
-});
-
-test("Free plan materialisation rejects duplicate or invalid merchant-knowledge mappings", async () => {
-  const checkout = plan.features[0]!;
-  const knowledge = {
-    featureId: "feature-knowledge",
-    configuration: {},
-    feature: { key: "merchant_knowledge", systemRequired: false },
-  };
-  const invalidFeatures = [
-    [checkout, knowledge, { ...knowledge, featureId: "duplicate-knowledge" }],
-    [checkout, knowledge],
-  ];
-  for (const features of invalidFeatures) {
-    const { tx } = makeTransaction({ merchantPricingPlan: { findMany: async () => [{ ...plan, features }] } });
-    await assert.rejects(
-      new InitialWooFreeActivationService().activate(tx, "shop-1"),
-      FreePlanConfigurationUnavailableError,
-    );
-  }
-});
-
-test("Free plan materialisation requires each configured merchant-knowledge pair to be active", async () => {
-  const checkout = plan.features[0]!;
-  const knowledge = {
-    featureId: "feature-knowledge",
-    configuration: {
-      schemaVersion: 1,
-      maxKnowledgeSources: 4,
-      maxContentUnitsPerSource: 1000,
-      allowedSourceTypes: [{ purposeKey: "FAQ", dataFormatKey: "WEB_PAGE" }],
-    },
-    feature: { key: "merchant_knowledge", systemRequired: false },
-  };
-  const features = [checkout, knowledge];
-  const catalogue = { ...plan, features };
-  const inactive = makeTransaction({
-    merchantPricingPlan: { findMany: async () => [catalogue] },
-  });
-  await assert.rejects(
-    new InitialWooFreeActivationService().activate(inactive.tx, "shop-1"),
-    FreePlanConfigurationUnavailableError,
-  );
-
-  const active = makeTransaction({
-    merchantPricingPlan: {
-      findMany: async () => [catalogue],
-      updateMany: async () => ({ count: 1 }),
-    },
-    merchantKnowledgePurposeDataFormat: {
-      findMany: async () => [{ purpose: { key: "FAQ" }, dataFormat: { key: "WEB_PAGE" } }],
-    },
-  });
-  await new InitialWooFreeActivationService().activate(active.tx, "shop-1");
-  assert.ok(active.writes.some((write) => write.model === "billingPlan.create"));
-});
-
-test("reuses an active operational Free plan and sets materializedAt only when absent", async () => {
-  const calls: string[] = [];
-  const { tx, writes } = makeTransaction({
-    billingPlan: {
-      findUnique: async () => {
-        calls.push("find");
-        return { id: "existing-free", kind: BillingPlanKind.FREE, active: true };
-      },
-      create: async () => { throw new Error("must reuse existing operational plan"); },
-    },
-  });
-  await new InitialWooFreeActivationService().activate(tx, "shop-1");
-  assert.deepEqual(calls, ["find"]);
-  const timestampUpdate = writes.find((write) => write.model === "merchantPricingPlan.updateMany");
-  assert.deepEqual(timestampUpdate?.args, {
-    where: { shopifyPlanHandle: plan.shopifyPlanHandle, materializedAt: null },
-    data: { materializedAt: timestampUpdate && (timestampUpdate.args as { data: { materializedAt: Date } }).data.materializedAt },
-  });
-  assert.ok((timestampUpdate?.args as { data: { materializedAt: Date } }).data.materializedAt instanceof Date);
-  assert.equal(writes.some((write) => write.model === "billingPlan.create"), false);
-  const subscription = writes.find((write) => write.model === "subscription.upsert")?.args as { create: { planId: string } };
-  assert.equal(subscription.create.planId, "existing-free");
-});
-
-test("rejects an inactive operational Free plan with a bounded diagnostic reason", async () => {
-  const { tx, writes } = makeTransaction({
-    billingPlan: {
-      findUnique: async () => ({ id: "existing-free", kind: BillingPlanKind.FREE, active: false }),
-    },
-  });
-  await assert.rejects(
-    new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    { name: "FreePlanConfigurationUnavailableError", reason: "operational_free_plan_invalid" },
-  );
-  assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
-});
-
-test("missing first-grant policy fails before subscription or onboarding writes", async () => {
-  const { tx, writes } = makeTransaction({ platformBillingPolicy: { findUnique: async () => null } });
-  await assert.rejects(
-    new InitialWooFreeActivationService().activate(tx, "shop-1"),
-    { name: "FreePlanConfigurationUnavailableError", reason: "free_recovery_policy_invalid" },
-  );
-  assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
-  assert.equal(writes.some((write) => write.model === "shop.update"), false);
-});
-
-test("invalid first-grant policy values fail before subscription or onboarding writes", async () => {
-  for (const lifetimeFreeRecoveryAllowance of [-1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
-    const { tx, writes } = makeTransaction({
-      platformBillingPolicy: { findUnique: async () => ({ lifetimeFreeRecoveryAllowance }) },
-    });
-    await assert.rejects(
-      new InitialWooFreeActivationService().activate(tx, "shop-1"),
-      { name: "FreePlanConfigurationUnavailableError", reason: "free_recovery_policy_invalid" },
-    );
+test("first-grant policy must still be valid inside the transaction before Shop writes", async () => {
+  for (const policy of [null, { lifetimeFreeRecoveryAllowance: -1 }, { lifetimeFreeRecoveryAllowance: 1.5 }]) {
+    const { transaction, writes } = makeTransaction({ policy });
+    await assert.rejects(activate(transaction), { reason: "free_recovery_policy_invalid" });
     assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
     assert.equal(writes.some((write) => write.model === "shop.update"), false);
   }
 });
 
+<<<<<<< Updated upstream
 test("paid plan materialisation snapshots the operational allowance and feature configuration", async () => {
   const paidPlan = {
     ...plan,
@@ -474,3 +274,40 @@ test("paid plan materialisation rejects invalid catalogue invariants", async () 
     assert.equal(writes.some((write) => write.model === "billingPlan.create"), false);
   }
 });
+=======
+test("missing preparation or changed catalogue after preparation fails closed", async () => {
+  const changes = [
+    { id: "other-free" },
+    { isActive: false },
+    { recurringAmountMinor: 1 },
+    { allowancePeriod: "EVERY_30_DAYS" },
+    { shopifyPlanHandle: "different-handle" },
+  ];
+  for (const change of changes) {
+    const { transaction, writes } = makeTransaction({ catalogues: [{ ...catalogue, ...change }] });
+    await assert.rejects(activate(transaction), { reason: "free_catalogue_invalid" });
+    assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
+  }
+  const { transaction } = makeTransaction();
+  await assert.rejects(activate(transaction, null), FreePlanConfigurationUnavailableError);
+});
+
+test("multiple Free catalogue rows cannot silently replace the prepared plan", async () => {
+  const { transaction } = makeTransaction({ catalogues: [catalogue, { ...catalogue, id: "second" }] });
+  await assert.rejects(activate(transaction), { reason: "free_catalogue_invalid" });
+});
+
+test("inactive or mismatched operational Free plan cannot activate the merchant", async () => {
+  for (const plan of [null, { ...billingPlan, active: false }, { ...billingPlan, kind: BillingPlanKind.PAID_METERED }]) {
+    const { transaction, writes } = makeTransaction({ billingPlan: plan });
+    await assert.rejects(activate(transaction), { reason: "operational_free_plan_invalid" });
+    assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
+  }
+});
+
+test("counter uniqueness conflicts remain retryable at the Shop transaction boundary", async () => {
+  const conflict = new Prisma.PrismaClientKnownRequestError("unique", { code: "P2002", clientVersion: "6.19.3" });
+  const { transaction } = makeTransaction({ counterCreateError: conflict });
+  await assert.rejects(activate(transaction), RetryFreeActivationTransactionError);
+});
+>>>>>>> Stashed changes

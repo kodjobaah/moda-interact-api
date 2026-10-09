@@ -1,4 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
+import type { FreePlanDatabase } from "../billing/free-plan-preparation.service.js";
 import type { CanonicalWooSite } from "./site-url.js";
 import { digestSecret, encodeSecret, randomSecret } from "./credential.js";
 import { SiteVerificationError, WooSiteVerifier } from "./site-verifier.js";
@@ -8,7 +9,12 @@ import {
   RetryFreeActivationTransactionError,
 } from "../billing/initial-free-activation.service.js";
 
-export type WooConnectionDatabase = Pick<PrismaClient, "$transaction" | "shop" | "wooCommerceInstallation">;
+// Only the Shop-scoped atomic activation uses this bounded extended timeout.
+// Global catalogue preparation is performed before the transaction begins.
+const WOO_CONNECTION_TRANSACTION_TIMEOUT_MS = 15_000;
+
+export type WooConnectionDatabase = Pick<PrismaClient, "$transaction" | "shop" | "wooCommerceInstallation"> &
+  FreePlanDatabase;
 
 export interface WooConnectInput {
   site: CanonicalWooSite;
@@ -45,7 +51,7 @@ export class WooInstallationConnectionService {
     private readonly verifier: WooSiteVerifier,
     private readonly now: () => Date = () => new Date(),
     private readonly issueCredential: () => Buffer = randomSecret,
-    private readonly freeActivation: Pick<InitialWooFreeActivationService, "activate"> = new InitialWooFreeActivationService(),
+    private readonly freeActivation: Pick<InitialWooFreeActivationService, "prepare" | "activate"> = new InitialWooFreeActivationService(),
   ) {}
 
   async connect(input: WooConnectInput): Promise<WooConnectResult> {
@@ -55,7 +61,7 @@ export class WooInstallationConnectionService {
         id: true,
         shopId: true,
         credentialVersion: true,
-        shop: { select: { id: true, status: true, platform: true, shopifyShopId: true } },
+        shop: { select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true } },
       },
     });
 
@@ -73,6 +79,11 @@ export class WooInstallationConnectionService {
     const issuedAt = this.now();
 
     try {
+      // Prepare shared Free catalogue/operational plan state before entering a Shop transaction.
+      // An already-onboarded reconnect is an entitlement no-op and must not require a valid Free catalogue.
+      const prepared = !observed || !observed.shop.onboardingCompleted
+        ? await this.freeActivation.prepare(this.database, !observed)
+        : null;
       if (!observed) {
         const created = await this.runTransaction(async (transaction) => {
           const shop = await transaction.shop.create({
@@ -84,7 +95,7 @@ export class WooInstallationConnectionService {
             },
             select: { id: true },
           });
-          await this.freeActivation.activate(transaction, shop.id);
+          await this.freeActivation.activate(transaction, shop.id, prepared);
           return transaction.wooCommerceInstallation.create({
             data: {
               shopId: shop.id,
@@ -118,7 +129,7 @@ export class WooInstallationConnectionService {
           throw new WooConnectionConflictError();
         }
 
-        await this.freeActivation.activate(transaction, shop.id);
+        await this.freeActivation.activate(transaction, shop.id, prepared);
 
         const updated = await transaction.wooCommerceInstallation.updateMany({
           where: {
@@ -177,6 +188,7 @@ export class WooInstallationConnectionService {
       try {
         return await this.database.$transaction(callback, {
           isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          timeout: WOO_CONNECTION_TRANSACTION_TIMEOUT_MS,
         });
       } catch (error) {
         const retryable = error instanceof RetryFreeActivationTransactionError || isPrismaError(error, "P2034");

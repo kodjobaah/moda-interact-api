@@ -582,6 +582,32 @@ test("PostgreSQL missing first-grant policy rolls back Shop and installation cre
   }
 });
 
+test("PostgreSQL failed Shop transaction does not undo independently prepared global Free plan", {
+  skip: !databaseUrl,
+}, async () => {
+  const siteUrl = uniqueSite();
+  try {
+    await database().billingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });
+    await database().merchantPricingPlan.update({
+      where: { shopifyPlanHandle: freePlanHandle },
+      data: { materializedAt: null },
+    });
+    // Force Shop creation to fail after preflight has successfully materialised the global plan.
+    await database().shop.create({
+      data: { domain: siteUrl, platform: "WOOCOMMERCE", shopifyShopId: null, status: "ACTIVE" },
+    });
+    await assert.rejects(service().connect(makeInput(siteUrl)), WooConnectionConflictError);
+    assert.equal(await database().shop.count({ where: { domain: siteUrl } }), 1);
+    assert.equal(await database().wooCommerceInstallation.count({ where: { canonicalSiteUrl: siteUrl } }), 0);
+    const existingShop = await database().shop.findUniqueOrThrow({ where: { domain: siteUrl } });
+    assert.equal(await database().subscription.count({ where: { shopId: existingShop.id } }), 0);
+    assert.equal(await database().shopEntitlementCounter.count({ where: { shopId: existingShop.id } }), 0);
+    assert.equal(await database().billingPlan.count({ where: { shopifyPlanHandle: freePlanHandle } }), 1);
+  } finally {
+    await removeSite(siteUrl);
+  }
+});
+
 after(async () => {
   if (prisma && databaseUrl) {
     await prisma.billingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });

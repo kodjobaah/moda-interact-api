@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import type { IncomingMessage } from "node:http";
+import { Prisma } from "@prisma/client";
 import test from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { loadRuntimeConfig } from "../../runtime-config.js";
@@ -269,6 +270,57 @@ test("connect returns stable bounded errors for Free configuration and activatio
     assert.equal(response.status, 409);
     assert.deepEqual(await response.json(), { error: "INITIAL_FREE_ACTIVATION_CONFLICT" });
   }, undefined, undefined, undefined, new InitialFreeActivationConflictError());
+});
+
+test("unexpected connection errors log bounded exception identity and Prisma code without leaking details", async () => {
+  const sensitiveDetails = "sensitive request body and credential must not be logged";
+  const failure = new Prisma.PrismaClientKnownRequestError(sensitiveDetails, {
+    code: "P2022",
+    clientVersion: "6.19.3",
+  });
+
+  await withApi(async (baseUrl, logs) => {
+    const response = await fetch(`${baseUrl}/v1/woocommerce/installations/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: validConnectBody(),
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "internal_error" });
+
+    const failures = logs.map((line) => JSON.parse(line) as {
+      event: string;
+      data?: Record<string, unknown>;
+    }).filter((entry) => entry.event === "woocommerce.installation.connect.failed");
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0]?.data?.reason, "internal");
+    assert.equal(failures[0]?.data?.errorName, "PrismaClientKnownRequestError");
+    assert.equal(failures[0]?.data?.prismaCode, "P2022");
+    assert.ok(typeof failures[0]?.data?.durationMs === "number");
+    assert.equal(logs.join("\n").includes(sensitiveDetails), false);
+    assert.equal(logs.join("\n").includes(bootstrapSecret), false);
+    assert.equal(logs.join("\n").includes(installationCredential), false);
+  }, undefined, undefined, undefined, failure);
+});
+
+test("non-Prisma connection errors do not expose exception messages", async () => {
+  const sensitiveDetails = "never log the sensitive internal error message";
+  await withApi(async (baseUrl, logs) => {
+    const response = await fetch(`${baseUrl}/v1/woocommerce/installations/connect`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: validConnectBody(),
+    });
+    assert.equal(response.status, 500);
+    const failures = logs.map((line) => JSON.parse(line) as {
+      event: string;
+      data?: Record<string, unknown>;
+    }).filter((entry) => entry.event === "woocommerce.installation.connect.failed");
+    assert.equal(failures.length, 1);
+    assert.equal(failures[0]?.data?.errorName, "Error");
+    assert.equal(failures[0]?.data?.prismaCode, undefined);
+    assert.equal(logs.join("\n").includes(sensitiveDetails), false);
+  }, undefined, undefined, undefined, new Error(sensitiveDetails));
 });
 
 test("authentication probe returns only the principal and generic unauthorized body", async () => {

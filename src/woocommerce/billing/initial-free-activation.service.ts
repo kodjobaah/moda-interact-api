@@ -1,14 +1,17 @@
 import {
   BillingPlanKind,
   EntitlementCounter,
-  MerchantPricingAllowancePeriod,
   MerchantPricingPlanKind,
   Prisma,
   SubscriptionProjectionStatus,
-  type BillingPlan,
-  type MerchantPricingPlan,
 } from "@prisma/client";
-import { MerchantKnowledgeFeatureConfigurationSchema } from "@modainteract/moda-interact-shared/merchant-knowledge";
+import {
+  isValidFreeCataloguePlan,
+  isValidLifetimeFreePolicy,
+  WooFreePlanPreparationService,
+  type FreePlanDatabase,
+  type PreparedFreePlan,
+} from "./free-plan-preparation.service.js";
 
 export type FreePlanConfigurationFailureReason =
   | "shop_missing"
@@ -45,6 +48,7 @@ export class RetryFreeActivationTransactionError extends Error {
   }
 }
 
+<<<<<<< Updated upstream
 export type OperationalCataloguePlan = MerchantPricingPlan & {
   features: Array<{
     featureId: string;
@@ -53,8 +57,20 @@ export type OperationalCataloguePlan = MerchantPricingPlan & {
   }>;
 };
 
+=======
+>>>>>>> Stashed changes
 export class InitialWooFreeActivationService {
-  async activate(transaction: Prisma.TransactionClient, shopId: string): Promise<"ACTIVATED_FREE" | "ALREADY_ONBOARDED"> {
+  private readonly preparation = new WooFreePlanPreparationService();
+
+  prepare(database: FreePlanDatabase, requireFirstGrantPolicy: boolean): Promise<PreparedFreePlan> {
+    return this.preparation.prepare(database, requireFirstGrantPolicy);
+  }
+
+  async activate(
+    transaction: Prisma.TransactionClient,
+    shopId: string,
+    prepared: PreparedFreePlan | null,
+  ): Promise<"ACTIVATED_FREE" | "ALREADY_ONBOARDED"> {
     await transaction.$queryRaw(Prisma.sql`
       SELECT "id"
       FROM "commerce"."Shop"
@@ -74,17 +90,29 @@ export class InitialWooFreeActivationService {
       WHERE "shopId" = ${shopId}
       FOR UPDATE
     `);
-    const subscription = await transaction.subscription.findUnique({
-      where: { shopId },
-    });
+    const subscription = await transaction.subscription.findUnique({ where: { shopId } });
     if (subscription && !isEmptyInitialSubscription(subscription)) {
       throw new InitialFreeActivationConflictError();
     }
 
+    // Resolve and materialise global Free-plan configuration outside this Shop transaction.
+    // Recheck its small, mutable invariants here to fail closed if Admin changed it
+    // after preparation, without re-running feature/knowledge materialisation queries.
+    if (!prepared) throw new FreePlanConfigurationUnavailableError("free_catalogue_missing");
     const cataloguePlans = await transaction.merchantPricingPlan.findMany({
       where: { planKind: MerchantPricingPlanKind.FREE },
-      include: { features: { include: { feature: true } } },
+      select: {
+        id: true,
+        shopifyPlanHandle: true,
+        planKind: true,
+        isActive: true,
+        allowancePeriod: true,
+        recurringAmountMinor: true,
+        shopifyRecoveryUsageEventHandle: true,
+        includedRecoveryCredits: true,
+      },
     });
+<<<<<<< Updated upstream
     if (cataloguePlans.length !== 1) {
       throw new FreePlanConfigurationUnavailableError(
         cataloguePlans.length === 0 ? "free_catalogue_missing" : "multiple_free_catalogue_plans",
@@ -92,10 +120,26 @@ export class InitialWooFreeActivationService {
     }
     const catalogue = cataloguePlans[0] as OperationalCataloguePlan | undefined;
     if (!catalogue || !isValidFreeCataloguePlan(catalogue)) {
+=======
+    const catalogue = cataloguePlans[0];
+    if (cataloguePlans.length !== 1 || !catalogue || catalogue.id !== prepared.catalogueId ||
+      catalogue.shopifyPlanHandle !== prepared.shopifyPlanHandle || !isValidFreeCataloguePlan(catalogue)) {
+>>>>>>> Stashed changes
       throw new FreePlanConfigurationUnavailableError("free_catalogue_invalid");
     }
+    const plan = await transaction.billingPlan.findUnique({
+      where: { id: prepared.operationalPlanId },
+      select: { id: true, active: true, kind: true, shopifyPlanHandle: true },
+    });
+    if (!plan || !plan.active || plan.kind !== BillingPlanKind.FREE ||
+      plan.shopifyPlanHandle !== prepared.shopifyPlanHandle) {
+      throw new FreePlanConfigurationUnavailableError("operational_free_plan_invalid");
+    }
 
+<<<<<<< Updated upstream
     const plan = await this.resolveOperationalPlan(transaction, catalogue, BillingPlanKind.FREE);
+=======
+>>>>>>> Stashed changes
     const lifetimeCounter = await transaction.shopEntitlementCounter.findUnique({
       where: {
         shopId_counter: {
@@ -107,10 +151,7 @@ export class InitialWooFreeActivationService {
     const policy = lifetimeCounter
       ? null
       : await transaction.platformBillingPolicy.findUnique({ where: { id: "default" } });
-    if (
-      !lifetimeCounter &&
-      (!policy || !Number.isSafeInteger(policy.lifetimeFreeRecoveryAllowance) || policy.lifetimeFreeRecoveryAllowance < 0)
-    ) {
+    if (!lifetimeCounter && !isValidLifetimeFreePolicy(policy)) {
       throw new FreePlanConfigurationUnavailableError("free_recovery_policy_invalid");
     }
 
@@ -142,6 +183,7 @@ export class InitialWooFreeActivationService {
     });
     return "ACTIVATED_FREE";
   }
+<<<<<<< Updated upstream
 
   async resolvePaidPlan(
     transaction: Prisma.TransactionClient,
@@ -214,6 +256,8 @@ export class InitialWooFreeActivationService {
       throw error;
     }
   }
+=======
+>>>>>>> Stashed changes
 }
 
 function isEmptyInitialSubscription(subscription: {
@@ -260,6 +304,7 @@ function isEmptyInitialSubscription(subscription: {
     subscription.lastProviderLifecycleEventAt === null;
 }
 
+<<<<<<< Updated upstream
 function isValidFreeCataloguePlan(catalogue: OperationalCataloguePlan): boolean {
   return catalogue.planKind === MerchantPricingPlanKind.FREE &&
     catalogue.isActive &&
@@ -321,6 +366,8 @@ async function markCatalogueMaterialized(
   }
 }
 
+=======
+>>>>>>> Stashed changes
 function freeSubscriptionProjection(planId: string) {
   return {
     planId,

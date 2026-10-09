@@ -27,9 +27,16 @@ function makeDatabase(options: {
     shopifyShopId: null,
   };
   const writes: Array<{ model: string; args: unknown }> = [];
+  const phases: string[] = [];
+  const transactionOptions: unknown[] = [];
+  const prepared = { catalogueId: "catalogue-free", operationalPlanId: "billing-free", shopifyPlanHandle: "free-handle" };
   const freeActivation = {
-    activate: async (_transaction: unknown, shopId: string) => {
-      writes.push({ model: "activation.activate", args: { shopId } });
+    prepare: async (_database: unknown, requireFirstGrantPolicy: boolean) => {
+      phases.push(`prepared:${requireFirstGrantPolicy}`);
+      return prepared;
+    },
+    activate: async (_transaction: unknown, shopId: string, resolved: unknown) => {
+      writes.push({ model: "activation.activate", args: { shopId, resolved } });
       return "ACTIVATED_FREE" as const;
     },
   };
@@ -68,9 +75,13 @@ function makeDatabase(options: {
   const database = {
     wooCommerceInstallation: { findUnique: async () => observed },
     shop: {},
-    $transaction: async (callback: (value: typeof transaction) => Promise<unknown>) => callback(transaction),
+    $transaction: async (callback: (value: typeof transaction) => Promise<unknown>, options: unknown) => {
+      transactionOptions.push(options);
+      phases.push("transaction.started");
+      return callback(transaction);
+    },
   };
-  return { database, writes, freeActivation };
+  return { database, writes, phases, freeActivation, transactionOptions };
 }
 
 function existingInstallation(status = "ACTIVE") {
@@ -78,12 +89,12 @@ function existingInstallation(status = "ACTIVE") {
     id: "installation-existing",
     shopId: "shop-1",
     credentialVersion: 4,
-    shop: { id: "shop-1", status, platform: "WOOCOMMERCE", shopifyShopId: null },
+    shop: { id: "shop-1", status, platform: "WOOCOMMERCE", shopifyShopId: null, onboardingCompleted: true },
   };
 }
 
 test("first connection verifies site control before atomically creating Shop and installation", async () => {
-  const { database, writes, freeActivation } = makeDatabase();
+  const { database, writes, phases, freeActivation, transactionOptions } = makeDatabase();
   const order: string[] = [];
   const service = new WooInstallationConnectionService(
     database as never,
@@ -96,7 +107,12 @@ test("first connection verifies site control before atomically creating Shop and
   const result = await service.connect({ site, attemptId, bootstrapSecret });
 
   assert.deepEqual(order, ["verified"]);
+  assert.deepEqual(phases, ["prepared:true", "transaction.started"]);
+  assert.deepEqual(transactionOptions, [{ isolationLevel: "Serializable", timeout: 15_000 }]);
   assert.deepEqual(writes.map((write) => write.model), ["shop.create", "activation.activate", "installation.create"]);
+  assert.deepEqual((writes[1]?.args as { resolved: unknown }).resolved, {
+    catalogueId: "catalogue-free", operationalPlanId: "billing-free", shopifyPlanHandle: "free-handle",
+  });
   const shopData = (writes[0]?.args as { data: Record<string, unknown> }).data;
   const installationData = (writes[2]?.args as { data: Record<string, unknown> }).data;
   assert.deepEqual(shopData, {
@@ -213,4 +229,45 @@ test("suspended Shop conflicts only after site proof; failed proof issues no cre
     stale.freeActivation,
   );
   await assert.rejects(staleService.connect({ site, attemptId, bootstrapSecret }), WooConnectionConflictError);
+});
+test("already-onboarded reconnect skips Free-plan preparation and rotates its credential", async () => {
+  const { database, freeActivation, phases } = makeDatabase({ observed: existingInstallation() });
+  const service = new WooInstallationConnectionService(
+    database as never,
+    { verify: async () => undefined } as never,
+    () => issuedAt,
+    () => credential,
+    { ...freeActivation, prepare: async () => { throw new Error("must not prepare already onboarded Shop"); } },
+  );
+  const result = await service.connect({ site, attemptId, bootstrapSecret });
+  assert.equal(result.connection, "RECONNECTED");
+  assert.deepEqual(phases, ["transaction.started"]);
+});
+
+test("incomplete reconnect prepares global Free state before credential transaction", async () => {
+  const incomplete = { ...existingInstallation(), shop: { ...existingInstallation().shop, onboardingCompleted: false } };
+  const { database, phases, freeActivation } = makeDatabase({ observed: incomplete });
+  const service = new WooInstallationConnectionService(
+    database as never,
+    { verify: async () => undefined } as never,
+    () => issuedAt,
+    () => credential,
+    freeActivation,
+  );
+  assert.equal((await service.connect({ site, attemptId, bootstrapSecret })).connection, "RECONNECTED");
+  assert.deepEqual(phases, ["prepared:false", "transaction.started"]);
+});
+
+test("failed Free-plan preflight does not start merchant transaction or mutate installation", async () => {
+  const { database, freeActivation, writes, phases } = makeDatabase();
+  const service = new WooInstallationConnectionService(
+    database as never,
+    { verify: async () => undefined } as never,
+    () => issuedAt,
+    () => credential,
+    { ...freeActivation, prepare: async () => { throw new Error("preflight failed"); } },
+  );
+  await assert.rejects(service.connect({ site, attemptId, bootstrapSecret }), /preflight failed/);
+  assert.deepEqual(phases, []);
+  assert.deepEqual(writes, []);
 });
