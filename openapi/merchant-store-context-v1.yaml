@@ -1,0 +1,141 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact Merchant Store Context API
+  version: 1.0.0
+  description: Authenticated WooCommerce store-context synchronization. Independent of connection, subscriptions and category selection.
+servers:
+  - url: https://api.moda-interact.example
+paths:
+  /v1/merchant/store-context:
+    put:
+      operationId: putMerchantStoreContext
+      summary: Replace this connected WooCommerce installation's store context
+      description: >-
+        Authenticate with the existing Woo installation ID and bearer credential. Shop identity
+        comes solely from the installation principal. Complete snapshot semantics require all four
+        independent nullable values. Do not send a shopId, site URL, WordPress administrator locale,
+        category selection or subscription data. The body is limited to 2048 bytes. Repeating an
+        identical update does not create billing or installation records. Verify via the existing
+        read-only GET /v1/merchant/bootstrap response.
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MerchantStoreContextSnapshot'
+            examples:
+              ukStore:
+                value:
+                  schemaVersion: 1
+                  storeLocale: en_GB
+                  languageTag: en-GB
+                  timeZone: Europe/London
+                  countryCode: GB
+      responses:
+        '204':
+          description: Complete snapshot was persisted; no response body.
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/TenantConflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url(32-byte credential)
+  schemas:
+    MerchantStoreContextSnapshot:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, storeLocale, languageTag, timeZone, countryCode]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        storeLocale:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z][A-Za-z0-9_.@-]*$'
+          description: WordPress/WooCommerce provider-native store locale, preserved verbatim. No Moda translation allowlist.
+        languageTag:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 64
+          pattern: '^[A-Za-z0-9-]+$'
+          description: Validated as a well-formed BCP-47-compatible tag, not derived by the API.
+        timeZone:
+          type: [string, 'null']
+          minLength: 1
+          maxLength: 255
+          pattern: '^[A-Za-z][A-Za-z0-9_./+-]*$'
+          description: IANA-recognized named time zone (including UTC); bare numeric/UTC offsets are invalid.
+        countryCode:
+          type: [string, 'null']
+          minLength: 2
+          maxLength: 2
+          pattern: '^[A-Z]{2}$'
+          description: Uppercase ISO 3166-1 alpha-2 code.
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+  responses:
+    InvalidRequest:
+      description: Invalid, missing, unexpected or malformed request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: invalid_request }
+    Unauthorized:
+      description: Installation credential is missing, invalid or revoked.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: unauthorized }
+    TenantConflict:
+      description: Installation no longer maps to the expected active WooCommerce Shop.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: store_context_conflict }
+    RequestTooLarge:
+      description: Request exceeds the 2048-byte body limit.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: request_too_large }
+    InternalError:
+      description: Unexpected persistence failure, with no internal details disclosed.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example: { error: internal_error }

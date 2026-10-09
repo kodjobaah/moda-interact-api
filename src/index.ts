@@ -5,6 +5,7 @@ import { BillingPlanCatalogueReadService } from "./billing/presentation/plan-cat
 import { RecurringSubscriptionCommandService } from "./billing/commands/recurring-subscription-command.service.js";
 import { RecoveryCreditPurchaseCommandService } from "./billing/commands/recovery-credit-purchase-command.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
+import { MerchantStoreContextService } from "./merchant/store-context/store-context.service.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
 import { WooInstallationAuthenticator } from "./woocommerce/installation/authenticator.js";
@@ -26,6 +27,7 @@ async function main(): Promise<void> {
     const connectionService = new WooInstallationConnectionService(database.prisma, verifier);
     const authenticator = new WooInstallationAuthenticator(database.prisma);
     const bootstrapReadService = new MerchantBootstrapReadService(database.prisma);
+    const storeContextService = new MerchantStoreContextService(database.prisma);
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
     const wooBillingClient = config.wooBilling ? new WooBillingClient(config.wooBilling) : undefined;
@@ -39,6 +41,7 @@ async function main(): Promise<void> {
       mode: config.woocommerceConnectionMode,
       connectionService,
       bootstrapReadService,
+      storeContextService,
       billingReadService,
       billingPlanCatalogueReadService,
       ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),

@@ -147,6 +147,7 @@ async function withApi(
     mode: "public",
     connectionService: connectionService as never,
     bootstrapReadService: bootstrapReadService as never,
+    storeContextService: { update: async () => undefined } as never,
     billingReadService: billingReadService as never,
     billingPlanCatalogueReadService: billingPlanCatalogueReadService as never,
     ...(recurringCommandOverride ? { recurringSubscriptionCommandService: recurringCommandOverride as never } : {}),

@@ -11,6 +11,8 @@ import { BillingPresentationError, BillingPresentationReadService } from "../../
 import { BillingCatalogueError, BillingPlanCatalogueReadService } from "../../billing/presentation/plan-catalogue-read.service.js";
 import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from "../../billing/presentation/schemas.js";
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
+import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
+import { MerchantStoreContextConflictError, MerchantStoreContextService } from "../../merchant/store-context/store-context.service.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
 import {
@@ -23,12 +25,14 @@ import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode 
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
 export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";
+export const MERCHANT_STORE_CONTEXT_ROUTE_PATH = "/v1/merchant/store-context";
 export const BILLING_PRESENTATION_ROUTE_PATH = "/v1/billing";
 export const BILLING_PLANS_ROUTE_PATH = "/v1/billing/plans";
 export const BILLING_SUBSCRIPTION_ROUTE_PATH = "/v1/billing/subscription";
 export const BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH = "/v1/billing/subscription/switch";
 export const BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH = "/v1/billing/recovery-credit-purchases";
 export const MAX_CONNECT_BODY_BYTES = 8192;
+export const MAX_STORE_CONTEXT_BODY_BYTES = 2048;
 export const MAX_SITE_URL_BYTES = 512;
 export const CONNECT_REQUEST_FIELDS = ["siteUrl", "attemptId", "bootstrapSecret"] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,6 +45,7 @@ interface WooInstallationRouteOptions {
   mode: WooConnectionMode;
   connectionService: WooInstallationConnectionService;
   bootstrapReadService: MerchantBootstrapReadService;
+  storeContextService: MerchantStoreContextService;
   billingReadService?: BillingPresentationReadService;
   billingPlanCatalogueReadService?: BillingPlanCatalogueReadService;
   recurringSubscriptionCommandService?: RecurringSubscriptionCommandService;
@@ -54,6 +59,7 @@ export function createWooInstallationRoutes({
   mode,
   connectionService,
   bootstrapReadService,
+  storeContextService,
   billingReadService,
   billingPlanCatalogueReadService,
   recurringSubscriptionCommandService,
@@ -155,6 +161,39 @@ export function createWooInstallationRoutes({
             });
             sendError(response, 500, "internal_error");
           }
+        }
+        return true;
+      }
+
+      if (requestUrl.pathname === MERCHANT_STORE_CONTEXT_ROUTE_PATH && request.method === "PUT") {
+        const startedAt = now();
+        let installationId: string | undefined;
+        let shopId: string | undefined;
+        try {
+          const principal = await authenticator.authenticate(request);
+          installationId = principal.installationId;
+          shopId = principal.shopId;
+          if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
+          const snapshot = await parseStoreContextRequest(request);
+          await storeContextService.update(principal, snapshot);
+          logger.info("merchant.store_context.sync", {
+            installationId, shopId, outcome: "success", durationMs: Math.max(0, now() - startedAt),
+          });
+          sendNoContent(response);
+        } catch (error) {
+          const reason = error instanceof WooUnauthenticatedError ? "unauthorized" :
+            error instanceof HttpFailure ? "invalid_request" :
+              error instanceof MerchantStoreContextConflictError ? "tenant_conflict" : "internal";
+          const metadata = {
+            ...(installationId && shopId ? { installationId, shopId } : {}),
+            reason, durationMs: Math.max(0, now() - startedAt),
+          };
+          if (reason === "internal") logger.error("merchant.store_context.sync.failed", metadata);
+          else logger.warn("merchant.store_context.sync.failed", metadata);
+          if (error instanceof WooUnauthenticatedError) sendError(response, 401, "unauthorized");
+          else if (error instanceof HttpFailure) sendError(response, error.statusCode, error.code);
+          else if (error instanceof MerchantStoreContextConflictError) sendError(response, 409, "store_context_conflict");
+          else sendError(response, 500, "internal_error");
         }
         return true;
       }
@@ -399,6 +438,34 @@ async function parseConnectRequest(
   return { siteUrl: body.siteUrl, attemptId: body.attemptId, bootstrapSecret };
 }
 
+async function parseStoreContextRequest(request: IncomingMessage): Promise<MerchantStoreContextSnapshot> {
+  const contentType = singleHeader(request, "content-type");
+  const contentEncoding = singleHeader(request, "content-encoding");
+  const contentLength = singleHeader(request, "content-length");
+  if (
+    contentType.count !== 1 ||
+    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType.value ?? "") ||
+    contentEncoding.count > 1 ||
+    (contentEncoding.count === 1 && contentEncoding.value?.toLowerCase() !== "identity") ||
+    contentLength.count > 1 ||
+    (contentLength.count === 1 && !/^\d+$/.test(contentLength.value ?? ""))
+  ) throw new HttpFailure(400, "invalid_request");
+  if (contentLength.value && Number(contentLength.value) > MAX_STORE_CONTEXT_BODY_BYTES) {
+    throw new HttpFailure(413, "request_too_large");
+  }
+  const bytes = await readBoundedBody(request, MAX_STORE_CONTEXT_BODY_BYTES);
+  let body: unknown;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (text.includes("\0")) throw new Error("nul");
+    body = JSON.parse(text);
+  } catch {
+    throw new HttpFailure(400, "invalid_request");
+  }
+  if (!isMerchantStoreContextSnapshot(body)) throw new HttpFailure(400, "invalid_request");
+  return body;
+}
+
 async function parseRecurringPlanRequest(request: IncomingMessage): Promise<string> {
   const contentType = singleHeader(request, "content-type");
   const contentEncoding = singleHeader(request, "content-encoding");
@@ -463,7 +530,7 @@ async function parseRecoveryCreditPurchaseRequest(request: IncomingMessage): Pro
   return body.merchantPricingUsageEventId;
 }
 
-function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
+function readBoundedBody(request: IncomingMessage, maximumBytes = MAX_CONNECT_BODY_BYTES): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let size = 0;
@@ -476,7 +543,7 @@ function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
     const onData = (chunk: Buffer | string) => {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += bytes.length;
-      if (size > MAX_CONNECT_BODY_BYTES) {
+      if (size > maximumBytes) {
         cleanup();
         request.resume();
         reject(new HttpFailure(413, "request_too_large"));
@@ -532,6 +599,12 @@ class HttpFailure extends Error {
     super(code);
     this.name = "HttpFailure";
   }
+}
+
+function sendNoContent(response: ServerResponse): void {
+  if (response.destroyed || response.headersSent) return;
+  response.writeHead(204, { "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  response.end();
 }
 
 function sendError(
