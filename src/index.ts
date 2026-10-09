@@ -12,6 +12,8 @@ import { WooInstallationConnectionService } from "./woocommerce/installation/con
 import { createWooInstallationRoutes } from "./woocommerce/installation/routes.js";
 import { WooSiteVerifier } from "./woocommerce/installation/site-verifier.js";
 import { WooBillingClient } from "./woocommerce/billing/woo-billing-client.js";
+import { WooBillingWebhookReceiptService } from "./woocommerce/billing/webhooks/webhook-receipt.service.js";
+import { createWooBillingWebhookRoute } from "./woocommerce/billing/webhooks/woo-billing-webhook-route.js";
 
 const logger = createLogger({
   serviceName: "moda-interact-api",
@@ -46,7 +48,12 @@ async function main(): Promise<void> {
       authenticator,
       logger,
     });
-    const runtime = createApiRuntime(config, database, logger, wooRoutes);
+    const wooBillingWebhookRoutes = createWooBillingWebhookRoute({
+      ...(config.wooBilling ? { apiSecret: config.wooBilling.apiSecret } : {}),
+      receiptService: new WooBillingWebhookReceiptService(database.prisma.wooCommerceBillingWebhookReceipt),
+      logger,
+    });
+    const runtime = createApiRuntime(config, database, logger, wooRoutes, wooBillingWebhookRoutes);
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch {

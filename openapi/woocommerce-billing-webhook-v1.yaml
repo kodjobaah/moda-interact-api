@@ -1,0 +1,78 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Billing Webhook API
+  version: 1.0.0
+  description: Public provider-to-provider ingress for signed WooCommerce Marketplace SaaS Billing events. Business lifecycle processing is asynchronous after durable receipt acceptance.
+servers:
+  - url: https://api.moda-interact.example
+paths:
+  /v1/billing/webhooks/woocommerce:
+    post:
+      operationId: receiveWooBillingWebhook
+      summary: Durably accept a signed Woo billing webhook
+      description: Verifies the HMAC-SHA256 signature over the exact raw body bytes, validates the allowlisted topic and payload, and commits a deduplicated receipt before acknowledging. Business lifecycle processing is asynchronous and is not performed by this request.
+      security: []
+      parameters:
+        - name: X-WC-Webhook-Signature
+          in: header
+          required: true
+          description: Base64-encoded HMAC-SHA256 of the exact raw request body, using WOO_BILLING_API_SECRET.
+          schema: { type: string, minLength: 1 }
+        - name: X-WC-Webhook-Topic
+          in: header
+          required: true
+          description: One supported Woo SaaS Billing topic. This header is not signed and is validated only after body signature verification.
+          schema:
+            type: string
+            enum: [saas_billing_contract.activated, saas_billing_contract.updated, saas_billing_contract.renewed, saas_billing_contract.paused, saas_billing_contract.canceled, saas_billing_contract.prepaid_term_ended, saas_billing_contract.refunded]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              description: Woo's signed provider contract JSON; verification uses the exact received UTF-8 body bytes before JSON parsing.
+              x-verify-signature-over-raw-bytes: true
+              x-max-body-bytes: 262144
+      responses:
+        '204':
+          description: The receipt was durably committed, or an exact topic-and-body duplicate was already committed. No billing state transition occurs on this request.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+        '400': { $ref: '#/components/responses/WebhookError' }
+        '401': { $ref: '#/components/responses/WebhookError' }
+        '413': { $ref: '#/components/responses/WebhookError' }
+        '415': { $ref: '#/components/responses/WebhookError' }
+        '422': { $ref: '#/components/responses/WebhookError' }
+        '500': { $ref: '#/components/responses/WebhookError' }
+        '503': { $ref: '#/components/responses/WebhookError' }
+components:
+  responses:
+    WebhookError:
+      description: Bounded webhook validation, integrity, or durable-acceptance failure. Non-2xx responses are safe for provider retry according to its delivery policy.
+      headers:
+        Cache-Control:
+          schema: { type: string, const: no-store }
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/WebhookError'
+  schemas:
+    WebhookError:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum:
+            - invalid_webhook_signature
+            - webhook_payload_too_large
+            - unsupported_webhook_content_type
+            - unsupported_webhook_content_encoding
+            - invalid_webhook_topic
+            - unsupported_webhook_topic
+            - invalid_webhook_payload
+            - webhook_acceptance_unavailable
+            - webhook_receipt_integrity_error
