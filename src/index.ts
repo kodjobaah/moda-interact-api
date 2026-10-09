@@ -2,6 +2,7 @@ import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createDatabase } from "./database.js";
 import { BillingPresentationReadService } from "./billing/presentation/billing-read.service.js";
 import { BillingPlanCatalogueReadService } from "./billing/presentation/plan-catalogue-read.service.js";
+import { RecurringSubscriptionCommandService } from "./billing/commands/recurring-subscription-command.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
@@ -9,6 +10,7 @@ import { WooInstallationAuthenticator } from "./woocommerce/installation/authent
 import { WooInstallationConnectionService } from "./woocommerce/installation/connection-service.js";
 import { createWooInstallationRoutes } from "./woocommerce/installation/routes.js";
 import { WooSiteVerifier } from "./woocommerce/installation/site-verifier.js";
+import { WooBillingClient } from "./woocommerce/billing/woo-billing-client.js";
 
 const logger = createLogger({
   serviceName: "moda-interact-api",
@@ -25,12 +27,20 @@ async function main(): Promise<void> {
     const bootstrapReadService = new MerchantBootstrapReadService(database.prisma);
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
+    const recurringSubscriptionCommandService = config.wooBilling
+      ? new RecurringSubscriptionCommandService(
+          database.prisma,
+          new WooBillingClient(config.wooBilling),
+          config.wooBilling.environment,
+        )
+      : undefined;
     const wooRoutes = createWooInstallationRoutes({
       mode: config.woocommerceConnectionMode,
       connectionService,
       bootstrapReadService,
       billingReadService,
       billingPlanCatalogueReadService,
+      ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),
       authenticator,
       logger,
     });

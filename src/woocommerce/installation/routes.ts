@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { RecurringBillingCommandError, RecurringSubscriptionCommandService } from "../../billing/commands/recurring-subscription-command.service.js";
+import { validateIdempotencyKey } from "../../billing/commands/recurring-command-primitives.js";
 import { BillingPresentationError, BillingPresentationReadService } from "../../billing/presentation/billing-read.service.js";
 import { BillingCatalogueError, BillingPlanCatalogueReadService } from "../../billing/presentation/plan-catalogue-read.service.js";
 import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from "../../billing/presentation/schemas.js";
@@ -18,6 +20,8 @@ export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
 export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";
 export const BILLING_PRESENTATION_ROUTE_PATH = "/v1/billing";
 export const BILLING_PLANS_ROUTE_PATH = "/v1/billing/plans";
+export const BILLING_SUBSCRIPTION_ROUTE_PATH = "/v1/billing/subscription";
+export const BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH = "/v1/billing/subscription/switch";
 export const MAX_CONNECT_BODY_BYTES = 8192;
 export const MAX_SITE_URL_BYTES = 512;
 export const CONNECT_REQUEST_FIELDS = ["siteUrl", "attemptId", "bootstrapSecret"] as const;
@@ -33,6 +37,7 @@ interface WooInstallationRouteOptions {
   bootstrapReadService: MerchantBootstrapReadService;
   billingReadService?: BillingPresentationReadService;
   billingPlanCatalogueReadService?: BillingPlanCatalogueReadService;
+  recurringSubscriptionCommandService?: RecurringSubscriptionCommandService;
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
   now?: () => number;
@@ -44,6 +49,7 @@ export function createWooInstallationRoutes({
   bootstrapReadService,
   billingReadService,
   billingPlanCatalogueReadService,
+  recurringSubscriptionCommandService,
   authenticator,
   logger,
   now = Date.now,
@@ -212,6 +218,64 @@ export function createWooInstallationRoutes({
         return true;
       }
 
+      if (
+        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH && request.method === "POST") ||
+        (requestUrl.pathname === BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH && request.method === "POST") ||
+        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH && request.method === "DELETE")
+      ) {
+        const startedAt = now();
+        try {
+          const principal = await authenticator.authenticate(request);
+          const idempotencyHeader = singleHeader(request, "idempotency-key");
+          const requestKey = idempotencyHeader.count === 1 ? validateIdempotencyKey(idempotencyHeader.value) : null;
+          if (!requestKey) throw new HttpFailure(400, "invalid_idempotency_key");
+          if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
+
+          let result;
+          if (request.method === "DELETE") {
+            if (requestHasBody(request)) throw new HttpFailure(400, "invalid_request");
+            if (!recurringSubscriptionCommandService) {
+              throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
+            }
+            result = await recurringSubscriptionCommandService.cancel(principal, requestKey);
+          } else {
+            const merchantPricingPlanId = await parseRecurringPlanRequest(request);
+            if (!recurringSubscriptionCommandService) {
+              throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
+            }
+            result = requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH
+              ? await recurringSubscriptionCommandService.create(principal, requestKey, merchantPricingPlanId)
+              : await recurringSubscriptionCommandService.switchPlan(principal, requestKey, merchantPricingPlanId);
+          }
+          logger.info("billing.recurring.command", {
+            shopId: principal.shopId,
+            operationId: result.operationId,
+            kind: result.kind,
+            state: result.state,
+            outcome: "success",
+            durationMs: Math.max(0, now() - startedAt),
+          });
+          sendJson(response, result.state === "CONFIRMED" ? 200 : 202, result);
+        } catch (error) {
+          if (error instanceof WooUnauthenticatedError) {
+            sendError(response, 401, "unauthorized");
+          } else if (error instanceof HttpFailure) {
+            sendError(response, error.statusCode, error.code);
+          } else if (error instanceof RecurringBillingCommandError) {
+            logger.warn("billing.recurring.command.failed", {
+              reason: error.code,
+              operationId: error.operationId ?? null,
+              durationMs: Math.max(0, now() - startedAt),
+            });
+            sendError(response, error.statusCode, error.code, error.operationId, error.safeProviderCode);
+          } else {
+            logger.error("billing.recurring.command.failed", { reason: "internal" });
+            sendError(response, 500, "internal_error");
+          }
+        }
+        return true;
+      }
+
       return false;
     },
   };
@@ -265,6 +329,38 @@ async function parseConnectRequest(
   const bootstrapSecret = decodeSecret(body.bootstrapSecret);
   if (!bootstrapSecret) throw new HttpFailure(400, "invalid_request");
   return { siteUrl: body.siteUrl, attemptId: body.attemptId, bootstrapSecret };
+}
+
+async function parseRecurringPlanRequest(request: IncomingMessage): Promise<string> {
+  const contentType = singleHeader(request, "content-type");
+  const contentEncoding = singleHeader(request, "content-encoding");
+  const contentLength = singleHeader(request, "content-length");
+  if (
+    contentType.count !== 1 ||
+    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType.value ?? "") ||
+    contentEncoding.count > 1 ||
+    (contentEncoding.count === 1 && contentEncoding.value?.toLowerCase() !== "identity") ||
+    contentLength.count > 1 ||
+    (contentLength.count === 1 && !/^\d+$/.test(contentLength.value ?? ""))
+  ) throw new HttpFailure(400, "invalid_request");
+
+  const bytes = await readBoundedBody(request);
+  let value: unknown;
+  try {
+    const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    if (bodyText.includes("\0")) throw new Error("nul");
+    value = JSON.parse(bodyText);
+  } catch {
+    throw new HttpFailure(400, "invalid_request");
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpFailure(400, "invalid_request");
+  const body = value as Record<string, unknown>;
+  if (
+    Object.keys(body).length !== 1 || Object.keys(body)[0] !== "merchantPricingPlanId" ||
+    typeof body.merchantPricingPlanId !== "string" || body.merchantPricingPlanId.length < 1 ||
+    body.merchantPricingPlanId.length > 128
+  ) throw new HttpFailure(400, "invalid_request");
+  return body.merchantPricingPlanId;
 }
 
 function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
@@ -338,8 +434,18 @@ class HttpFailure extends Error {
   }
 }
 
-function sendError(response: ServerResponse, statusCode: number, code: string): void {
-  sendJson(response, statusCode, { error: code });
+function sendError(
+  response: ServerResponse,
+  statusCode: number,
+  code: string,
+  operationId?: string,
+  safeProviderCode?: string,
+): void {
+  sendJson(response, statusCode, {
+    error: code,
+    ...(operationId ? { operationId } : {}),
+    ...(safeProviderCode ? { providerErrorCode: safeProviderCode } : {}),
+  });
 }
 
 function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {
