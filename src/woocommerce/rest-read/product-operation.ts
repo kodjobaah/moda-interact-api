@@ -39,6 +39,18 @@ function positiveInt(value: unknown, maximum = Number.MAX_SAFE_INTEGER): value i
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= maximum;
 }
 
+/** Preserve the previous ASCII control policy without a control-character regex. */
+function hasForbiddenControl(value: string, allowTextWhitespace: boolean): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 && (!allowTextWhitespace || (code !== 0x09 && code !== 0x0a && code !== 0x0d))) {
+      return true;
+    }
+    if (!allowTextWhitespace && code === 0x7f) return true;
+  }
+  return false;
+}
+
 /** Reject additional attributes, rather than allowing future callers to smuggle paths or headers. */
 export function prepareWooProductRequest(value: unknown): PreparedWooProductRequest {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new WooProductInputError();
@@ -52,7 +64,7 @@ export function prepareWooProductRequest(value: unknown): PreparedWooProductRequ
     if (!positiveInt(page, MAX_PAGE) || !positiveInt(perPage, MAX_PER_PAGE)) throw new WooProductInputError();
     if (request.search !== undefined && (
       typeof request.search !== "string" || request.search.trim() !== request.search ||
-      request.search.length < 1 || request.search.length > 100 || /[\x00-\x1f\x7f]/.test(request.search)
+      request.search.length < 1 || request.search.length > 100 || hasForbiddenControl(request.search, false)
     )) throw new WooProductInputError();
     const query = new URLSearchParams({ context: "view", page: String(page), per_page: String(perPage), _fields: FIELDS });
     if (typeof request.search === "string") query.set("search", request.search);
@@ -74,7 +86,7 @@ export function prepareWooProductRequest(value: unknown): PreparedWooProductRequ
 }
 
 function boundedString(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length <= maxLength && !/[\x00-\x08\x0b\x0c\x0e-\x1f]/.test(value);
+  return typeof value === "string" && value.length <= maxLength && !hasForbiddenControl(value, true);
 }
 
 /** Only explicitly approved product fields leave the API, never raw provider objects. */

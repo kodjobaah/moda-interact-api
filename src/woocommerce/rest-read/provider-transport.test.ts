@@ -34,7 +34,7 @@ function transport(mode: "public" | "local-development" = "local-development") {
   return new WooReadCredentialVerifier({ mode, timeoutMs: 3000, resolve: async () => [{ address: "127.0.0.1", family: 4 }] });
 }
 
-test("approved local product GET is pinned to resolved IP and never sends keys in URLs", async () => {
+test("approved local product GET is DNS-pinned and OAuth signed without exposing consumer secret", async () => {
   const fixture = await startFixture(200, [{ id: 4, name: "Cap", sku: "CAP", price: "7", stock_status: "instock", stock_quantity: 2 }]);
   try {
     const request = { operation: "products.list" as const, perPage: 1, search: "帽子" };
@@ -45,10 +45,13 @@ test("approved local product GET is pinned to resolved IP and never sends keys i
     const path = fixture.requests[0]?.url ?? "";
     assert.equal(new URL(path, "http://localhost").pathname, "/wp-json/wc/v3/products");
     assert.equal(new URL(path, "http://localhost").searchParams.get("context"), "view");
-    assert.equal(path.includes("ck_example"), false);
+    const url = new URL(path, "http://localhost");
+    assert.equal(url.searchParams.get("oauth_consumer_key"), "ck_example");
+    assert.equal(url.searchParams.get("oauth_signature_method"), "HMAC-SHA256");
+    assert.match(url.searchParams.get("oauth_nonce") ?? "", /^[a-f0-9]{32}$/);
+    assert.ok(url.searchParams.get("oauth_signature"));
     assert.equal(path.includes("cs_example"), false);
-    assert.equal(fixture.requests[0]?.authorization,
-      `Basic ${Buffer.from("ck_example:cs_example").toString("base64")}`);
+    assert.equal(fixture.requests[0]?.authorization, undefined);
   } finally { await fixture.close(); }
 });
 

@@ -9,6 +9,7 @@ import { WooReadAuthorizationService, WooReadAuthorizationError } from "./author
 import { digestSecret } from "../installation/credential.js";
 import type { WooInstallationPrincipal } from "../installation/authenticator.js";
 import { canonicalizeWooSiteUrl } from "../installation/site-url.js";
+import { signWooReturnLocale } from "./return-locale-proof.js";
 
 function config() {
   const value = loadWooRestReadAuthorizationConfig({
@@ -82,14 +83,49 @@ test("one start issues one bounded read consent URL and never stores the bearer 
   assert.equal(JSON.stringify(stored).includes(token.toString("base64url")), false);
 });
 
+test("start binds WordPress administrator locale to one consent attempt without changing the callback", async () => {
+  const token = Buffer.alloc(32, 7);
+  let stored: Record<string, unknown> | undefined;
+  const database = {
+    wooCommerceRestReadAttempt: {
+      create: async ({ data }: { data: Record<string, unknown> }) => {
+        stored = data;
+        return { id: "cuid_attempt_de", expiresAt: data.expiresAt };
+      },
+    },
+  };
+  const service = new WooReadAuthorizationService(database as never, config(), "public", {
+    verify: async () => undefined,
+  }, () => new Date("2026-10-10T12:00:00.000Z"), () => token);
+  const consent = new URL((await service.start(principal, "en_US")).authorizationUrl);
+  const returnUrl = new URL(consent.searchParams.get("return_url") ?? "");
+  assert.equal(returnUrl.pathname, "/v1/woocommerce/read-authorizations/return");
+  assert.equal(returnUrl.searchParams.get("display_locale"), "en");
+  assert.equal(returnUrl.searchParams.get("display_proof"),
+    signWooReturnLocale(config(), "cuid_attempt_de", principal.shopId, "en"));
+  assert.equal(consent.searchParams.get("scope"), "read");
+  assert.equal(consent.searchParams.get("callback_url"),
+    `https://api.example.org/v1/woocommerce/read-authorizations/callback/${token.toString("base64url")}`);
+  const unsupported = new URL((await service.start(principal, "xx_YY")).authorizationUrl);
+  assert.equal(unsupported.searchParams.get("return_url"),
+    "https://api.example.org/v1/woocommerce/read-authorizations/return");
+});
+
 test("pinned read credential verification permits only local-dev loopback and rejects redirect/unexpected shapes", async () => {
   let responseStatus = 200;
   let responseBody = "[]";
   const server = createServer((request, response) => {
     assert.equal(request.method, "GET");
-    assert.equal(request.url, "/shop/wp-json/wc/v3/products?per_page=1&_fields=id");
-    assert.equal(request.headers.authorization,
-      `Basic ${Buffer.from(`ck_${"a".repeat(40)}:cs_${"b".repeat(40)}`).toString("base64")}`);
+    const url = new URL(request.url ?? "", "http://localhost");
+    assert.equal(url.pathname, "/shop/wp-json/wc/v3/products");
+    assert.equal(url.searchParams.get("per_page"), "1");
+    assert.equal(url.searchParams.get("_fields"), "id");
+    assert.equal(url.searchParams.get("oauth_consumer_key"), `ck_${"a".repeat(40)}`);
+    assert.equal(url.searchParams.get("oauth_signature_method"), "HMAC-SHA256");
+    assert.match(url.searchParams.get("oauth_nonce") ?? "", /^[a-f0-9]{32}$/);
+    assert.ok(url.searchParams.get("oauth_signature"));
+    assert.equal(request.headers.authorization, undefined);
+    assert.equal(request.url?.includes(`cs_${"b".repeat(40)}`), false);
     response.writeHead(responseStatus, { "content-type": "application/json" });
     response.end(responseBody);
   });

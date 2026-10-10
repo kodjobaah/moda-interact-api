@@ -18,6 +18,14 @@ paths:
       operationId: beginWooReadOnlyAuthorization
       summary: Create a ten-minute single-use read-only consent attempt
       security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      parameters:
+        - name: X-Moda-Admin-Locale
+          in: header
+          required: false
+          description: >
+            Presentation-only WordPress get_user_locale() supplied by the authorised plugin;
+            unsupported or absent locales fall back to the persisted shop language.
+          schema: { type: string, maxLength: 64 }
       requestBody: { required: false }
       responses:
         '201':
@@ -67,7 +75,7 @@ paths:
         x-max-body-bytes: 4096
         content: { application/json: { schema: { $ref: '#/components/schemas/CallbackPayload' } } }
       responses:
-        '204': { description: Grant committed or identical callback safely replayed. }
+        '200': { description: WooCommerce-compatible acknowledgement; grant committed or identical callback safely replayed. }
         '400': { $ref: '#/components/responses/Error' }
         '404': { $ref: '#/components/responses/Error' }
         '409': { $ref: '#/components/responses/Error' }
@@ -83,8 +91,10 @@ paths:
       parameters:
         - { name: success, in: query, schema: { type: string, enum: ['0', '1'] } }
         - { name: user_id, in: query, schema: { type: string } }
+        - { name: display_locale, in: query, schema: { type: string }, description: Signed presentation locale, never trusted alone. }
+        - { name: display_proof, in: query, schema: { type: string }, description: Attempt-bound HMAC proof of the presentation locale. }
       responses:
-        '200': { description: No-store, plaintext advisory response without user-supplied reflection. }
+        '200': { description: No-store, branded HTML advisory response with Content-Language and no user-supplied reflection. }
 components:
   securitySchemes:
     WooInstallationId: { type: apiKey, in: header, name: X-Moda-Installation-Id }

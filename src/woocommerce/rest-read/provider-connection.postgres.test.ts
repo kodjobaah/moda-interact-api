@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
@@ -19,6 +19,20 @@ const config = loadWooRestReadAuthorizationConfig({
 assert.ok(config);
 const logger = { info: () => undefined, warn: () => undefined };
 
+/** Independently emulate WooCommerce's one-legged OAuth signature verification. */
+function validWooOAuth(uri: URL, secret: string): boolean {
+  const signature = uri.searchParams.get("oauth_signature");
+  if (!signature) return false;
+  const percent = (value: string) => encodeURIComponent(value).replace(/[!'()*]/g,
+    (character) => `%${character.charCodeAt(0).toString(16).toUpperCase()}`);
+  const entries = [...uri.searchParams].filter(([key]) => key !== "oauth_signature");
+  entries.sort(([first], [second]) => first < second ? -1 : first > second ? 1 : 0);
+  const normalized = entries.map(([key, value]) => `${percent(key)}=${percent(value)}`).join("&");
+  const base = `GET&${percent(`${uri.origin}${uri.pathname}`)}&${percent(normalized)}`;
+  const expected = createHmac("sha256", `${secret}&`).update(base).digest("base64");
+  return signature === expected;
+}
+
 async function withStore(callback: (input: {
   prisma: PrismaClient;
   shopId: string;
@@ -29,17 +43,21 @@ async function withStore(callback: (input: {
 }) => Promise<void>): Promise<void> {
   if (!databaseUrl) throw new Error("disposable database fixture URL missing");
   const credential = { consumerKey: `ck_${randomUUID()}`, consumerSecret: `cs_${randomUUID()}` };
-  const expectedAuthorization = `Basic ${Buffer.from(`${credential.consumerKey}:${credential.consumerSecret}`).toString("base64")}`;
   const fixture = createServer((req, res) => {
-    if (req.method !== "GET" || req.headers.authorization !== expectedAuthorization ||
-      !req.url?.startsWith("/wp-json/wc/v3/products")) {
+    const uri = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
+    if (req.method !== "GET" || req.headers.authorization !== undefined ||
+      !uri.pathname.startsWith("/wp-json/wc/v3/products") ||
+      uri.searchParams.get("oauth_consumer_key") !== credential.consumerKey ||
+      uri.searchParams.get("oauth_signature_method") !== "HMAC-SHA256" ||
+      !uri.searchParams.get("oauth_nonce") || !validWooOAuth(uri, credential.consumerSecret) ||
+      req.url?.includes(credential.consumerSecret)) {
       res.writeHead(401, { "content-type": "application/json" });
       res.end(JSON.stringify({ code: "woocommerce_rest_cannot_view" }));
       return;
     }
     res.writeHead(200, { "content-type": "application/json" });
     const product = { id: 81, name: "Fixture Product", sku: "P81", price: "15", stock_status: "instock", stock_quantity: 5 };
-    res.end(JSON.stringify(req.url.startsWith("/wp-json/wc/v3/products/81?") ? product : [product]));
+    res.end(JSON.stringify(uri.pathname === "/wp-json/wc/v3/products/81" ? product : [product]));
   });
   fixture.listen(0, "127.0.0.1");
   await once(fixture, "listening");

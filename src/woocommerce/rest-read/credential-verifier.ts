@@ -8,6 +8,7 @@ import type { SecureContextOptions } from "node:tls";
 import type { CanonicalWooSite, WooConnectionMode } from "../installation/site-url.js";
 import { isApprovedPeerAddress, isLocalAddress, isPublicAddress } from "../installation/site-verifier.js";
 import type { WooRestReadCredential } from "./envelope.js";
+import { signLocalWooReadPath } from "./local-http-oauth.js";
 import { prepareWooProductRequest, type WooProductReadRequest } from "./product-operation.js";
 
 const DNS_DEADLINE_MS = 1500;
@@ -28,7 +29,7 @@ export interface WooReadVerificationOptions {
   ca?: SecureContextOptions["ca"];
 }
 
-/** Read a single bounded WooCommerce product ID with Basic auth against a DNS-pinned, verified origin. */
+/** DNS-pinned bounded WooCommerce GET: HTTPS Basic; local-only HTTP OAuth 1.0a. */
 export class WooReadCredentialVerifier {
   private readonly resolve: NonNullable<WooReadVerificationOptions["resolve"]>;
   private readonly timeoutMs: number;
@@ -73,7 +74,8 @@ export class WooReadCredentialVerifier {
     const addresses = await this.approve(site, deadline);
     const selected = addresses[0];
     if (!selected) throw new WooReadVerificationError("unsafe_target");
-    // No redirects, credential query-string fallback, arbitrary destinations or verbs.
+    // No redirects, raw consumer-secret query fallback, arbitrary destinations or verbs.
+    // Local HTTP OAuth includes only the consumer key and per-request signature.
     return this.read(
       site, `${site.basePath}${request.path}`, credential, selected,
       new Set(addresses.map((entry) => entry.address)), deadline, request.maxBytes,
@@ -122,17 +124,28 @@ export class WooReadCredentialVerifier {
   ): Promise<unknown> {
     return new Promise<unknown>((resolve, reject) => {
       const remaining = Math.max(1, deadline - Date.now());
+      // HTTP Basic would disclose both WooCommerce credentials over plaintext.
+      // WooCommerce requires signed OAuth 1.0a for non-TLS REST requests.
+      if (site.protocol === "http:" && this.options.mode !== "local-development") {
+        reject(new WooReadVerificationError("unsafe_target"));
+        return;
+      }
+      const signedPath = site.protocol === "http:"
+        ? signLocalWooReadPath(site, path, credential)
+        : path;
       const request = (site.protocol === "https:" ? httpsRequest : httpRequest)({
         protocol: site.protocol,
         hostname: site.hostname,
         port: site.port,
         method: "GET",
-        path,
+        path: signedPath,
         agent: false,
         headers: {
           accept: "application/json",
           "accept-encoding": "identity",
-          authorization: `Basic ${Buffer.from(`${credential.consumerKey}:${credential.consumerSecret}`).toString("base64")}`,
+          ...(site.protocol === "https:" ? {
+            authorization: `Basic ${Buffer.from(`${credential.consumerKey}:${credential.consumerSecret}`).toString("base64")}`,
+          } : {}),
           connection: "close",
         },
         lookup: (_hostname, options, callback) => {

@@ -28,6 +28,7 @@ test("product allowlist rejects unsafe inputs and unsupported operations", () =>
     { operation: "products.list", perPage: 500 },
     { operation: "products.list", page: -1 },
     { operation: "products.list", search: "bad\r\nAuthorization: Basic" },
+    { operation: "products.list", search: "bad\x7f" },
     { operation: "products.list", search: "x".repeat(101) },
     { operation: "products.retrieve", productId: "1/../orders" },
     { operation: "products.retrieve", productId: 0 },
@@ -53,4 +54,7 @@ test("provider response projects only explicitly permitted product fields", () =
   const detail = prepareWooProductRequest({ operation: "products.retrieve", productId: 27 });
   assert.deepEqual(projectWooProducts(body[0], detail), projected[0]);
   assert.throws(() => projectWooProducts([{ ...body[0], id: "not-numeric" }], list), WooProductResponseError);
+  assert.throws(() => projectWooProducts([{ ...body[0], name: "bad\x0b" }], list), WooProductResponseError);
+  assert.deepEqual(projectWooProducts({ ...body[0], name: "Two\nLines" }, detail),
+    { ...projected[0], name: "Two\nLines" });
 });

@@ -1,11 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
+import { resolveModaConfigurationLocale, type ModaSupportedLanguageTag } from "@modainteract/moda-interact-shared/internationalization";
 import { canonicalizeWooSiteUrl, type WooConnectionMode } from "../installation/site-url.js";
 import { digestSecret } from "../installation/credential.js";
 import type { WooInstallationPrincipal } from "../installation/authenticator.js";
 import type { WooRestReadAuthorizationConfig } from "./config.js";
 import { sealWooReadCredentials } from "./envelope.js";
 import { WooReadCredentialVerifier, WooReadVerificationError } from "./credential-verifier.js";
+import { preferredWooAdminLocale, signWooReturnLocale, verifyWooReturnLocale } from "./return-locale-proof.js";
 
 const ATTEMPT_LIFETIME_MS = 10 * 60 * 1000;
 const TRANSACTION_TIMEOUT_MS = 6000;
@@ -47,7 +49,7 @@ export class WooReadAuthorizationService {
     private readonly tokenFactory: () => Buffer = () => randomBytes(32),
   ) {}
 
-  async start(principal: WooInstallationPrincipal): Promise<{
+  async start(principal: WooInstallationPrincipal, adminLocale?: string): Promise<{
     schemaVersion: 1;
     authorizationUrl: string;
     expiresAt: string;
@@ -55,28 +57,59 @@ export class WooReadAuthorizationService {
     const site = canonicalizeWooSiteUrl(principal.canonicalSiteUrl, this.mode);
     const token = this.tokenFactory();
     if (token.length !== 32) throw new WooReadAuthorizationError(500, "internal_error");
+    const tokenDigest = digestSecret(token);
     const now = this.now();
     const attempt = await this.database.wooCommerceRestReadAttempt.create({
       data: {
         installationId: principal.installationId,
         shopId: principal.shopId,
         credentialVersionSnapshot: principal.credentialVersion,
-        tokenDigest: Uint8Array.from(digestSecret(token)),
+        tokenDigest: Uint8Array.from(tokenDigest),
         expiresAt: new Date(now.getTime() + ATTEMPT_LIFETIME_MS),
       },
       select: { id: true, expiresAt: true },
     }).catch(() => { throw new WooReadAuthorizationError(409, "shop_unavailable"); });
 
+    const returnUrl = new URL(`${this.config.publicOrigin}${RETURN_PATH}`);
+    const requestedLocale = preferredWooAdminLocale(adminLocale);
+    if (requestedLocale) {
+      returnUrl.searchParams.set("display_locale", requestedLocale);
+      returnUrl.searchParams.set("display_proof", signWooReturnLocale(this.config, attempt.id, principal.shopId, requestedLocale));
+    }
     const url = new URL(site.canonicalSiteUrl);
     url.pathname = `${site.basePath}/wc-auth/v1/authorize`;
     url.search = new URLSearchParams({
       app_name: "Moda Interact",
       scope: "read",
       user_id: attempt.id,
-      return_url: `${this.config.publicOrigin}${RETURN_PATH}`,
+      return_url: returnUrl.toString(),
       callback_url: `${this.config.publicOrigin}${CALLBACK_PATH}/${token.toString("base64url")}`,
     }).toString();
     return { schemaVersion: 1, authorizationUrl: url.toString(), expiresAt: attempt.expiresAt.toISOString() };
+  }
+
+  /** Prefer the signed administrator locale; otherwise use the attempt's persisted shop language. */
+  async returnLocale(
+    attemptId: string | null, requestedLocale: string | null = null, proof: string | null = null,
+  ): Promise<ModaSupportedLanguageTag> {
+    if (!attemptId || !/^[A-Za-z0-9_-]{1,128}$/.test(attemptId)) return "en";
+    const attempt = await this.database.wooCommerceRestReadAttempt.findUnique({
+      where: { id: attemptId },
+      select: {
+        shopId: true,
+        installation: {
+          select: {
+            shopId: true,
+            shop: { select: { storeLocale: true, defaultLanguageTag: true } },
+          },
+        },
+      },
+    });
+    if (!attempt || attempt.shopId !== attempt.installation.shopId) return "en";
+    const preferred = verifyWooReturnLocale(this.config, attemptId, attempt.shopId, requestedLocale, proof);
+    if (preferred) return preferred;
+    const { storeLocale, defaultLanguageTag } = attempt.installation.shop;
+    return resolveModaConfigurationLocale((storeLocale ?? defaultLanguageTag)?.replaceAll("_", "-"));
   }
 
   async status(principal: WooInstallationPrincipal): Promise<{

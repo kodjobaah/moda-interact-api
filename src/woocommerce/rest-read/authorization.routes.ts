@@ -1,7 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import type { ModaSupportedLanguageTag } from "@modainteract/moda-interact-shared/internationalization";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../installation/authenticator.js";
 import { WooReadAuthorizationError, WooReadAuthorizationService, type WooCallbackPayload } from "./authorization.service.js";
+import { renderWooReadReturnPage } from "./return-page.js";
 
 export const WOO_READ_START_PATH = "/v1/woocommerce/read-authorizations";
 export const WOO_READ_STATUS_PATH = "/v1/woocommerce/read-authorization";
@@ -30,11 +32,17 @@ export function createWooRestReadAuthorizationRoutes(options: {
       const { pathname } = url;
       if (pathname === WOO_READ_RETURN_PATH && request.method === "GET") {
         // Browser redirect is advisory; never use it as proof of consent or change database state.
-        if (url.searchParams.get("success") === "0") {
-          sendPlainText(response, "WooCommerce authorization was not completed. Return to WooCommerce to try again.");
-        } else {
-          sendPlainText(response, "Return to your WooCommerce admin. Moda Interact will confirm read access after checking the store.");
+        // user_id is WooCommerce's attempt identifier, not a trusted locale or credential.
+        let locale: ModaSupportedLanguageTag = "en";
+        try {
+          locale = await options.service.returnLocale(
+            url.searchParams.get("user_id"), url.searchParams.get("display_locale"), url.searchParams.get("display_proof"),
+          );
+        } catch {
+          // Return is informational; keep it available even if the locale lookup fails.
+          options.logger.warn("woocommerce.rest_read.return_locale.unavailable", { reason: "lookup_failed" });
         }
+        sendReturnPage(response, locale, url.searchParams.get("success") === "0");
         return true;
       }
       if (pathname.startsWith(WOO_READ_CALLBACK_PREFIX) && request.method === "POST") {
@@ -44,7 +52,9 @@ export function createWooRestReadAuthorizationRoutes(options: {
           if (!/^[A-Za-z0-9_-]{43}$/.test(token)) throw new InvalidCallback("invalid_attempt", 404);
           const data = await parseCallbackBody(request);
           await options.service.callback(token, data);
-          response.writeHead(204, securityHeaders());
+          // WC_Auth::post_consumer_data treats only HTTP 200 as successful delivery.
+          // A 204 causes WooCommerce to delete the newly issued provider key.
+          response.writeHead(200, securityHeaders());
           response.end();
           options.logger.info("woocommerce.rest_read.authorization.approved", { outcome: "committed" });
         } catch (error) {
@@ -60,7 +70,7 @@ export function createWooRestReadAuthorizationRoutes(options: {
           if (url.search || hasRequestBody(request)) throw new InvalidCallback();
           const principal = await options.authenticator.authenticate(request);
           if (pathname === WOO_READ_START_PATH) {
-            const result = await options.service.start(principal);
+            const result = await options.service.start(principal, readAdminLocaleHeader(request));
             sendJson(response, 201, result);
             options.logger.info("woocommerce.rest_read.authorization.started", {
               installationId: principal.installationId, shopId: principal.shopId,
@@ -162,6 +172,16 @@ function singleHeader(request: IncomingMessage, name: string): { count: number; 
   return value === undefined ? { count: values.length } : { count: 1, value };
 }
 
+/** WordPress sets this from get_user_locale() after its capability and nonce checks. */
+function readAdminLocaleHeader(request: IncomingMessage): string | undefined {
+  const header = singleHeader(request, "x-moda-admin-locale");
+  if (header.count === 0) return undefined; // Older installed plugins remain compatible.
+  if (header.count !== 1 || !/^[A-Za-z0-9_-]{2,64}$/.test(header.value ?? "")) {
+    throw new InvalidCallback("invalid_locale");
+  }
+  return header.value;
+}
+
 function hasRequestBody(request: IncomingMessage): boolean {
   const length = singleHeader(request, "content-length");
   const encoding = singleHeader(request, "transfer-encoding");
@@ -184,10 +204,16 @@ function sendJson(response: ServerResponse, code: number, value: unknown): void 
   response.end(JSON.stringify(value));
 }
 
-function sendPlainText(response: ServerResponse, value: string): void {
+function sendReturnPage(response: ServerResponse, locale: ModaSupportedLanguageTag, cancelled: boolean): void {
   if (response.destroyed || response.headersSent) return;
-  response.writeHead(200, { ...securityHeaders(), "content-type": "text/plain; charset=utf-8" });
-  response.end(value);
+  const page = renderWooReadReturnPage(locale, cancelled);
+  response.writeHead(200, {
+    ...securityHeaders(),
+    "content-type": "text/html; charset=utf-8",
+    "content-language": locale,
+    "content-security-policy": page.contentSecurityPolicy,
+  });
+  response.end(page.html);
 }
 
 function handleFailure(error: unknown, response: ServerResponse, logger: StructuredLogger, action: string): void {
