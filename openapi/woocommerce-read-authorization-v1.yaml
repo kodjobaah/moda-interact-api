@@ -1,0 +1,136 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Read-Only REST Authorization
+  version: 1.0.0
+  description: >
+    Authorize Moda to read from one verified WooCommerce store. The existing inbound
+    plugin installation credential remains independent of this outgoing grant.
+  x-woocommerce-consent:
+    authorizationPath: /wc-auth/v1/authorize
+    scope: read
+    result: The browser return is advisory; the verified server callback alone activates a grant.
+    providerKeyRevocation: Merchant administrator revokes the key in WooCommerce > Settings > Advanced > REST API.
+servers:
+  - url: https://api.moda-interact.example
+paths:
+  /v1/woocommerce/read-authorizations:
+    post:
+      operationId: beginWooReadOnlyAuthorization
+      summary: Create a ten-minute single-use read-only consent attempt
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody: { required: false }
+      responses:
+        '201':
+          description: Returns a short-lived WooCommerce consent URL; do not log it.
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/StartResponse' } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/woocommerce/read-authorization:
+    get:
+      operationId: readWooAuthorizationStatus
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      responses:
+        '200':
+          description: Server-side grant state; no raw keys or callback material.
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+          content: { application/json: { schema: { $ref: '#/components/schemas/StatusResponse' } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+    delete:
+      operationId: revokeWooLocalReadAuthorization
+      description: Revoke Moda's stored grant; the merchant must separately revoke the provider key.
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      responses:
+        '200':
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+          description: Local grant and pending consents have been disabled.
+          content: { application/json: { schema: { $ref: '#/components/schemas/RevokeResponse' } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+  /v1/woocommerce/read-authorizations/callback/{opaqueAttemptToken}:
+    post:
+      operationId: acceptWooServerReadCredentialCallback
+      description: >
+        WooCommerce server-to-server JSON POST; request is unauthenticated until
+        one-use attempt and read-only credentials have been validated against the exact shop.
+        Never log the path, request body or bearer token; redact gateway access logs.
+      parameters:
+        - name: opaqueAttemptToken
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+      requestBody:
+        required: true
+        x-max-body-bytes: 4096
+        content: { application/json: { schema: { $ref: '#/components/schemas/CallbackPayload' } } }
+      responses:
+        '204': { description: Grant committed or identical callback safely replayed. }
+        '400': { $ref: '#/components/responses/Error' }
+        '404': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+        '413': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+        '503': { $ref: '#/components/responses/Error' }
+  /v1/woocommerce/read-authorizations/return:
+    get:
+      operationId: showWooReadAuthorizationAdvisoryReturn
+      summary: Informational browser return; never commits or claims credential status
+      parameters:
+        - { name: success, in: query, schema: { type: string, enum: ['0', '1'] } }
+        - { name: user_id, in: query, schema: { type: string } }
+      responses:
+        '200': { description: No-store, plaintext advisory response without user-supplied reflection. }
+components:
+  securitySchemes:
+    WooInstallationId: { type: apiKey, in: header, name: X-Moda-Installation-Id }
+    WooInstallationCredential: { type: http, scheme: bearer, bearerFormat: Moda installation credential }
+  schemas:
+    StartResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, authorizationUrl, expiresAt]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        authorizationUrl: { type: string, format: uri, description: Contains short-lived callback material; never log. }
+        expiresAt: { type: string, format: date-time }
+    StatusResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, status, providerRevocationRequired]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        status: { type: string, enum: [CONNECTED, PENDING, NOT_CONNECTED, REAUTHORIZATION_REQUIRED] }
+        providerRevocationRequired: { type: boolean }
+    RevokeResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, status, providerRevocationRequired]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        status: { type: string, const: REVOKED }
+        providerRevocationRequired: { type: boolean, const: true }
+    CallbackPayload:
+      type: object
+      additionalProperties: false
+      required: [key_id, user_id, consumer_key, consumer_secret, key_permissions]
+      properties:
+        key_id: { type: integer, minimum: 1 }
+        user_id: { type: string, minLength: 1, maxLength: 128 }
+        consumer_key: { type: string, pattern: '^ck_[A-Za-z0-9]{40}$' }
+        consumer_secret: { type: string, pattern: '^cs_[A-Za-z0-9]{40}$' }
+        key_permissions: { type: string, const: read }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties: { error: { type: string } }
+  responses:
+    Error:
+      description: Bounded error without provider secrets, store responses or callback tokens.
+      headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }

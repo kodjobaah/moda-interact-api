@@ -18,6 +18,9 @@ import { WooInstallationAuthenticator } from "./woocommerce/installation/authent
 import { WooInstallationConnectionService } from "./woocommerce/installation/connection-service.js";
 import { createWooInstallationRoutes } from "./woocommerce/installation/routes.js";
 import { WooSiteVerifier } from "./woocommerce/installation/site-verifier.js";
+import { WooReadCredentialVerifier } from "./woocommerce/rest-read/credential-verifier.js";
+import { WooReadAuthorizationService } from "./woocommerce/rest-read/authorization.service.js";
+import { createWooRestReadAuthorizationRoutes } from "./woocommerce/rest-read/authorization.routes.js";
 import { WooBillingClient } from "./woocommerce/billing/woo-billing-client.js";
 import { WooBillingWebhookReceiptService } from "./woocommerce/billing/webhooks/webhook-receipt.service.js";
 import { createWooBillingWebhookRoute } from "./woocommerce/billing/webhooks/woo-billing-webhook-route.js";
@@ -76,7 +79,19 @@ async function main(): Promise<void> {
       receiptService: new WooBillingWebhookReceiptService(database.prisma.wooCommerceBillingWebhookReceipt),
       logger,
     });
-    const runtime = createApiRuntime(config, database, logger, wooRoutes, wooBillingWebhookRoutes);
+    const wooRestReadRoutes = config.wooRestReadAuthorization
+      ? createWooRestReadAuthorizationRoutes({
+          authenticator,
+          service: new WooReadAuthorizationService(
+            database.prisma,
+            config.wooRestReadAuthorization,
+            config.woocommerceConnectionMode,
+            new WooReadCredentialVerifier({ mode: config.woocommerceConnectionMode }),
+          ),
+          logger,
+        })
+      : undefined;
+    const runtime = createApiRuntime(config, database, logger, wooRoutes, wooBillingWebhookRoutes, wooRestReadRoutes);
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch {

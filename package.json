@@ -14,8 +14,9 @@
     "typecheck": "npm run prisma:generate && tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --max-warnings=0",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs",
-    "prisma:generate": "prisma generate --schema database/prisma/schema.prisma"
+    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
+    "prisma:generate": "prisma generate --schema database/prisma/schema.prisma",
+    "test:arch026-woo-rest-read:postgres": "node scripts/test-woocommerce-rest-read-authorization-postgres.mjs"
   },
   "dependencies": {
     "@modainteract/moda-interact-shared": "1.3.0",

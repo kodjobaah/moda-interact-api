@@ -1,3 +1,4 @@
+import { loadWooRestReadAuthorizationConfig, type WooRestReadAuthorizationConfig } from "./woocommerce/rest-read/config.js";
 import { loadWooBillingConfig, type WooBillingConfig } from "./woocommerce/billing/woo-billing-config.js";
 
 export interface RuntimeConfig {
@@ -8,6 +9,7 @@ export interface RuntimeConfig {
   readinessTimeoutMs: number;
   woocommerceConnectionMode: "public" | "local-development";
   wooBilling: WooBillingConfig | null;
+  wooRestReadAuthorization: WooRestReadAuthorizationConfig | null;
 }
 
 export type RuntimeEnvironment = Readonly<Record<string, string | undefined>>;
@@ -58,6 +60,7 @@ export function loadRuntimeConfig(
   }
 
   const wooBilling = loadWooBillingConfig(environment);
+  const wooRestReadAuthorization = loadWooRestReadAuthorizationConfig(environment, connectionMode);
 
   return {
     databaseUrl,
@@ -67,5 +70,6 @@ export function loadRuntimeConfig(
     readinessTimeoutMs: READINESS_TIMEOUT_MS,
     woocommerceConnectionMode: connectionMode,
     wooBilling,
+    wooRestReadAuthorization,
   };
 }
