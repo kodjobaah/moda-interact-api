@@ -2,6 +2,8 @@ import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createDatabase } from "./database.js";
 import { BillingPresentationReadService } from "./billing/presentation/billing-read.service.js";
 import { BillingPlanCatalogueReadService } from "./billing/presentation/plan-catalogue-read.service.js";
+import { WooPurchaseHistoryReadService } from "./billing/purchase-history/service.js";
+import { createWooPurchaseHistoryRoute } from "./billing/purchase-history/routes.js";
 import { RecurringSubscriptionCommandService } from "./billing/commands/recurring-subscription-command.service.js";
 import { RecoveryCreditPurchaseCommandService } from "./billing/commands/recovery-credit-purchase-command.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
@@ -51,6 +53,11 @@ async function main(): Promise<void> {
       service: new MerchantRecoverySummaryService(database.prisma), authenticator, logger,
     });
     const billingReadService = new BillingPresentationReadService(database.prisma);
+    const purchaseHistoryRoute = createWooPurchaseHistoryRoute({
+      authenticator,
+      service: new WooPurchaseHistoryReadService(database.prisma),
+      logger,
+    });
     const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
     const wooBillingClient = config.wooBilling ? new WooBillingClient(config.wooBilling) : undefined;
     const recurringSubscriptionCommandService = wooBillingClient && config.wooBilling
@@ -68,6 +75,7 @@ async function main(): Promise<void> {
       storeCategorySelectionRoute,
       recoverySummaryRoute,
       billingReadService,
+      purchaseHistoryRoute,
       billingPlanCatalogueReadService,
       ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),
       ...(recoveryCreditPurchaseCommandService ? { recoveryCreditPurchaseCommandService } : {}),

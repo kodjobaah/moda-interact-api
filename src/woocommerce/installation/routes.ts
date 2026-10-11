@@ -13,6 +13,7 @@ import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from ".
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
 import type { createMerchantRecoverySummaryRoute } from "../../merchant/recovery-summary/routes.js";
+import type { createWooPurchaseHistoryRoute } from "../../billing/purchase-history/routes.js";
 import type { createStoreCategoriesRoute } from "../../merchant/store-categories/routes.js";
 import type { createStoreCategorySelectionRoute } from "../../merchant/store-categories/selection-routes.js";
 import { MerchantStoreContextConflictError, MerchantStoreContextService } from "../../merchant/store-context/store-context.service.js";
@@ -53,6 +54,7 @@ interface WooInstallationRouteOptions {
   storeCategoriesRoute?: ReturnType<typeof createStoreCategoriesRoute>;
   storeCategorySelectionRoute?: ReturnType<typeof createStoreCategorySelectionRoute>;
   billingReadService?: BillingPresentationReadService;
+  purchaseHistoryRoute?: ReturnType<typeof createWooPurchaseHistoryRoute>;
   billingPlanCatalogueReadService?: BillingPlanCatalogueReadService;
   recurringSubscriptionCommandService?: RecurringSubscriptionCommandService;
   recoveryCreditPurchaseCommandService?: RecoveryCreditPurchaseCommandService;
@@ -70,6 +72,7 @@ export function createWooInstallationRoutes({
   storeCategorySelectionRoute,
   recoverySummaryRoute,
   billingReadService,
+  purchaseHistoryRoute,
   billingPlanCatalogueReadService,
   recurringSubscriptionCommandService,
   recoveryCreditPurchaseCommandService,
@@ -80,6 +83,7 @@ export function createWooInstallationRoutes({
   return {
     async handle(request, response) {
       if (recoverySummaryRoute && await recoverySummaryRoute.handle(request, response)) return true;
+      if (purchaseHistoryRoute && await purchaseHistoryRoute.handle(request, response)) return true;
       if (storeCategoriesRoute && await storeCategoriesRoute.handle(request, response)) return true;
       if (storeCategorySelectionRoute && await storeCategorySelectionRoute.handle(request, response)) return true;
       const requestUrl = new URL(request.url ?? "/", "http://localhost");

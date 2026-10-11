@@ -1,0 +1,121 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Purchased Credit History API
+  version: 1.0.0
+  description: Read-only merchant-safe WooCommerce credit lots and provider refund navigation.
+servers:
+  - url: https://api.moda-interact.example
+paths:
+  /v1/billing/recovery-credit-purchases:
+    get:
+      operationId: readWooRecoveryCreditPurchases
+      summary: Read purchased credit history and WooCommerce Orders refund guidance
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - name: filter
+          in: query
+          schema: { type: string, enum: [ACTIVE, WITHDRAWN, COMPLETED, REFUNDED, ALL], default: ACTIVE }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 999999999, default: 1 }
+        - name: pageSize
+          in: query
+          schema: { type: integer, enum: [5, 10, 20], default: 5 }
+      responses:
+        '200':
+          description: Bounded provider-scoped purchase history; no refund mutation.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: 'private, no-store' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PurchaseHistory' }
+        '400': { $ref: '#/components/responses/Error' }
+        '401': { $ref: '#/components/responses/Error' }
+        '409': { $ref: '#/components/responses/Error' }
+        '500': { $ref: '#/components/responses/Error' }
+components:
+  securitySchemes:
+    WooInstallationId: { type: apiKey, in: header, name: X-Moda-Installation-Id }
+    WooInstallationCredential: { type: http, scheme: bearer, bearerFormat: Moda installation credential }
+  responses:
+    Error:
+      description: A bounded authentication, query, integrity or internal error.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string, enum: [invalid_request, unauthorized, billing_integrity_invalid, billing_not_initialized, internal_error] }
+    RefundRequest:
+      type: object
+      additionalProperties: false
+      required: [method, url]
+      properties:
+        method: { type: string, const: WOOCOMMERCE_ORDERS }
+        url: { type: string, format: uri, const: 'https://woocommerce.com/my-account/orders/' }
+    Money:
+      type: object
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount: { type: string, pattern: '^\d{1,16}(?:\.\d{1,6})?$' }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+    Refund:
+      type: object
+      additionalProperties: false
+      required: [status, reason, finalCreditQuantity, providerAmount, createdAt, completedAt]
+      properties:
+        status: { type: string, enum: [REQUESTED, PROVIDER_ACTION_REQUIRED, COMPLETED, REJECTED, CANCELLED, NEEDS_ATTENTION] }
+        reason: { oneOf: [{ type: string, pattern: '^[A-Z][A-Z0-9_]{0,63}$' }, { type: 'null' }] }
+        finalCreditQuantity: { oneOf: [{ type: integer, minimum: 0 }, { type: 'null' }] }
+        providerAmount: { oneOf: [{ $ref: '#/components/schemas/Money' }, { type: 'null' }] }
+        createdAt: { type: string, format: date-time }
+        completedAt: { oneOf: [{ type: string, format: date-time }, { type: 'null' }] }
+    Purchase:
+      type: object
+      additionalProperties: false
+      required: [id, status, createdAt, activatedAt, bundleLabel, planName, creditsGranted, currentAmount, reservedAmount, availableAmount, heldForRefundAmount, refundEligible, refundUnavailableReason, refundAttempted, latestRefund, completedRefund, originalProviderPurchase]
+      properties:
+        id: { type: string, minLength: 1, maxLength: 128 }
+        status: { type: string, enum: [REQUESTED, ACTIVE, WITHDRAWN, COMPLETED, REFUNDED] }
+        createdAt: { type: string, format: date-time }
+        activatedAt: { oneOf: [{ type: string, format: date-time }, { type: 'null' }] }
+        bundleLabel: { oneOf: [{ type: string, maxLength: 120 }, { type: 'null' }] }
+        planName: { type: string, maxLength: 255 }
+        creditsGranted: { type: integer, minimum: 0 }
+        currentAmount: { type: integer, minimum: 0 }
+        reservedAmount: { type: integer, minimum: 0 }
+        availableAmount: { type: integer, minimum: 0 }
+        heldForRefundAmount: { type: integer, minimum: 0 }
+        refundEligible: { type: boolean }
+        refundUnavailableReason:
+          oneOf:
+            - { type: string, enum: [REFUND_ALREADY_ATTEMPTED, NO_AVAILABLE_CREDITS, PROVIDER_EVIDENCE_UNAVAILABLE, REFUND_IN_PROGRESS] }
+            - { type: 'null' }
+        refundAttempted: { type: boolean }
+        latestRefund: { oneOf: [{ $ref: '#/components/schemas/Refund' }, { type: 'null' }] }
+        completedRefund: { oneOf: [{ $ref: '#/components/schemas/Refund' }, { type: 'null' }] }
+        originalProviderPurchase: { oneOf: [{ $ref: '#/components/schemas/Money' }, { type: 'null' }] }
+    PurchaseHistory:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, filter, page, pageSize, total, totalPages, purchases, refundRequest]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        filter: { type: string, enum: [ACTIVE, WITHDRAWN, COMPLETED, REFUNDED, ALL] }
+        page: { type: integer, minimum: 1 }
+        pageSize: { type: integer, enum: [5, 10, 20] }
+        total: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 1 }
+        purchases:
+          type: array
+          maxItems: 20
+          items: { $ref: '#/components/schemas/Purchase' }
+        refundRequest: { $ref: '#/components/schemas/RefundRequest' }

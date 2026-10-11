@@ -109,6 +109,7 @@ test("start binds WordPress administrator locale to one consent attempt without 
   const unsupported = new URL((await service.start(principal, "xx_YY")).authorizationUrl);
   assert.equal(unsupported.searchParams.get("return_url"),
     "https://api.example.org/v1/woocommerce/read-authorizations/return");
+  assert.ok(stored);
 });
 
 test("pinned read credential verification permits only local-dev loopback and rejects redirect/unexpected shapes", async () => {
