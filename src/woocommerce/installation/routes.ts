@@ -16,6 +16,7 @@ import type { createMerchantRecoverySummaryRoute } from "../../merchant/recovery
 import type { createMerchantRecoveryPolicyRoute } from "../../merchant/recovery-policy/routes.js";
 import type { createMerchantRecoveriesRoute } from "../../merchant/recoveries/routes.js";
 import type { createMerchantRecoveryDetailRoute } from "../../merchant/recoveries/detail/routes.js";
+import type { createMerchantDiscountOffersRoutes } from "../../merchant/discount-offers/routes.js";
 import type { createWooPurchaseHistoryRoute } from "../../billing/purchase-history/routes.js";
 import type { createStoreCategoriesRoute } from "../../merchant/store-categories/routes.js";
 import type { createStoreCategorySelectionRoute } from "../../merchant/store-categories/selection-routes.js";
@@ -57,6 +58,7 @@ interface WooInstallationRouteOptions {
   recoveryPolicyRoute?: ReturnType<typeof createMerchantRecoveryPolicyRoute>;
   recoveriesRoute?: ReturnType<typeof createMerchantRecoveriesRoute>;
   recoveryDetailRoute?: ReturnType<typeof createMerchantRecoveryDetailRoute>;
+  discountOffersRoutes?: ReturnType<typeof createMerchantDiscountOffersRoutes>;
   storeCategoriesRoute?: ReturnType<typeof createStoreCategoriesRoute>;
   storeCategorySelectionRoute?: ReturnType<typeof createStoreCategorySelectionRoute>;
   billingReadService?: BillingPresentationReadService;
@@ -80,6 +82,7 @@ export function createWooInstallationRoutes({
   recoveryPolicyRoute,
   recoveriesRoute,
   recoveryDetailRoute,
+  discountOffersRoutes,
   billingReadService,
   purchaseHistoryRoute,
   billingPlanCatalogueReadService,
@@ -95,6 +98,7 @@ export function createWooInstallationRoutes({
       if (recoveryPolicyRoute && await recoveryPolicyRoute.handle(request, response)) return true;
       if (recoveriesRoute && await recoveriesRoute.handle(request, response)) return true;
       if (recoveryDetailRoute && await recoveryDetailRoute.handle(request, response)) return true;
+      if (discountOffersRoutes && await discountOffersRoutes.handle(request, response)) return true;
       if (purchaseHistoryRoute && await purchaseHistoryRoute.handle(request, response)) return true;
       if (storeCategoriesRoute && await storeCategoriesRoute.handle(request, response)) return true;
       if (storeCategorySelectionRoute && await storeCategorySelectionRoute.handle(request, response)) return true;

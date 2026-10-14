@@ -10,6 +10,8 @@ import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-rea
 import { MerchantRecoverySummaryService } from "./merchant/recovery-summary/recovery-summary.service.js";
 import { MerchantRecoveryPolicyService } from "./merchant/recovery-policy/service.js";
 import { createMerchantRecoveryPolicyRoute } from "./merchant/recovery-policy/routes.js";
+import { MerchantDiscountOffersService } from "./merchant/discount-offers/service.js";
+import { createMerchantDiscountOffersRoutes } from "./merchant/discount-offers/routes.js";
 import { createMerchantRecoverySummaryRoute } from "./merchant/recovery-summary/routes.js";
 import { MerchantRecoveryListService } from "./merchant/recoveries/list.service.js";
 import { createMerchantRecoveriesRoute } from "./merchant/recoveries/routes.js";
@@ -67,6 +69,9 @@ async function main(): Promise<void> {
     const recoveryDetailRoute = createMerchantRecoveryDetailRoute({
       service: new MerchantRecoveryDetailService(database.prisma), authenticator, logger,
     });
+    const discountOffersRoutes = createMerchantDiscountOffersRoutes({
+      service: new MerchantDiscountOffersService(database.prisma), authenticator, logger,
+    });
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const purchaseHistoryRoute = createWooPurchaseHistoryRoute({
       authenticator,
@@ -92,6 +97,7 @@ async function main(): Promise<void> {
       recoveryPolicyRoute,
       recoveriesRoute,
       recoveryDetailRoute,
+      discountOffersRoutes,
       billingReadService,
       purchaseHistoryRoute,
       billingPlanCatalogueReadService,
