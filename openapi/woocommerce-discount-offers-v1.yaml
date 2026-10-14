@@ -1,0 +1,64 @@
+openapi: 3.1.0
+info:
+  title: WooCommerce merchant discount catalogue and offers
+  version: 1.0.0
+  description: >
+    Installed WooCommerce plugin backend only. Authentication is the existing
+    installation credential; browser requests must use the privileged WordPress REST facade.
+    Background synchronises provider facts; the merchant Save changes only coupon
+    isAvailable flags and offer mode/anchor. Save does not validate provider
+    status, catalogue generation or age. Saved configuration is not coupon proof.
+paths:
+  /v1/merchant/discount-catalogue:
+    get:
+      operationId: listWooMerchantDiscounts
+      security: [{ installationBearer: [] }]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 50, default: 25 } }
+        - { name: cursor, in: query, schema: { type: string, maxLength: 128 } }
+        - { name: search, in: query, schema: { type: string, maxLength: 80 } }
+      responses:
+        '200': { description: Current, bounded, supported Woo coupons including checked state (only after first successful sync) }
+        '400': { description: Invalid pagination/search }
+        '401': { description: Invalid installation }
+        '409': { description: Installation/shop mismatch }
+        '503': { description: Catalogue is not current }
+  /v1/merchant/discount-offers:
+    get:
+      operationId: getWooMerchantDiscountOffers
+      security: [{ installationBearer: [] }]
+      responses:
+        '200': { description: Saved merchant mode and selected IDs, effective admin override and informational revision }
+        '401': { description: Invalid installation }
+        '409': { description: Installation/shop mismatch }
+        '503': { description: Catalogue is not current }
+    put:
+      operationId: saveWooMerchantDiscountOffers
+      security: [{ installationBearer: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DiscountOffersSave' }
+      responses:
+        '200': { description: Atomic merchant selection and mode update; never requires a catalogue revision }
+        '400': { description: Invalid input }
+        '401': { description: Invalid installation }
+        '409': { description: Shop unavailable or transactional write conflict }
+        '413': { description: Payload too large }
+        '422': { description: Unknown/foreign coupon IDs or invalid FIXED selection }
+components:
+  schemas:
+    DiscountOffersSave:
+      type: object
+      additionalProperties: false
+      required: [recoveryOfferMode, selectedDiscountIds]
+      properties:
+        recoveryOfferMode: { type: string, enum: [NONE, FIXED, AI_BEST_APPLICABLE] }
+        selectedDiscountIds:
+          type: array
+          maxItems: 50
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
+  securitySchemes:
+    installationBearer: { type: http, scheme: bearer }
