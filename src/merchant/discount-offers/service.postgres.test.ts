@@ -3,6 +3,7 @@ import {randomUUID} from "node:crypto";
 import test from "node:test";
 import {PrismaClient} from "@prisma/client";
 import {MerchantDiscountOffersService} from "./service.js";
+import {MerchantRecoverySummaryService} from "../recovery-summary/recovery-summary.service.js";
 import {DiscountOffersError} from "./contract.js";
 import type {WooInstallationPrincipal} from "../../woocommerce/installation/authenticator.js";
 
@@ -12,6 +13,7 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
   if(!url)return;
   const db=new PrismaClient({datasources:{db:{url}}});
   const ids:string[]=[];
+  let platformAdminId:string|undefined;
   try {
     const origin=`https://${randomUUID()}.discount-test.invalid`;
     const woo=await db.shop.create({data:{domain:origin,platform:"WOOCOMMERCE",status:"ACTIVE"}});
@@ -40,6 +42,24 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     const shopifyCoupon=await db.shopifyDiscount.create({data:{shopId:shopify.id,shopifyDiscountNodeId:"gid://shopify/Discount/1",
       providerType:"Shopify",method:"CODE",providerStatus:"ACTIVE",fixedSelectable:true,codeCount:1,title:"SHOPIFY",singleRedeemCode:"SHOPIFY",
       providerSnapshot:{},isAvailable:true,lastSeenSyncGeneration:5,lastSyncedAt:now}});
+    // A real active Admin policy override must survive all merchant Saves.
+    const admin=await db.platformAdmin.create({data:{email:`${randomUUID()}@api002-test.invalid`}});
+    platformAdminId=admin.id;
+    const override=await db.shopRecoveryPolicyOverride.create({data:{
+      shopId:woo.id,recoveryDelayMinutes:75,recoveryOfferMode:"AI_BEST_APPLICABLE",
+      fixedShopifyDiscountId:null,followUpEnabled:false,followUpDelayMinutes:null,
+      reason:"ARCH-036 API merchant isolation regression",updatedByPlatformAdminId:admin.id,
+    }});
+    const overrideBefore=await db.shopRecoveryPolicyOverride.findUniqueOrThrow({where:{shopId:woo.id}});
+    assert.equal(override.id,overrideBefore.id);
+    const state=async()=>({
+      discounts:await db.shopifyDiscount.findMany({where:{shopId:woo.id},orderBy:{id:"asc"},
+        select:{id:true,isAvailable:true,providerStatus:true,fixedSelectable:true}}),
+      settings:await db.shopSettings.findUnique({where:{shopId:woo.id},
+        select:{recoveryOfferMode:true,fixedShopifyDiscountId:true,recoveryDelayMinutes:true,
+          followUpEnabled:true,followUpDelayMinutes:true,updatedAt:true}}),
+      override:await db.shopRecoveryPolicyOverride.findUnique({where:{shopId:woo.id}}),
+    });
     const service=new MerchantDiscountOffersService(db,()=>new Date("2026-10-14T01:05:00Z"));
     // Background is responsible for transitioning SYNC_REQUIRED to CURRENT.
     await db.shopifyDiscountCatalogue.update({where:{shopId:woo.id},data:{
@@ -54,6 +74,13 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     }});
     const original=await service.read(principal);
     assert.equal(original.merchant.recoveryOfferMode,"NONE");
+    assert.equal(original.source,"ADMIN_OVERRIDE");
+    assert.equal(original.effective.recoveryOfferMode,"AI_BEST_APPLICABLE");
+    const existingRecoveryApi=new MerchantRecoverySummaryService(db);
+    const beforeRecovery=await existingRecoveryApi.read(principal,new Date("2026-10-14T01:05:00Z"));
+    assert.equal(beforeRecovery.source,"ADMIN_OVERRIDE");
+    assert.equal(beforeRecovery.recoveryDelayMinutes,75);
+    assert.equal(beforeRecovery.recoveryOfferMode,"AI_BEST_APPLICABLE");
     // A search OR must not override the start-date OR: a matching coupon that
     // has not started is absent both from ordinary pages and searched pages.
     const withoutSearch=await service.catalogue(principal,{limit:10});
@@ -66,8 +93,10 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     assert.equal(page.items.length,1);assert.ok(page.nextCursor);
     const second=await service.catalogue(principal,{limit:1,cursor:page.nextCursor!});
     assert.equal(second.items.length,1);assert.equal(second.items[0]?.selected,false);
+    const beforeMixedForeign=await state();
     await assert.rejects(()=>service.save(principal,{recoveryOfferMode:"FIXED",
       selectedDiscountIds:[one.id,foreign.id]}), (e:unknown)=>e instanceof DiscountOffersError && e.status===422);
+    assert.deepEqual(await state(),beforeMixedForeign,"mixed valid/foreign IDs must roll back all fields");
     const saved=await service.save(principal,{recoveryOfferMode:"FIXED",
       selectedDiscountIds:[two.id,one.id]});
     assert.equal(saved.merchant.recoveryOfferMode,"FIXED");
@@ -116,13 +145,29 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     await service.save(principal,{recoveryOfferMode:"NONE",selectedDiscountIds:[one.id]});
     assert.equal((await db.shopSettings.findUniqueOrThrow({where:{shopId:woo.id}})).fixedShopifyDiscountId,null);
     assert.equal((await db.shopifyDiscount.findUniqueOrThrow({where:{id:one.id}})).isAvailable,true);
+    const beforeRejected=await state();
     await assert.rejects(()=>service.save(principal,{recoveryOfferMode:"FIXED",selectedDiscountIds:[foreign.id]}),
       (e:unknown)=>e instanceof DiscountOffersError && e.status===422);
-    await assert.rejects(()=>service.save(principal,{recoveryOfferMode:"FIXED",selectedDiscountIds:["non-existent-discount"]}),
+    assert.deepEqual(await state(),beforeRejected,"foreign ID must leave flags, mode and anchor unchanged");
+    await assert.rejects(()=>service.save(principal,{recoveryOfferMode:"FIXED",
+      selectedDiscountIds:[one.id,"non-existent-discount"]}),
       (e:unknown)=>e instanceof DiscountOffersError && e.status===422);
+    assert.deepEqual(await state(),beforeRejected,"valid plus unknown ID must roll back the full set");
+    assert.deepEqual(await db.shopRecoveryPolicyOverride.findUniqueOrThrow({where:{shopId:woo.id}}),overrideBefore,
+      "merchant Save must never mutate the Admin override");
+    const afterRecovery=await existingRecoveryApi.read(principal,new Date("2026-10-14T01:05:00Z"));
+    assert.deepEqual(afterRecovery,beforeRecovery,"existing recovery-summary API must retain Admin precedence");
+    // The existing API is Woo-installation-authenticated; it must not become a
+    // Shopify write path. The Shopify storefront API lives in another service.
     await assert.rejects(()=>service.read({...principal,shopId:shopify.id}),DiscountOffersError);
+    await assert.rejects(()=>service.save({...principal,shopId:shopify.id},{
+      recoveryOfferMode:"FIXED",selectedDiscountIds:[shopifyCoupon.id],
+    }),DiscountOffersError);
+    assert.equal((await db.shopifyDiscount.findUniqueOrThrow({where:{id:shopifyCoupon.id}})).isAvailable,true);
+    assert.equal((await db.shopSettings.findUnique({where:{shopId:shopify.id}}))?.fixedShopifyDiscountId??null,null);
   } finally {
     for(const id of ids)await db.shop.delete({where:{id}}).catch(()=>{});
+    if(platformAdminId)await db.platformAdmin.delete({where:{id:platformAdminId}}).catch(()=>{});
     await db.$disconnect();
   }
 });
