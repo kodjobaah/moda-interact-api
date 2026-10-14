@@ -8,6 +8,8 @@ import { RecurringSubscriptionCommandService } from "./billing/commands/recurrin
 import { RecoveryCreditPurchaseCommandService } from "./billing/commands/recovery-credit-purchase-command.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
 import { MerchantRecoverySummaryService } from "./merchant/recovery-summary/recovery-summary.service.js";
+import { MerchantDiscountOffersService } from "./merchant/discount-offers/service.js";
+import { createMerchantDiscountOffersRoutes } from "./merchant/discount-offers/routes.js";
 import { createMerchantRecoverySummaryRoute } from "./merchant/recovery-summary/routes.js";
 import { MerchantStoreContextService } from "./merchant/store-context/store-context.service.js";
 import { StoreCategoriesReadService, commerceEnvironmentForApi } from "./merchant/store-categories/store-categories-read.service.js";
@@ -52,6 +54,9 @@ async function main(): Promise<void> {
     const recoverySummaryRoute = createMerchantRecoverySummaryRoute({
       service: new MerchantRecoverySummaryService(database.prisma), authenticator, logger,
     });
+    const discountOffersRoutes = createMerchantDiscountOffersRoutes({
+      service: new MerchantDiscountOffersService(database.prisma), authenticator, logger,
+    });
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const purchaseHistoryRoute = createWooPurchaseHistoryRoute({
       authenticator,
@@ -74,6 +79,7 @@ async function main(): Promise<void> {
       storeCategoriesRoute,
       storeCategorySelectionRoute,
       recoverySummaryRoute,
+      discountOffersRoutes,
       billingReadService,
       purchaseHistoryRoute,
       billingPlanCatalogueReadService,
