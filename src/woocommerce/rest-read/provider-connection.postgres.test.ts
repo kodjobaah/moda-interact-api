@@ -13,8 +13,8 @@ import { WooProductReadService } from "./provider-connection.service.js";
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const config = loadWooRestReadAuthorizationConfig({
   MODA_WOO_REST_READ_PUBLIC_ORIGIN: "http://localhost:3100",
-  MODA_WOO_REST_READ_ACTIVE_KEY_ID: "test-grant",
-  MODA_WOO_REST_READ_KEYRING: JSON.stringify({ "test-grant": Buffer.alloc(32, 17).toString("base64url") }),
+  COMMERCE_CONNECTION_ACTIVE_KEY_ID: "test-grant",
+  COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ "test-grant": Buffer.alloc(32, 17).toString("base64") }),
 }, "local-development");
 assert.ok(config);
 const logger = { info: () => undefined, warn: () => undefined };

@@ -3,6 +3,7 @@ import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { sealWooReadCredentials } from "./envelope.js";
 import { WooReadVerificationError } from "./credential-verifier.js";
+import { loadWooRestReadAuthorizationConfig } from "./config.js";
 import { WooProductReadService } from "./provider-connection.service.js";
 
 const logs: Array<Record<string, unknown>> = [];
@@ -10,17 +11,27 @@ const logger = {
   info: (_event: string, data: Record<string, unknown>) => { logs.push(data); },
   warn: (_event: string, data: Record<string, unknown>) => { logs.push(data); },
 };
-const config = {
-  activeKeyId: "test-key", keys: new Map([["test-key", randomBytes(32)]]), publicOrigin: "https://api.invalid",
-};
+const testKey = randomBytes(32);
+const config = loadWooRestReadAuthorizationConfig({
+  MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.invalid",
+  COMMERCE_CONNECTION_ACTIVE_KEY_ID: "test-key",
+  COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ "test-key": testKey.toString("base64") }),
+}, "public");
+if (config === null) {
+  throw new Error("Woo REST-read authorization test configuration must be enabled");
+}
 const fixtureProduct = { id: 22, name: "T-Shirt", sku: "TEE", price: "20", stock_status: "instock", stock_quantity: 5 };
+
+const validatedConfig = config ?? (() => {
+  throw new Error("Woo REST-read authorization test configuration must be enabled");
+})();
 
 function createInstallation(shopId: string, secret: string) {
   const id = `installation-${shopId}`;
   const attemptId = `attempt-${shopId}`;
   const envelope = sealWooReadCredentials({ consumerKey: `ck_${shopId}`, consumerSecret: secret }, {
     shopId, installationId: id, authorizationAttemptId: attemptId, credentialVersionSnapshot: 1,
-  }, config);
+  }, validatedConfig);
   return {
     id, shopId, canonicalSiteUrl: `https://${shopId}.example.com`, status: "ACTIVE", revokedAt: null,
     credentialVersion: 1,
@@ -67,7 +78,7 @@ function fixture() {
     },
     verify: async () => { if (verificationFailure) throw verificationFailure; },
   };
-  const service = new WooProductReadService(database as never, config, "public", transport, logger);
+  const service = new WooProductReadService(database as never, validatedConfig, "public", transport, logger);
   return { shops, database, mutations, outbound, service,
     setReadFailure: (value: WooReadVerificationError) => { readFailure = value; },
     setVerificationFailure: (value: WooReadVerificationError) => { verificationFailure = value; },

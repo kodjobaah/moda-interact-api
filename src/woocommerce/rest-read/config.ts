@@ -1,10 +1,21 @@
 import { isIP } from "node:net";
+import {
+  parseCredentialKeyring,
+  resolveActiveCredentialKey,
+  type CredentialKeyring,
+} from "@modainteract/moda-interact-shared/security/credentials/node";
 import type { RuntimeEnvironment } from "../../runtime-config.js";
 import type { WooConnectionMode } from "../installation/site-url.js";
 
 export interface WooRestReadAuthorizationConfig {
   publicOrigin: string;
   activeKeyId: string;
+  keyring: CredentialKeyring;
+  /**
+   * Temporary raw-key adapter for the pre-ARCH-039 Woo grant cipher and signed
+   * return-locale proof. API-002 must remove this adapter when migrating those
+   * consumers; no other code should consume the raw key material.
+   */
   keys: ReadonlyMap<string, Buffer>;
 }
 
@@ -14,10 +25,12 @@ export function loadWooRestReadAuthorizationConfig(
   connectionMode: WooConnectionMode,
 ): WooRestReadAuthorizationConfig | null {
   const originValue = environment.MODA_WOO_REST_READ_PUBLIC_ORIGIN?.trim();
-  const keyId = environment.MODA_WOO_REST_READ_ACTIVE_KEY_ID?.trim();
-  const rawKeyring = environment.MODA_WOO_REST_READ_KEYRING?.trim();
-  if (!originValue && !keyId && !rawKeyring) return null;
-  if (!originValue || !keyId || !rawKeyring || !/^[A-Za-z0-9_-]{1,128}$/.test(keyId)) {
+  // ARCH-039: ONLY these two credential-encryption variables are permitted in API.
+  // Do not read Woo-specific aliases or COMMERCE_CONNECTION_COMMAND_HMAC_KEY.
+  const activeKeyIdRaw = environment.COMMERCE_CONNECTION_ACTIVE_KEY_ID;
+  const rawKeyring = environment.COMMERCE_CONNECTION_KEYS_JSON;
+  if (!originValue && !activeKeyIdRaw && !rawKeyring) return null;
+  if (!originValue || !activeKeyIdRaw || !rawKeyring) {
     throw new Error("Woo REST read authorization configuration is incomplete");
   }
   let origin: URL;
@@ -36,31 +49,25 @@ export function loadWooRestReadAuthorizationConfig(
   ) {
     throw new Error("Woo REST read authorization origin must be an approved API origin");
   }
-  let raw: unknown;
+
+  let keyring: CredentialKeyring;
+  let activeKeyId: string;
   try {
-    raw = JSON.parse(rawKeyring);
+    // Shared owns ALL keyring-format and active-key validation. This rejects
+    // duplicate JSON properties, noncanonical Base64 and invalid key IDs.
+    keyring = parseCredentialKeyring(rawKeyring);
+    activeKeyId = resolveActiveCredentialKey(keyring, activeKeyIdRaw);
   } catch {
-    throw new Error("Woo REST read authorization keyring is invalid");
+    throw new Error("Woo REST read authorization credential configuration is invalid");
   }
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("Woo REST read authorization keyring is invalid");
-  }
-  const entries = Object.entries(raw);
-  if (entries.length === 0 || entries.length > 16) {
-    throw new Error("Woo REST read authorization keyring is invalid");
-  }
-  const keys = new Map<string, Buffer>();
-  for (const [id, encoded] of entries) {
-    if (!/^[A-Za-z0-9_-]{1,128}$/.test(id) || typeof encoded !== "string" ||
-      !/^[A-Za-z0-9_-]{43}$/.test(encoded)) {
-      throw new Error("Woo REST read authorization keyring is invalid");
-    }
-    const key = Buffer.from(encoded, "base64url");
-    if (key.byteLength !== 32 || key.toString("base64url") !== encoded) {
-      throw new Error("Woo REST read authorization keyring is invalid");
-    }
-    keys.set(id, key);
-  }
-  if (!keys.has(keyId)) throw new Error("Woo REST read authorization active key is unavailable");
-  return { publicOrigin: origin.origin, activeKeyId: keyId, keys };
+
+  // Bounded compatibility adapter for the still-local Woo grant cipher and
+  // return-page HMAC (both consume raw bytes). This input has ALREADY passed
+  // strict Shared validation: it is not an alternate parser or config source.
+  // API-002 must remove this and migrate both consumers before closing ARCH-039.
+  const validated = JSON.parse(rawKeyring) as Record<string, string>;
+  const keys = new Map<string, Buffer>(
+    keyring.keyIds.map((id) => [id, Buffer.from(validated[id]!, "base64")]),
+  );
+  return { publicOrigin: origin.origin, activeKeyId, keyring, keys };
 }
