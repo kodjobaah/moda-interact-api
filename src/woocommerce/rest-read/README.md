@@ -4,23 +4,23 @@ The existing WooCommerce installation credential authenticates plugin -> Moda AP
 
 ## Runtime configuration
 
-The feature is disabled when all three new variables are absent; supplying only some causes startup to fail closed.
+The feature is disabled when the public origin and both canonical credential variables are absent; supplying only some causes startup to fail closed. The API must not use `COMMERCE_CONNECTION_COMMAND_HMAC_KEY`.
 
 - `MODA_WOO_REST_READ_PUBLIC_ORIGIN`: the fixed public HTTPS origin of `moda-interact-api`, e.g. `https://api.example.com`; no path, query, credentials or fragment. In explicit nonproduction `MODA_WOOCOMMERCE_CONNECTION_MODE=local-development`, an HTTP `localhost`/loopback origin is permitted for locally routed callbacks.
-- `MODA_WOO_REST_READ_ACTIVE_KEY_ID`: active encryption key ID, e.g. `2026-10-a`. Never reuse the value of an installation credential.
-- `MODA_WOO_REST_READ_KEYRING`: a JSON object mapping key IDs to **32-byte base64url-encoded AES-256 keys**. Keep previous key IDs in the keyring while any encrypted grants still reference them. Use a secure secrets manager; do not commit values or log them.
+- `COMMERCE_CONNECTION_ACTIVE_KEY_ID`: active encryption key ID, e.g. `2026-10-a`. Never reuse the value of an installation credential.
+- `COMMERCE_CONNECTION_KEYS_JSON`: a JSON object mapping key IDs to **32-byte canonical **padded standard Base64**-encoded AES-256 keys**. During future rotations keep prior key IDs until all referencing grants and return links have expired. The developer will clear pre-production grants at this breaking cutover. Use a secure secrets manager; do not commit values or log them.
 
 Example for a **disposable local test** only:
 
 ```sh
 export PORT=3100
 export MODA_WOO_REST_READ_PUBLIC_ORIGIN='http://localhost:3100'
-export MODA_WOO_REST_READ_ACTIVE_KEY_ID='local-v1'
-export MODA_WOO_REST_READ_KEYRING="$(node -e 'process.stdout.write(JSON.stringify({"local-v1":require("node:crypto").randomBytes(32).toString("base64url")}))')"
+export COMMERCE_CONNECTION_ACTIVE_KEY_ID='local-v1'
+export COMMERCE_CONNECTION_KEYS_JSON="$(node -e 'process.stdout.write(JSON.stringify({"local-v1":require("node:crypto").randomBytes(32).toString("base64")}))')"
 export MODA_WOOCOMMERCE_CONNECTION_MODE=local-development
 ```
 
-Do not enable production until the public callback route has confirmed HTTPS reachability from the merchant's WooCommerce server, gateway access logs **redact the `/read-authorizations/callback/*` path**, and database migrations/client generation are deployed.
+Set the two encryption variables securely before running `start-dev.sh`; the script does not generate fallback keys. Do not enable production until the public callback route has confirmed HTTPS reachability from the merchant's WooCommerce server, gateway access logs **redact the `/read-authorizations/callback/*` path**, and database migrations/client generation are deployed.
 
 ## API lifecycle
 
@@ -70,8 +70,7 @@ invalidate the grant on its own; a separate read credential verification must
 confirm access loss. INVALID updates compare the existing grant identity and
 rotation version so stale requests cannot invalidate a newer grant.
 
-The connection uses DATABASE-003's selected Woo read grant and API-007's
-AES-256-GCM keyring, TLS peer checks, DNS-pinned HTTP transport and local-only
+The connection uses DATABASE-003's selected Woo read grant and the canonical Commerce credential keyring (the grant AEAD migration is API-002), TLS peer checks, DNS-pinned HTTP transport and local-only
 allowance. The inbound Woo plugin credential is never used for provider reads.
 A revocation or rotation detected after HTTP completion prevents returning the
 provider data. Provider failures produce bounded reason codes without source
@@ -115,4 +114,4 @@ followed by a new LocalWP merchant consent attempt and a real authenticated
 product-read smoke test. A failed Woo native consent response can cause its
 newly generated key to be revoked; never reuse credentials from a failed attempt.
 
-The return-page signing key is derived separately from the configured credential-encryption key, **not from the callback bearer embedded in the consent URL**. Keep previous keyring entries configured while earlier authorisation attempts can still return through WooCommerce. Unknown/invalid/tampered presentation proof values are ignored rather than applied; older plugin versions send no locale and continue using the persisted shop language. No language preference is written to the Shop record or to WooCommerce's grant tables.
+The return-page signing key is currently derived separately from a key in the canonical credential keyring (the temporary raw-key adapter must be removed or replaced by the follow-on security integration), **not from the callback bearer embedded in the consent URL**. Keep previous keyring entries configured while earlier authorisation attempts can still return through WooCommerce. Unknown/invalid/tampered presentation proof values are ignored rather than applied; older plugin versions send no locale and continue using the persisted shop language. No language preference is written to the Shop record or to WooCommerce's grant tables.

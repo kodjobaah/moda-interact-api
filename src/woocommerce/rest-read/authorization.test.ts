@@ -14,8 +14,8 @@ import { signWooReturnLocale } from "./return-locale-proof.js";
 function config() {
   const value = loadWooRestReadAuthorizationConfig({
     MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.org",
-    MODA_WOO_REST_READ_ACTIVE_KEY_ID: "v1",
-    MODA_WOO_REST_READ_KEYRING: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64url") }),
+    COMMERCE_CONNECTION_ACTIVE_KEY_ID: "v1",
+    COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64") }),
   }, "public");
   assert.ok(value);
   return value;
@@ -30,12 +30,12 @@ test("authorization configuration is disabled by default and rejects unsafe/part
   assert.equal(loadWooRestReadAuthorizationConfig({}, "public"), null);
   assert.throws(() => loadWooRestReadAuthorizationConfig({ MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.org" }, "public"));
   const env = { MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.org",
-    MODA_WOO_REST_READ_ACTIVE_KEY_ID: "v1",
-    MODA_WOO_REST_READ_KEYRING: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64url") }) };
+    COMMERCE_CONNECTION_ACTIVE_KEY_ID: "v1",
+    COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64") }) };
   for (const origin of ["http://public.example.org", "https://localhost", "https://127.0.0.1", "https://api.example.org:8443", "https://evil.example.org/path", "https://user:pass@api.example.org", "https://api.example.org?a=1"]) {
     assert.throws(() => loadWooRestReadAuthorizationConfig({ ...env, MODA_WOO_REST_READ_PUBLIC_ORIGIN: origin }, "public"));
   }
-  assert.throws(() => loadWooRestReadAuthorizationConfig({ ...env, MODA_WOO_REST_READ_KEYRING: JSON.stringify({ v1: "too-short" }) }, "public"));
+  assert.throws(() => loadWooRestReadAuthorizationConfig({ ...env, COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: "too-short" }) }, "public"));
 });
 
 test("AES-GCM protects both keys, uses AAD bound to exact shop, installation and attempt", () => {
