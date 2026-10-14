@@ -68,11 +68,17 @@ export class MerchantDiscountOffersService {
     return this.database.$transaction(async tx => {
       await authenticatedShop(tx, principal, false);
       const catalogue = await currentCatalogue(tx, principal.shopId);
+      // Search must narrow the eligible set, not replace the start-date OR.
+      // Keep provider/date eligibility, cursor and search as independent AND terms.
       const filters: Prisma.ShopifyDiscountWhereInput = {
-        ...eligible(principal.shopId, catalogue.syncGeneration, this.now()),
-        ...(query.cursor ? { id: {gt:query.cursor}} : {}),
-        ...(query.search ? {OR:[{title:{contains:query.search,mode:"insensitive"}},
-          {singleRedeemCode:{contains:query.search,mode:"insensitive"}}]} : {}),
+        AND: [
+          eligible(principal.shopId, catalogue.syncGeneration, this.now()),
+          ...(query.cursor ? [{ id: { gt: query.cursor } }] : []),
+          ...(query.search ? [{ OR: [
+            { title: { contains: query.search, mode: "insensitive" as const } },
+            { singleRedeemCode: { contains: query.search, mode: "insensitive" as const } },
+          ] }] : []),
+        ],
       };
       const rows = await tx.shopifyDiscount.findMany({where:filters, orderBy:{id:"asc"},take:query.limit+1,
         select:{id:true,title:true,summary:true,providerType:true,singleRedeemCode:true,startsAt:true,endsAt:true,isAvailable:true}});

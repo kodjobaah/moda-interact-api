@@ -35,6 +35,8 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
       providerSnapshot:{provider:"WOOCOMMERCE",amount:"10"},isAvailable:false,lastSeenSyncGeneration:5,lastSyncedAt:now,
     }});
     const one=await make(woo.id,101),two=await make(woo.id,102),foreign=await make(other.id,103);
+    const future=await make(woo.id,104);
+    await db.shopifyDiscount.update({where:{id:future.id},data:{startsAt:new Date("2026-10-15T00:00:00Z")}});
     const shopifyCoupon=await db.shopifyDiscount.create({data:{shopId:shopify.id,shopifyDiscountNodeId:"gid://shopify/Discount/1",
       providerType:"Shopify",method:"CODE",providerStatus:"ACTIVE",fixedSelectable:true,codeCount:1,title:"SHOPIFY",singleRedeemCode:"SHOPIFY",
       providerSnapshot:{},isAvailable:true,lastSeenSyncGeneration:5,lastSyncedAt:now}});
@@ -52,6 +54,14 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     }});
     const original=await service.read(principal);
     assert.equal(original.merchant.recoveryOfferMode,"NONE");
+    // A search OR must not override the start-date OR: a matching coupon that
+    // has not started is absent both from ordinary pages and searched pages.
+    const withoutSearch=await service.catalogue(principal,{limit:10});
+    assert.equal(withoutSearch.items.some(item=>item.id===future.id),false);
+    const futureSearch=await service.catalogue(principal,{limit:10,search:"SAVE104"});
+    assert.deepEqual(futureSearch.items,[]);
+    const activeSearch=await service.catalogue(principal,{limit:10,search:"SAVE101"});
+    assert.deepEqual(activeSearch.items.map(item=>item.id),[one.id]);
     const page=await service.catalogue(principal,{limit:1});
     assert.equal(page.items.length,1);assert.ok(page.nextCursor);
     const second=await service.catalogue(principal,{limit:1,cursor:page.nextCursor!});
