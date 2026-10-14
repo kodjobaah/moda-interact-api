@@ -1,0 +1,151 @@
+openapi: 3.1.0
+info:
+  title: Moda WooCommerce Merchant Recovery Policy
+  version: 1.0.0
+paths:
+  /v1/merchant/recovery-policy:
+    get:
+      operationId: readMerchantRecoveryPolicy
+      summary: Read saved merchant policy and its effective values
+      description: Installation-scoped read; honours active platform-admin overrides. No merchant-provided shop ID.
+      security:
+        - installationBearer: []
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+      responses:
+        '200':
+          $ref: '#/components/responses/PolicySuccess'
+        '400':
+          description: Invalid query or body
+        '401':
+          description: Missing or invalid installation identity
+        '409':
+          description: Shop/installation/policy integrity mismatch
+        '500':
+          description: Unexpected error
+    put:
+      operationId: updateMerchantRecoveryPolicy
+      summary: Save recovery-start delay and no-response follow-up only
+      description: >-
+        Requires exactly the saved merchant revision; stale writes return 409.
+        Identical replays are read-only. Woo coupon modes cannot be selected or
+        changed through this endpoint. Overrides remain platform-admin-owned.
+      security:
+        - installationBearer: []
+      parameters:
+        - $ref: '#/components/parameters/InstallationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RecoveryPolicyUpdate'
+      responses:
+        '200':
+          $ref: '#/components/responses/PolicySuccess'
+        '400':
+          description: Invalid input, query parameters or JSON content type
+        '401':
+          description: Missing or invalid installation identity
+        '409':
+          description: Stale revision, unsafe historical offer selection, or shop/installation/policy integrity mismatch
+        '413':
+          description: Request exceeds 2048 bytes
+        '500':
+          description: Unexpected error
+components:
+  securitySchemes:
+    installationBearer:
+      type: http
+      scheme: bearer
+  parameters:
+    InstallationId:
+      name: X-Moda-Installation-Id
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+  schemas:
+    RecoveryPolicyValues:
+      type: object
+      additionalProperties: false
+      required: [recoveryDelayMinutes, recoveryOfferMode, followUpEnabled, followUpDelayMinutes]
+      properties:
+        recoveryDelayMinutes:
+          type: integer
+          minimum: 0
+          maximum: 10080
+        recoveryOfferMode:
+          type: string
+          enum: [NONE, FIXED, AI_BEST_APPLICABLE]
+          description: >-
+            Observed policy only. Unsupported Woo coupon selections can appear
+            in historical or platform-admin effective values, but are never editable here.
+        followUpEnabled:
+          type: boolean
+        followUpDelayMinutes:
+          anyOf:
+            - type: integer
+              minimum: 1
+              maximum: 10080
+            - type: 'null'
+    RecoveryPolicyResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, revision, merchant, effective, source, overrideActive, offerSelectionAvailable]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        revision:
+          type: string
+          description: ISO update timestamp or UNCONFIGURED (no ShopSettings record)
+        merchant:
+          $ref: '#/components/schemas/RecoveryPolicyValues'
+        effective:
+          $ref: '#/components/schemas/RecoveryPolicyValues'
+        source:
+          type: string
+          enum: [MERCHANT, ADMIN_OVERRIDE]
+        overrideActive:
+          type: boolean
+        offerSelectionAvailable:
+          type: boolean
+          const: false
+    RecoveryPolicyUpdate:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, recoveryDelayMinutes, followUpEnabled, followUpDelayMinutes]
+      properties:
+        expectedRevision:
+          type: string
+          minLength: 12
+          maxLength: 24
+          description: Revision from previous GET, or UNCONFIGURED
+        recoveryDelayMinutes:
+          type: integer
+          minimum: 0
+          maximum: 10080
+        followUpEnabled:
+          type: boolean
+        followUpDelayMinutes:
+          anyOf:
+            - type: integer
+              minimum: 1
+              maximum: 10080
+            - type: 'null'
+          description: Required when enabled; must be null when disabled
+  responses:
+    PolicySuccess:
+      description: Current merchant policy and effective policy after override precedence
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            const: no-store
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/RecoveryPolicyResponse'

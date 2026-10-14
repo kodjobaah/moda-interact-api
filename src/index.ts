@@ -8,7 +8,13 @@ import { RecurringSubscriptionCommandService } from "./billing/commands/recurrin
 import { RecoveryCreditPurchaseCommandService } from "./billing/commands/recovery-credit-purchase-command.service.js";
 import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
 import { MerchantRecoverySummaryService } from "./merchant/recovery-summary/recovery-summary.service.js";
+import { MerchantRecoveryPolicyService } from "./merchant/recovery-policy/service.js";
+import { createMerchantRecoveryPolicyRoute } from "./merchant/recovery-policy/routes.js";
 import { createMerchantRecoverySummaryRoute } from "./merchant/recovery-summary/routes.js";
+import { MerchantRecoveryListService } from "./merchant/recoveries/list.service.js";
+import { createMerchantRecoveriesRoute } from "./merchant/recoveries/routes.js";
+import { MerchantRecoveryDetailService } from "./merchant/recoveries/detail/read.service.js";
+import { createMerchantRecoveryDetailRoute } from "./merchant/recoveries/detail/routes.js";
 import { MerchantStoreContextService } from "./merchant/store-context/store-context.service.js";
 import { StoreCategoriesReadService, commerceEnvironmentForApi } from "./merchant/store-categories/store-categories-read.service.js";
 import { createStoreCategoriesRoute } from "./merchant/store-categories/routes.js";
@@ -52,6 +58,15 @@ async function main(): Promise<void> {
     const recoverySummaryRoute = createMerchantRecoverySummaryRoute({
       service: new MerchantRecoverySummaryService(database.prisma), authenticator, logger,
     });
+    const recoveryPolicyRoute = createMerchantRecoveryPolicyRoute({
+      service: new MerchantRecoveryPolicyService(database.prisma), authenticator, logger,
+    });
+    const recoveriesRoute = createMerchantRecoveriesRoute({
+      service: new MerchantRecoveryListService(database.prisma), authenticator, logger,
+    });
+    const recoveryDetailRoute = createMerchantRecoveryDetailRoute({
+      service: new MerchantRecoveryDetailService(database.prisma), authenticator, logger,
+    });
     const billingReadService = new BillingPresentationReadService(database.prisma);
     const purchaseHistoryRoute = createWooPurchaseHistoryRoute({
       authenticator,
@@ -74,6 +89,9 @@ async function main(): Promise<void> {
       storeCategoriesRoute,
       storeCategorySelectionRoute,
       recoverySummaryRoute,
+      recoveryPolicyRoute,
+      recoveriesRoute,
+      recoveryDetailRoute,
       billingReadService,
       purchaseHistoryRoute,
       billingPlanCatalogueReadService,

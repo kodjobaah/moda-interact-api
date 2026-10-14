@@ -1,0 +1,183 @@
+openapi: 3.1.0
+info:
+  title: Moda WooCommerce Merchant Recoveries List
+  version: 1.0.0
+paths:
+  /v1/merchant/recoveries:
+    get:
+      operationId: readMerchantRecoveries
+      summary: Read a tenant-scoped, paginated recovery list
+      description: |
+        Authenticated by the Woo installation ID and server-side Bearer credential.
+        A WordPress REST proxy (not the browser) calls this endpoint.
+        Filters use the shop's stored IANA timezone (UTC when missing/invalid),
+        with both requested calendar dates inclusive. A repeatable-read transaction
+        supplies the total count and page. Sort order: detectedAt DESC, id DESC.
+        A later API integration stage will expose the Woo plugin REST proxy and UI client.
+      security:
+        - installationBearer: []
+      parameters:
+        - name: X-Moda-Installation-Id
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 128
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Store-local date; defaults to 29 days before today
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Store-local date; defaults to today. Maximum span is 366 days
+        - name: q
+          in: query
+          schema:
+            type: string
+            maxLength: 100
+          description: Case-insensitive name/email search; multiple words match across customer fields
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, ongoing, DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED]
+            default: all
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 9999
+            default: 1
+        - name: pageSize
+          in: query
+          schema:
+            type: integer
+            enum: [10, 20, 25, 50]
+            default: 25
+      responses:
+        '200':
+          description: Recovery list (including zero results or a clamped last page)
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: private, no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RecoveryListResponse'
+        '400':
+          description: Unknown/duplicated filter, invalid date range, unsupported page size or request body
+        '401':
+          description: Invalid, revoked or missing Woo installation credential
+        '409':
+          description: Shop/installation/row integrity conflict (no cross-shop data returned)
+        '500':
+          description: Unexpected internal error
+components:
+  securitySchemes:
+    installationBearer:
+      type: http
+      scheme: bearer
+  schemas:
+    RecoveryListResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, timeZone, from, to, q, status, page, pageSize, total, totalPages, hasPrevious, hasNext, items]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        timeZone:
+          type: string
+          minLength: 1
+          maxLength: 255
+        from:
+          type: string
+          format: date
+        to:
+          type: string
+          format: date
+        q:
+          type: string
+          maxLength: 100
+        status:
+          type: string
+          enum: [all, ongoing, DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED]
+        page:
+          type: integer
+          minimum: 1
+        pageSize:
+          type: integer
+          enum: [10, 20, 25, 50]
+        total:
+          type: integer
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 1
+        hasPrevious:
+          type: boolean
+        hasNext:
+          type: boolean
+        items:
+          type: array
+          maxItems: 50
+          items:
+            $ref: '#/components/schemas/RecoveryListItem'
+    RecoveryListItem:
+      type: object
+      additionalProperties: false
+      required: [id, status, detectedAt, lastActivityAt, totalPrice, currency, customer]
+      properties:
+        id:
+          type: string
+          maxLength: 191
+          pattern: '^[A-Za-z0-9_-]+$'
+        status:
+          type: string
+          enum: [DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED]
+        detectedAt:
+          type: string
+          format: date-time
+        lastActivityAt:
+          type: string
+          format: date-time
+        totalPrice:
+          anyOf:
+            - type: string
+              maxLength: 72
+              pattern: '^-?[0-9]+(\.[0-9]+)?$'
+            - type: 'null'
+          description: Exact Decimal string, never converted into a JavaScript number
+        currency:
+          anyOf:
+            - type: string
+              pattern: '^[A-Z]{3}$'
+            - type: 'null'
+        customer:
+          anyOf:
+            - $ref: '#/components/schemas/RecoveryCustomer'
+            - type: 'null'
+    RecoveryCustomer:
+      type: object
+      additionalProperties: false
+      required: [displayName, email]
+      properties:
+        displayName:
+          anyOf:
+            - type: string
+              maxLength: 160
+            - type: 'null'
+        email:
+          anyOf:
+            - type: string
+              maxLength: 320
+            - type: 'null'

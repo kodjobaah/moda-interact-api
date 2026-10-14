@@ -1,0 +1,202 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Merchant Recovery Detail Reads
+  version: 1.0.0
+  description: >-
+    Installation-authenticated read-only recovery detail, chronological conversation
+    and same-customer related recovery endpoints. WordPress PHP proxies these reads;
+    browser JavaScript never receives an installation bearer.
+servers:
+  - url: /
+security:
+  - installationBearer: []
+    installationId: []
+components:
+  securitySchemes:
+    installationBearer:
+      type: http
+      scheme: bearer
+    installationId:
+      type: apiKey
+      in: header
+      name: x-moda-installation-id
+  parameters:
+    recoveryId:
+      name: recoveryId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+    cursor:
+      name: cursor
+      in: query
+      schema: { type: string, maxLength: 1024 }
+  schemas:
+    Money:
+      type: object
+      required: [amount, currency, incomplete]
+      additionalProperties: false
+      properties:
+        amount: { type: [string, 'null'], pattern: '^-?\d+(\.\d+)?$' }
+        currency: { type: [string, 'null'], pattern: '^[A-Z]{3}$' }
+        incomplete: { type: boolean }
+    DetailSummary:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, timeZone, id, status, value, customer, hasConversation, milestones]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        timeZone: { type: string }
+        id: { type: string }
+        status: { type: string, enum: [DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED] }
+        value: { $ref: '#/components/schemas/Money' }
+        hasConversation: { type: boolean }
+        customer:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [firstName, lastName, email]
+              properties:
+                firstName: { type: [string, 'null'] }
+                lastName: { type: [string, 'null'] }
+                email: { type: [string, 'null'] }
+        milestones:
+          type: object
+          additionalProperties: false
+          required: [detectedAt, messageSentAt, engagedAt, completedAt, expiredAt]
+          properties:
+            detectedAt: { type: string, format: date-time }
+            messageSentAt: { type: [string, 'null'], format: date-time }
+            engagedAt: { type: [string, 'null'], format: date-time }
+            completedAt: { type: [string, 'null'], format: date-time }
+            expiredAt: { type: [string, 'null'], format: date-time }
+    Message:
+      type: object
+      additionalProperties: false
+      required: [id, createdAt, direction, sender, content, delivery]
+      properties:
+        id: { type: string }
+        createdAt: { type: string, format: date-time }
+        direction: { type: [string, 'null'] }
+        sender: { type: [string, 'null'] }
+        content:
+          type: object
+          additionalProperties: false
+          required: [type, text, transcriptionStatus]
+          properties:
+            type: { type: string }
+            text: { type: [string, 'null'] }
+            transcriptionStatus: { type: [string, 'null'] }
+        delivery:
+          oneOf:
+            - type: 'null'
+            - type: object
+              additionalProperties: false
+              required: [status, sentAt, deliveredAt, readAt]
+              properties:
+                status: { type: [string, 'null'] }
+                sentAt: { type: [string, 'null'], format: date-time }
+                deliveredAt: { type: [string, 'null'], format: date-time }
+                readAt: { type: [string, 'null'], format: date-time }
+    Related:
+      type: object
+      additionalProperties: false
+      required: [id, status, detectedAt, value]
+      properties:
+        id: { type: string }
+        status: { type: string }
+        detectedAt: { type: string, format: date-time }
+        value: { $ref: '#/components/schemas/Money' }
+    MessagePage:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items, previousCursor, nextCursor]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/Message' }
+        previousCursor: { type: [string, 'null'] }
+        nextCursor: { type: [string, 'null'] }
+    RelatedPage:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, items, previousCursor, nextCursor]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        items:
+          type: array
+          maxItems: 5
+          items: { $ref: '#/components/schemas/Related' }
+        previousCursor: { type: [string, 'null'] }
+        nextCursor: { type: [string, 'null'] }
+  responses:
+    BadRequest:
+      description: Invalid query/path/cursor
+    Unauthorized:
+      description: Missing, invalid or revoked installation credential
+    NotFound:
+      description: Recovery not found for the authenticated shop
+    IntegrityConflict:
+      description: Tenant data or response integrity violation
+    InternalFailure:
+      description: Internal server failure (sanitised response)
+paths:
+  /v1/merchant/recoveries/{recoveryId}:
+    get:
+      operationId: readMerchantRecoveryDetail
+      description: Read summary/milestones of one shop-owned recovery; no message transcript included.
+      parameters:
+        - $ref: '#/components/parameters/recoveryId'
+      responses:
+        '200':
+          description: Recovery summary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DetailSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/IntegrityConflict' }
+        '500': { $ref: '#/components/responses/InternalFailure' }
+  /v1/merchant/recoveries/{recoveryId}/messages:
+    get:
+      operationId: listMerchantRecoveryMessages
+      description: Chronological, cursor-paginated conversation messages; maximum 50 per page.
+      parameters:
+        - $ref: '#/components/parameters/recoveryId'
+        - $ref: '#/components/parameters/cursor'
+        - name: window
+          in: query
+          schema: { type: string, enum: [first, latest] }
+          description: Use window=latest to jump to the most recent messages; cannot accompany cursor.
+      responses:
+        '200':
+          description: Message page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MessagePage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/IntegrityConflict' }
+        '500': { $ref: '#/components/responses/InternalFailure' }
+  /v1/merchant/recoveries/{recoveryId}/related:
+    get:
+      operationId: listMerchantRelatedRecoveries
+      description: Same-Shop, same-customer related recoveries; newest first, maximum 5 per page.
+      parameters:
+        - $ref: '#/components/parameters/recoveryId'
+        - $ref: '#/components/parameters/cursor'
+      responses:
+        '200':
+          description: Related recovery page
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RelatedPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/IntegrityConflict' }
+        '500': { $ref: '#/components/responses/InternalFailure' }

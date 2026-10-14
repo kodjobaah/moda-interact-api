@@ -13,6 +13,9 @@ import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from ".
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
 import type { createMerchantRecoverySummaryRoute } from "../../merchant/recovery-summary/routes.js";
+import type { createMerchantRecoveryPolicyRoute } from "../../merchant/recovery-policy/routes.js";
+import type { createMerchantRecoveriesRoute } from "../../merchant/recoveries/routes.js";
+import type { createMerchantRecoveryDetailRoute } from "../../merchant/recoveries/detail/routes.js";
 import type { createWooPurchaseHistoryRoute } from "../../billing/purchase-history/routes.js";
 import type { createStoreCategoriesRoute } from "../../merchant/store-categories/routes.js";
 import type { createStoreCategorySelectionRoute } from "../../merchant/store-categories/selection-routes.js";
@@ -51,6 +54,9 @@ interface WooInstallationRouteOptions {
   bootstrapReadService: MerchantBootstrapReadService;
   storeContextService: MerchantStoreContextService;
   recoverySummaryRoute?: ReturnType<typeof createMerchantRecoverySummaryRoute>;
+  recoveryPolicyRoute?: ReturnType<typeof createMerchantRecoveryPolicyRoute>;
+  recoveriesRoute?: ReturnType<typeof createMerchantRecoveriesRoute>;
+  recoveryDetailRoute?: ReturnType<typeof createMerchantRecoveryDetailRoute>;
   storeCategoriesRoute?: ReturnType<typeof createStoreCategoriesRoute>;
   storeCategorySelectionRoute?: ReturnType<typeof createStoreCategorySelectionRoute>;
   billingReadService?: BillingPresentationReadService;
@@ -71,6 +77,9 @@ export function createWooInstallationRoutes({
   storeCategoriesRoute,
   storeCategorySelectionRoute,
   recoverySummaryRoute,
+  recoveryPolicyRoute,
+  recoveriesRoute,
+  recoveryDetailRoute,
   billingReadService,
   purchaseHistoryRoute,
   billingPlanCatalogueReadService,
@@ -83,6 +92,9 @@ export function createWooInstallationRoutes({
   return {
     async handle(request, response) {
       if (recoverySummaryRoute && await recoverySummaryRoute.handle(request, response)) return true;
+      if (recoveryPolicyRoute && await recoveryPolicyRoute.handle(request, response)) return true;
+      if (recoveriesRoute && await recoveriesRoute.handle(request, response)) return true;
+      if (recoveryDetailRoute && await recoveryDetailRoute.handle(request, response)) return true;
       if (purchaseHistoryRoute && await purchaseHistoryRoute.handle(request, response)) return true;
       if (storeCategoriesRoute && await storeCategoriesRoute.handle(request, response)) return true;
       if (storeCategorySelectionRoute && await storeCategorySelectionRoute.handle(request, response)) return true;
