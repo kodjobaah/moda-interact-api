@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
-import { MerchantDiscountOffersService } from "./service.js";
-import { DiscountOffersError } from "./contract.js";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import { MerchantDiscountOffersService } from "../../../../src/merchant/discount-offers/service.js";
+import { DiscountOffersError } from "../../../../src/merchant/discount-offers/contract.js";
+import type { WooInstallationPrincipal } from "../../../../src/woocommerce/installation/authenticator.js";
 
 const now = new Date("2026-10-15T12:00:00Z");
 const principal: WooInstallationPrincipal = { shopId: "woo-shop", installationId: "installation",
@@ -43,7 +43,7 @@ function harness() {
     catalogueQueries() { return catalogueQueries; } };
 }
 
-test("API-004 settings remain independently readable without a completed coupon catalogue", async () => {
+test("settings remain independently readable without a completed coupon catalogue", async () => {
   const h = harness();
   for (const status of [null, "SYNC_REQUIRED", "SYNCING", "ERROR", "UNAVAILABLE", "CURRENT"] as const) {
     h.setCatalogue(status ? { status, syncGeneration: 4, updatedAt: now,
@@ -65,7 +65,7 @@ test("API-004 settings remain independently readable without a completed coupon 
   assert.equal(h.catalogueQueries(), 1);
 });
 
-test("API-004 still denies revoked, mismatched and Shopify shop principals", async () => {
+test("still denies revoked, mismatched and Shopify shop principals", async () => {
   const h = harness();
   h.setInstallationStatus("REVOKED");
   await assert.rejects(() => h.service.read(principal),

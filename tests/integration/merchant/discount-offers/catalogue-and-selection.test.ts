@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import {randomUUID} from "node:crypto";
 import test from "node:test";
 import {PrismaClient} from "@prisma/client";
-import {MerchantDiscountOffersService} from "./service.js";
-import {MerchantRecoverySummaryService} from "../recovery-summary/recovery-summary.service.js";
-import {DiscountOffersError} from "./contract.js";
-import type {WooInstallationPrincipal} from "../../woocommerce/installation/authenticator.js";
+import {MerchantDiscountOffersService} from "../../../../src/merchant/discount-offers/service.js";
+import {MerchantRecoverySummaryService} from "../../../../src/merchant/recovery-summary/recovery-summary.service.js";
+import {DiscountOffersError} from "../../../../src/merchant/discount-offers/contract.js";
+import type {WooInstallationPrincipal} from "../../../../src/woocommerce/installation/authenticator.js";
 
 const url=process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 
