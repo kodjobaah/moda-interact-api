@@ -2,6 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WooReadAuthorizationService } from "./authorization.service.js";
 import { signWooReturnLocale } from "./return-locale-proof.js";
+import { loadWooRestReadAuthorizationConfig } from "./config.js";
+
+function config() {
+  return loadWooRestReadAuthorizationConfig({
+    MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.invalid",
+    COMMERCE_CONNECTION_ACTIVE_KEY_ID: "v1",
+    COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 3).toString("base64") }),
+  }, "public") ?? (() => { throw new Error("Woo read test configuration must be enabled"); })();
+}
 
 function serviceWithShop(storeLocale: string | null, defaultLanguageTag: string | null) {
   const calls: unknown[] = [];
@@ -18,7 +27,7 @@ function serviceWithShop(storeLocale: string | null, defaultLanguageTag: string 
         };
       },
     },
-  } as never, { keys: new Map([["v1", Buffer.alloc(32, 3)]]) } as never, "local-development", {} as never);
+  } as never, config(), "local-development", {} as never);
   return { service, calls };
 }
 
@@ -63,14 +72,14 @@ test("browser return does not resolve language from an installation belonging to
         installation: { shopId: "shop-two", shop: { storeLocale: "de_DE", defaultLanguageTag: "de-DE" } },
       }),
     },
-  } as never, { keys: new Map([["v1", Buffer.alloc(32, 3)]]) } as never, "local-development", {} as never);
+  } as never, config(), "local-development", {} as never);
   assert.equal(await service.returnLocale("opaque-attempt-id"), "en");
 });
 
 
 test("valid administrator preference overrides shop language; tampering falls back to shop", async () => {
   const { service } = serviceWithShop("de_DE", "de-DE");
-  const proof = signWooReturnLocale({ keys: new Map([["v1", Buffer.alloc(32, 3)]]), activeKeyId: "v1" },
+  const proof = signWooReturnLocale(config(),
     "opaque-attempt-id", "shop-one", "en");
   assert.equal(await service.returnLocale("opaque-attempt-id", "en", proof), "en");
   assert.equal(await service.returnLocale("opaque-attempt-id", "fr", proof), "de");

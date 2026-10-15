@@ -11,12 +11,7 @@ export interface WooRestReadAuthorizationConfig {
   publicOrigin: string;
   activeKeyId: string;
   keyring: CredentialKeyring;
-  /**
-   * Temporary raw-key adapter for the pre-ARCH-039 Woo grant cipher and signed
-   * return-locale proof. API-002 must remove this adapter when migrating those
-   * consumers; no other code should consume the raw key material.
-   */
-  keys: ReadonlyMap<string, Buffer>;
+
 }
 
 /** Never permit partial configuration to enable a credential-accepting endpoint. */
@@ -61,13 +56,5 @@ export function loadWooRestReadAuthorizationConfig(
     throw new Error("Woo REST read authorization credential configuration is invalid");
   }
 
-  // Bounded compatibility adapter for the still-local Woo grant cipher and
-  // return-page HMAC (both consume raw bytes). This input has ALREADY passed
-  // strict Shared validation: it is not an alternate parser or config source.
-  // API-002 must remove this and migrate both consumers before closing ARCH-039.
-  const validated = JSON.parse(rawKeyring) as Record<string, string>;
-  const keys = new Map<string, Buffer>(
-    keyring.keyIds.map((id) => [id, Buffer.from(validated[id]!, "base64")]),
-  );
-  return { publicOrigin: origin.origin, activeKeyId, keyring, keys };
+  return { publicOrigin: origin.origin, activeKeyId, keyring };
 }
