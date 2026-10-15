@@ -4,7 +4,11 @@ import test from "node:test";
 import { MODA_SUPPORTED_LANGUAGE_TAGS } from "@modainteract/moda-interact-shared/internationalization";
 import { preferredWooAdminLocale, signWooReturnLocale, verifyWooReturnLocale } from "./return-locale-proof.js";
 
-const keyring = { activeKeyId: "v1", keys: new Map([["v1", Buffer.alloc(32, 7)]]) };
+import { parseCredentialKeyring } from "@modainteract/moda-interact-shared/security/credentials/node";
+
+const firstKey = Buffer.alloc(32, 7);
+const otherKey = randomBytes(32);
+const keyring = { activeKeyId: "v1", keyring: parseCredentialKeyring(JSON.stringify({ v1: firstKey.toString("base64") })) };
 
 test("WordPress administrator locale resolves to each supported merchant language", () => {
   const examples = [
@@ -23,8 +27,10 @@ test("WordPress administrator locale resolves to each supported merchant languag
 
 test("return preference is bound to the exact attempt and shop with server-held secret", () => {
   const proof = signWooReturnLocale(keyring, "attempt-a", "shop-one", "en");
-  assert.match(proof, /^[A-Za-z0-9_-]{43}$/);
+  assert.match(proof, /^v2\.v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/);
   assert.equal(verifyWooReturnLocale(keyring, "attempt-a", "shop-one", "en", proof), "en");
+  assert.notEqual(signWooReturnLocale(keyring, "attempt-a", "shop-one", "en"), proof,
+    "proofs must use randomized Shared AES-GCM nonces");
   for (const [attempt, shop, locale, signature] of [
     ["attempt-b", "shop-one", "en", proof],
     ["attempt-a", "shop-two", "en", proof],
@@ -35,10 +41,12 @@ test("return preference is bound to the exact attempt and shop with server-held 
   ] as const) {
     assert.equal(verifyWooReturnLocale(keyring, attempt, shop, locale, signature), null);
   }
-  const rotated = { activeKeyId: "v2", keys: new Map([...keyring.keys, ["v2", randomBytes(32)]]) };
+  const rotated = { activeKeyId: "v2", keyring: parseCredentialKeyring(JSON.stringify({
+    v1: firstKey.toString("base64"), v2: otherKey.toString("base64"),
+  })) };
   assert.equal(verifyWooReturnLocale(rotated, "attempt-a", "shop-one", "en", proof), "en");
-  assert.equal(verifyWooReturnLocale({ keys: new Map([["v2", randomBytes(32)]]) },
+  assert.equal(verifyWooReturnLocale({ keyring: parseCredentialKeyring(JSON.stringify({ v2: otherKey.toString("base64") })) },
     "attempt-a", "shop-one", "en", proof), null);
-  assert.throws(() => signWooReturnLocale({ activeKeyId: "missing", keys: keyring.keys },
-    "attempt-a", "shop-one", "en"), TypeError);
+  assert.throws(() => signWooReturnLocale({ activeKeyId: "missing", keyring: keyring.keyring },
+    "attempt-a", "shop-one", "en"));
 });

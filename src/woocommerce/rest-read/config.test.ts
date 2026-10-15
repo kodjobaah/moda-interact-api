@@ -29,7 +29,7 @@ test("canonical configuration uses strict Shared parser and active selector", ()
   assert.equal(result.activeKeyId, "v1");
   assert.deepEqual(result.keyring.keyIds, ["v1"]);
   assert.equal(result.keyring.hasKey("v1"), true);
-  assert.deepEqual(result.keys.get("v1"), Buffer.alloc(32, 7));
+  assert.equal("keys" in result, false, "raw AES key adapter must not be exposed");
   assert.equal(result.publicOrigin, "https://api.example.org");
 });
 

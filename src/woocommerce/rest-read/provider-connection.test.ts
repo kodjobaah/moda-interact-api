@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
 import { sealWooReadCredentials } from "./envelope.js";
-import { WooReadVerificationError } from "./credential-verifier.js";
 import { loadWooRestReadAuthorizationConfig } from "./config.js";
+import { WooReadVerificationError } from "./credential-verifier.js";
 import { WooProductReadService } from "./provider-connection.service.js";
 
 const logs: Array<Record<string, unknown>> = [];

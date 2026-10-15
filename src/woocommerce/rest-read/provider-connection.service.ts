@@ -51,7 +51,7 @@ interface SelectedGrant {
 export class WooProductReadService implements WooProductReadPort {
   constructor(
     private readonly database: WooProductReadDatabase,
-    private readonly config: Pick<WooRestReadAuthorizationConfig, "keys">,
+    private readonly config: Pick<WooRestReadAuthorizationConfig, "keyring">,
     private readonly mode: WooConnectionMode,
     private readonly transport: WooProductTransport,
     private readonly logger: Pick<StructuredLogger, "info" | "warn">,
@@ -226,7 +226,7 @@ function classifyTransportFailure(error: unknown): WooProductReadFailure {
 /** API-only factory: no public route, provider credentials or origin ever handed to callers. */
 export function createWooProductReadPort(input: {
   database: WooProductReadDatabase;
-  authorization: Pick<WooRestReadAuthorizationConfig, "keys">;
+  authorization: Pick<WooRestReadAuthorizationConfig, "keyring">;
   mode: WooConnectionMode;
   logger: Pick<StructuredLogger, "info" | "warn">;
 }): WooProductReadPort {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { randomBytes } from "node:crypto";
+import { createDecipheriv, randomBytes } from "node:crypto";
+import { createWooRestReadGrantAad } from "@modainteract/moda-interact-shared/security/credentials/node";
 import { createServer } from "node:http";
 import test from "node:test";
 import { loadWooRestReadAuthorizationConfig } from "./config.js";
@@ -9,7 +10,7 @@ import { WooReadAuthorizationService, WooReadAuthorizationError } from "./author
 import { digestSecret } from "../installation/credential.js";
 import type { WooInstallationPrincipal } from "../installation/authenticator.js";
 import { canonicalizeWooSiteUrl } from "../installation/site-url.js";
-import { signWooReturnLocale } from "./return-locale-proof.js";
+import { verifyWooReturnLocale } from "./return-locale-proof.js";
 
 function config() {
   const value = loadWooRestReadAuthorizationConfig({
@@ -46,6 +47,16 @@ test("AES-GCM protects both keys, uses AAD bound to exact shop, installation and
   assert.equal(sealed.credentialAuthTag.length, 16);
   assert.equal(sealed.credentialCiphertext.includes(Buffer.from(keys.consumerSecret)), false);
   assert.deepEqual(openWooReadCredentials(sealed, ctx, config()), keys);
+  // Independent Node AES-GCM consumer proves the on-disk envelope and AAD bytes.
+  const verifier = createDecipheriv("aes-256-gcm", Buffer.alloc(32, 7), sealed.credentialNonce);
+  verifier.setAAD(Buffer.from(createWooRestReadGrantAad(ctx), "utf8"));
+  verifier.setAuthTag(sealed.credentialAuthTag);
+  const independent = Buffer.concat([verifier.update(sealed.credentialCiphertext), verifier.final()]);
+  assert.deepEqual(JSON.parse(independent.toString("utf8")), [keys.consumerKey, keys.consumerSecret]);
+  assert.equal(createWooRestReadGrantAad(ctx), JSON.stringify([
+    "moda-woo-rest-read-v1", "shop-1", "installation-1", "attempt-1", 1,
+  ]));
+
   assert.throws(() => openWooReadCredentials(sealed, { ...ctx, shopId: "another-shop" }, config()), /envelope_invalid/);
   assert.throws(() => openWooReadCredentials(sealed, { ...ctx, authorizationAttemptId: "another-attempt" }, config()), /envelope_invalid/);
   assert.throws(() => openWooReadCredentials({ ...sealed, credentialAuthTag: Buffer.alloc(16) }, ctx, config()), /envelope_invalid/);
@@ -101,8 +112,9 @@ test("start binds WordPress administrator locale to one consent attempt without 
   const returnUrl = new URL(consent.searchParams.get("return_url") ?? "");
   assert.equal(returnUrl.pathname, "/v1/woocommerce/read-authorizations/return");
   assert.equal(returnUrl.searchParams.get("display_locale"), "en");
-  assert.equal(returnUrl.searchParams.get("display_proof"),
-    signWooReturnLocale(config(), "cuid_attempt_de", principal.shopId, "en"));
+  const proof = returnUrl.searchParams.get("display_proof");
+  assert.match(proof ?? "", /^v2\./);
+  assert.equal(verifyWooReturnLocale(config(), "cuid_attempt_de", principal.shopId, "en", proof), "en");
   assert.equal(consent.searchParams.get("scope"), "read");
   assert.equal(consent.searchParams.get("callback_url"),
     `https://api.example.org/v1/woocommerce/read-authorizations/callback/${token.toString("base64url")}`);
