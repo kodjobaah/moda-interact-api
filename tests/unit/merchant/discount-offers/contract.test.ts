@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { parse } from "yaml";
-import { parseSaveDiscountOffers, readCatalogueQuery, offerRevision } from "./contract.js";
+import { parseSaveDiscountOffers, readCatalogueQuery, offerRevision } from "../../../../src/merchant/discount-offers/contract.js";
 
 test("Woo coupon contract bounds multi-selection and enforces FIXED nonempty selection", () => {
   assert.deepEqual(parseSaveDiscountOffers({recoveryOfferMode:"FIXED",
@@ -30,7 +30,7 @@ test("GET response revision is informational and never required by Save", () => 
 });
 
 test("versioned hosted API contract contains exact Woo-only endpoints", () => {
-  const spec=parse(readFileSync(new URL("../../../openapi/woocommerce-discount-offers-v1.yaml",import.meta.url),"utf8")) as {
+  const spec=parse(readFileSync(new URL("../../../../openapi/woocommerce-discount-offers-v1.yaml",import.meta.url),"utf8")) as {
     openapi:string; paths:Record<string,Record<string,unknown>>;
     components:{schemas:{DiscountOffersSave:{additionalProperties:boolean;required:string[]}}};
   };

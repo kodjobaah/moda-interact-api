@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createMerchantDiscountOffersRoutes } from "./routes.js";
-import { WooUnauthenticatedError } from "../../woocommerce/installation/authenticator.js";
+import { createMerchantDiscountOffersRoutes } from "../../../../src/merchant/discount-offers/routes.js";
+import { WooUnauthenticatedError } from "../../../../src/woocommerce/installation/authenticator.js";
 
 function harness(method: string, path: string, input?: unknown, denied = false) {
   const calls: string[] = [];
