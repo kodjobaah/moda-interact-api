@@ -31,6 +31,11 @@ test("Woo merchant coupon endpoints use installation authentication and no-store
   assert.equal(get.output.status,200);
   assert.equal(get.output.headers?.["cache-control"],"no-store");
   assert.deepEqual(get.calls,["catalogue"]);
+  const settings=harness("GET","/v1/merchant/discount-offers");
+  await settings.route.handle(settings.request,settings.response);
+  assert.equal(settings.output.status,200);
+  assert.deepEqual(settings.calls,["read"]);
+  assert.equal(settings.output.headers?.["cache-control"],"no-store");
   const denied=harness("GET","/v1/merchant/discount-offers",undefined,true);
   await denied.route.handle(denied.request,denied.response);
   assert.equal(denied.output.status,401);

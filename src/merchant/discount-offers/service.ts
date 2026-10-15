@@ -43,13 +43,26 @@ async function currentCatalogue(tx: Tx, shopId: string) {
   return catalogue;
 }
 
-function eligible(shopId: string, generation: number, now: Date): Prisma.ShopifyDiscountWhereInput {
-  return {shopId, method:"CODE", providerStatus:"ACTIVE", fixedSelectable:true,
-    unavailableAt:null, lastSeenSyncGeneration:generation,
-    shopifyDiscountNodeId:{startsWith:"woo:coupon:"}, providerType:{startsWith:"WooCoupon:"},
-    OR:[{startsAt:null},{startsAt:{lte:now}}],
-    AND:[{OR:[{endsAt:null},{endsAt:{gt:now}}]}],
+/**
+ * Only the provider's observed identity and ability to deliver its code matter
+ * to the catalogue. Expiry, amount, usage and provider-defined coupon type are
+ * WooCommerce business rules, not Moda merchant-selection restrictions.
+ */
+function observedWooCodes(shopId: string, generation: number): Prisma.ShopifyDiscountWhereInput {
+  return {
+    ...wooRows(shopId), method: "CODE", lastSeenSyncGeneration: generation,
+    unavailableAt: null, providerStatus: { notIn: ["REMOVED", "UNDELIVERABLE"] },
+    singleRedeemCode: { not: null },
   };
+}
+
+/** Technical transport safety only. Never shorten or reinterpret a Woo coupon code. */
+function deliverableCode(code: string | null): code is string {
+  return typeof code === "string" && code.trim().length > 0 &&
+    ![...code].some(character => {
+      const point = character.codePointAt(0);
+      return point !== undefined && (point <= 0x1f || point === 0x7f);
+    });
 }
 
 function project(row: {
@@ -68,32 +81,52 @@ export class MerchantDiscountOffersService {
     return this.database.$transaction(async tx => {
       await authenticatedShop(tx, principal, false);
       const catalogue = await currentCatalogue(tx, principal.shopId);
-      // Search must narrow the eligible set, not replace the start-date OR.
-      // Keep provider/date eligibility, cursor and search as independent AND terms.
-      const filters: Prisma.ShopifyDiscountWhereInput = {
-        AND: [
-          eligible(principal.shopId, catalogue.syncGeneration, this.now()),
-          ...(query.cursor ? [{ id: { gt: query.cursor } }] : []),
-          ...(query.search ? [{ OR: [
-            { title: { contains: query.search, mode: "insensitive" as const } },
-            { singleRedeemCode: { contains: query.search, mode: "insensitive" as const } },
-          ] }] : []),
-        ],
+      // Apply search independently of provider identity. Fetch bounded batches
+      // so non-sendable legacy codes cannot leak or distort cursor pagination.
+      const filters: Prisma.ShopifyDiscountWhereInput[] = [
+        observedWooCodes(principal.shopId, catalogue.syncGeneration),
+        ...(query.search ? [{ OR: [
+          { title: { contains: query.search, mode: "insensitive" as const } },
+          { singleRedeemCode: { contains: query.search, mode: "insensitive" as const } },
+        ] }] : []),
+      ];
+      type CatalogueRow = {
+        id: string; title: string; summary: string | null; providerType: string;
+        singleRedeemCode: string | null; startsAt: Date | null; endsAt: Date | null; isAvailable: boolean;
       };
-      const rows = await tx.shopifyDiscount.findMany({where:filters, orderBy:{id:"asc"},take:query.limit+1,
-        select:{id:true,title:true,summary:true,providerType:true,singleRedeemCode:true,startsAt:true,endsAt:true,isAvailable:true}});
+      const page: CatalogueRow[] = [];
+      const batchSize = 100;
+      let cursor = query.cursor;
+      // The worker bounds complete provider scans to 5,000 coupons. Continue
+      // until there are limit+1 genuinely sendable rows or no further rows.
+      while (page.length <= query.limit) {
+        const rows = await tx.shopifyDiscount.findMany({
+          where: { AND: [...filters, ...(cursor ? [{ id: { gt: cursor } }] : [])] },
+          orderBy: { id: "asc" }, take: batchSize,
+          select: { id: true, title: true, summary: true, providerType: true,
+            singleRedeemCode: true, startsAt: true, endsAt: true, isAvailable: true },
+        });
+        for (const row of rows) {
+          if (deliverableCode(row.singleRedeemCode)) page.push(row);
+          if (page.length > query.limit) break;
+        }
+        if (page.length > query.limit || rows.length < batchSize) break;
+        cursor = rows[rows.length - 1]!.id;
+      }
       const settings = await tx.shopSettings.findUnique({where:{shopId:principal.shopId},select:{updatedAt:true}});
-      const hasMore=rows.length>query.limit;
-      const page=rows.slice(0,query.limit);
+      const hasMore = page.length > query.limit;
+      const visible = page.slice(0, query.limit);
       return {schemaVersion:1,revision:offerRevision(settings?.updatedAt??null,catalogue),
-        items:page.map(project),nextCursor:hasMore?page.at(-1)?.id??null:null,hasMore};
+        items:visible.map(project),nextCursor:hasMore?visible.at(-1)?.id??null:null,hasMore};
     }, {isolationLevel:Prisma.TransactionIsolationLevel.RepeatableRead});
   }
 
   async read(principal: WooInstallationPrincipal) {
     return this.database.$transaction(async tx => {
       await authenticatedShop(tx, principal, false);
-      const catalogue = await currentCatalogue(tx, principal.shopId);
+      // The merchant's saved preferences are readable even before a first
+      // scan, or while Background is SYNCING, ERROR or UNAVAILABLE.
+      const catalogue = await tx.shopifyDiscountCatalogue.findUnique({where:{shopId:principal.shopId}});
       return this.projection(tx, principal.shopId, catalogue);
     }, {isolationLevel:Prisma.TransactionIsolationLevel.RepeatableRead});
   }

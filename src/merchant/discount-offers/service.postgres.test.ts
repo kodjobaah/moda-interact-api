@@ -65,8 +65,9 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     await db.shopifyDiscountCatalogue.update({where:{shopId:woo.id},data:{
       status:"SYNC_REQUIRED",lastSuccessfulSyncAt:null,syncGeneration:0,
     }});
-    await assert.rejects(()=>service.read(principal),
-      (e:unknown)=>e instanceof DiscountOffersError && e.status===503);
+    const preSyncSettings=await service.read(principal);
+    assert.equal(preSyncSettings.merchant.recoveryOfferMode,"NONE");
+    assert.equal(preSyncSettings.source,"ADMIN_OVERRIDE");
     await assert.rejects(()=>service.catalogue(principal,{limit:10}),
       (e:unknown)=>e instanceof DiscountOffersError && e.status===503);
     await db.shopifyDiscountCatalogue.update({where:{shopId:woo.id},data:{
@@ -81,12 +82,12 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     assert.equal(beforeRecovery.source,"ADMIN_OVERRIDE");
     assert.equal(beforeRecovery.recoveryDelayMinutes,75);
     assert.equal(beforeRecovery.recoveryOfferMode,"AI_BEST_APPLICABLE");
-    // A search OR must not override the start-date OR: a matching coupon that
-    // has not started is absent both from ordinary pages and searched pages.
+    // A coupon that starts in the future is still merchant-selectable. Woo,
+    // not Moda, decides whether it may be redeemed at checkout.
     const withoutSearch=await service.catalogue(principal,{limit:10});
-    assert.equal(withoutSearch.items.some(item=>item.id===future.id),false);
+    assert.equal(withoutSearch.items.some(item=>item.id===future.id),true);
     const futureSearch=await service.catalogue(principal,{limit:10,search:"SAVE104"});
-    assert.deepEqual(futureSearch.items,[]);
+    assert.deepEqual(futureSearch.items.map(item=>item.id),[future.id]);
     const activeSearch=await service.catalogue(principal,{limit:10,search:"SAVE101"});
     assert.deepEqual(activeSearch.items.map(item=>item.id),[one.id]);
     const page=await service.catalogue(principal,{limit:1});
@@ -129,8 +130,9 @@ test("Woo catalogue readiness and merchant-only selection Save preserve provider
     await db.shopifyDiscountCatalogue.update({where:{shopId:woo.id},data:{syncGeneration:6,status:"SYNCING",activeSyncToken:"background-scan",syncStartedAt:new Date("2026-10-14T01:06:00Z")}});
     await assert.rejects(()=>service.catalogue(principal,{limit:10}),
       (e:unknown)=>e instanceof DiscountOffersError && e.status===503);
-    await assert.rejects(()=>service.read(principal),
-      (e:unknown)=>e instanceof DiscountOffersError && e.status===503);
+    const duringSync=await service.read(principal);
+    assert.equal(duringSync.merchant.recoveryOfferMode,"AI_BEST_APPLICABLE");
+    assert.deepEqual(duringSync.merchant.selectedDiscountIds,[one.id,two.id].sort());
     // Save is tenant-owned and does not check CURRENT, generation or coupon eligibility.
     const savedDuringSync=await service.save(principal,{recoveryOfferMode:"FIXED",selectedDiscountIds:[one.id]});
     assert.deepEqual(savedDuringSync.merchant.selectedDiscountIds,[one.id]);
