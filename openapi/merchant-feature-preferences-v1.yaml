@@ -1,0 +1,198 @@
+openapi: 3.1.0
+info:
+  title: Moda WooCommerce Merchant Feature Preferences
+  version: 1.0.0
+  description: Installation-scoped plan entitlement projection and compare-and-set merchant opt-in updates.
+paths:
+  /v1/merchant/feature-preferences:
+    get:
+      operationId: readMerchantFeaturePreferences
+      summary: Read effective, required and optional features for the authenticated Woo installation
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      responses:
+        '200':
+          $ref: '#/components/responses/FeaturesSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    put:
+      operationId: updateMerchantFeaturePreferences
+      summary: Compare and set mutable merchant-opt-in features
+      description: >-
+        Uses the revision derived from the authoritative subscription, plan, features,
+        mappings and saved shop preferences. All supplied changes must be eligible
+        and editable. Stale revisions, including stale no-op requests, return 409.
+        No request-supplied shop ID, entitlement, or plan is accepted.
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FeaturePreferencesUpdate'
+      responses:
+        '200':
+          $ref: '#/components/responses/FeaturesSuccess'
+        '400':
+          $ref: '#/components/responses/InvalidRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '413':
+          $ref: '#/components/responses/RequestTooLarge'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+  schemas:
+    Feature:
+      type: object
+      additionalProperties: false
+      required: [id, key, name, description, enabled, effective, editable, required, planEligible]
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+        key:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+        name:
+          type: string
+          minLength: 1
+          maxLength: 255
+        description:
+          type: [string, 'null']
+          maxLength: 10000
+        enabled:
+          type: boolean
+          description: Stored merchant opt-in preference; not necessarily the effective entitlement.
+        effective:
+          type: boolean
+          description: Effective selection computed using published Shared commerce selector.
+        editable:
+          type: boolean
+          description: True only for plan-eligible, non-required MERCHANT_OPT_IN features.
+        required:
+          type: boolean
+          description: True for platform-required or ALWAYS_ENABLED features.
+        planEligible:
+          type: boolean
+          description: True when the current active billing plan has an enabled mapping.
+    FeaturePreferencesResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, revision, features]
+      properties:
+        schemaVersion:
+          type: integer
+          const: 1
+        revision:
+          type: string
+          minLength: 64
+          maxLength: 64
+          pattern: '^[a-f0-9]{64}$'
+        features:
+          type: array
+          maxItems: 1000
+          items:
+            $ref: '#/components/schemas/Feature'
+    FeaturePreferenceChange:
+      type: object
+      additionalProperties: false
+      required: [featureId, enabled]
+      properties:
+        featureId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+        enabled:
+          type: boolean
+    FeaturePreferencesUpdate:
+      type: object
+      additionalProperties: false
+      required: [expectedRevision, changes]
+      properties:
+        expectedRevision:
+          type: string
+          minLength: 64
+          maxLength: 64
+          pattern: '^[a-f0-9]{64}$'
+        changes:
+          type: array
+          maxItems: 1000
+          uniqueItems: true
+          description: Feature IDs must be distinct; runtime validation enforces ID uniqueness.
+          items:
+            $ref: '#/components/schemas/FeaturePreferenceChange'
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, unauthorized, feature_preferences_conflict, feature_preferences_denied, feature_preferences_unavailable, feature_preferences_integrity_invalid, request_too_large, internal_error]
+  responses:
+    FeaturesSuccess:
+      description: Confirmed versioned feature projection
+      headers:
+        Cache-Control:
+          schema:
+            type: string
+            const: no-store
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/FeaturePreferencesResponse'
+    InvalidRequest:
+      description: Invalid query, body, content-type, duplicate feature IDs or unsupported fields
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Unauthorized:
+      description: Missing, invalid or revoked Woo installation credential
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: CAS mismatch, unavailable plan, forbidden feature mutation or tenant integrity failure
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    RequestTooLarge:
+      description: Request body larger than 65536 bytes
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InternalError:
+      description: Internal failure; no provider credentials or internal details exposed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
