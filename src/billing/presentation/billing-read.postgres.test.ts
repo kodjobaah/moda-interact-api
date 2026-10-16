@@ -6,6 +6,7 @@ import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
 import { BillingPresentationError, BillingPresentationReadService } from "./billing-read.service.js";
 import { BillingPlanCatalogueReadService } from "./plan-catalogue-read.service.js";
+import { publishedPricingTranslations } from "../../../tests/helpers/merchant-pricing-test-fixtures.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const suffix = randomUUID();
@@ -50,38 +51,37 @@ test("PostgreSQL billing and catalogue reads project persisted Free and downgrad
   const logger = createLogger({ serviceName: "api002-postgres-test", environment: "test", sink: () => {} });
 
   try {
-    const [freeCatalogue, paidCatalogue] = await Promise.all([
-      db.merchantPricingPlan.create({
-        data: {
-          id: freeCatalogueId,
-          shopifyPlanHandle: freeHandle,
-          displayName: "Free",
-          planKind: "FREE",
-          cataloguePosition: 0,
-          includedRecoveryCredits: 2,
-          allowancePeriod: "LIFETIME",
-          billingPeriod: "EVERY_30_DAYS",
-          recurringAmountMinor: 0,
-          currency: "USD",
-          translations: { create: { locale: "en", merchantDescription: "Start free" } },
-        },
-      }),
-      db.merchantPricingPlan.create({
-        data: {
-          id: paidCatalogueId,
-          shopifyPlanHandle: paidHandle,
-          displayName: "Growth",
-          planKind: "PAID_METERED",
-          cataloguePosition: 1,
-          includedRecoveryCredits: 10,
-          allowancePeriod: "EVERY_30_DAYS",
-          billingPeriod: "EVERY_30_DAYS",
-          recurringAmountMinor: 4900,
-          currency: "USD",
-          translations: { create: { locale: "en", merchantDescription: "Growth plan" } },
-        },
-      }),
-    ]);
+    // Serial catalogue inserts keep the migration's dense-position invariant.
+    const freeCatalogue = await db.merchantPricingPlan.create({
+      data: {
+        id: freeCatalogueId,
+        shopifyPlanHandle: freeHandle,
+        displayName: "Free",
+        planKind: "FREE",
+        cataloguePosition: 0,
+        includedRecoveryCredits: 2,
+        allowancePeriod: "LIFETIME",
+        billingPeriod: "EVERY_30_DAYS",
+        recurringAmountMinor: 0,
+        currency: "USD",
+        translations: { create: publishedPricingTranslations("Start free") },
+      },
+    });
+    const paidCatalogue = await db.merchantPricingPlan.create({
+      data: {
+        id: paidCatalogueId,
+        shopifyPlanHandle: paidHandle,
+        displayName: "Growth",
+        planKind: "PAID_METERED",
+        cataloguePosition: 1,
+        includedRecoveryCredits: 10,
+        allowancePeriod: "EVERY_30_DAYS",
+        billingPeriod: "EVERY_30_DAYS",
+        recurringAmountMinor: 4900,
+        currency: "USD",
+        translations: { create: publishedPricingTranslations("Growth plan") },
+      },
+    });
     assert.equal(freeCatalogue.id, freeCatalogueId);
     assert.equal(paidCatalogue.id, paidCatalogueId);
 
