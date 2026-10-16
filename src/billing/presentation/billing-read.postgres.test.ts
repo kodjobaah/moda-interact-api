@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, type Prisma } from "@prisma/client";
 import test, { after } from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
-import { BillingPresentationError, BillingPresentationReadService } from "./billing-read.service.js";
+import { BillingPresentationError, BillingPresentationReadService, type BillingPresentationDatabase } from "./billing-read.service.js";
 import { BillingPlanCatalogueReadService } from "./plan-catalogue-read.service.js";
 import { publishedPricingTranslations } from "../../../tests/helpers/merchant-pricing-test-fixtures.js";
 
@@ -204,6 +204,50 @@ test("PostgreSQL billing and catalogue reads project persisted Free and downgrad
     assert.equal(serializedResponses.includes("shopifyPlanHandle"), false);
     assert.equal(serializedResponses.includes("providerSubscriptionId"), false);
     assert.deepEqual(await snapshot(), before, "billing/catalogue reads must not mutate durable state");
+
+    // ARCH-041-API-002: keep both stages of a billing read on the same MVCC
+    // snapshot even when another connection updates a counter between them.
+    // Intercept only the test transaction's first Shop SELECT; production code
+    // retains the original callback and RepeatableRead isolation unchanged.
+    let signalShopRead: () => void = () => {};
+    let resumeRead: () => void = () => {};
+    const shopRead = new Promise<void>((resolve) => { signalShopRead = resolve; });
+    const proceed = new Promise<void>((resolve) => { resumeRead = resolve; });
+    const pausedDatabase = {
+      $transaction: (callback: (transaction: Prisma.TransactionClient) => Promise<unknown>, options: unknown) => {
+        assert.deepEqual(options, { isolationLevel: "RepeatableRead" });
+        return db.$transaction(async (transaction) => callback(new Proxy(transaction, {
+          get(target, property) {
+            if (property !== "shop") return Reflect.get(target, property);
+            return {
+              findUnique: async (query: Prisma.ShopFindUniqueArgs) => {
+                const shop = await target.shop.findUnique(query);
+                signalShopRead();
+                await proceed;
+                return shop;
+              },
+            };
+          },
+        })), { isolationLevel: "RepeatableRead" });
+      },
+    } as unknown as BillingPresentationDatabase;
+    const pausedRead = new BillingPresentationReadService(pausedDatabase).read(freePrincipal);
+    await shopRead;
+    try {
+      await db.shopEntitlementCounter.update({
+        where: { shopId_counter: { shopId: freeShop.id, counter: "LIFETIME_FREE_RECOVERY_CREDITS" } },
+        data: { committedQuantity: 0 },
+      });
+    } finally {
+      resumeRead();
+    }
+    const consistentRead = await pausedRead;
+    assert.deepEqual(consistentRead.capacity.freeLifetime, {
+      granted: 2, committed: 1, reserved: 0, remaining: 1,
+    }, "the second query stage must not see a newer committed counter version");
+    assert.equal((await db.shopEntitlementCounter.findUniqueOrThrow({
+      where: { shopId_counter: { shopId: freeShop.id, counter: "LIFETIME_FREE_RECOVERY_CREDITS" } },
+    })).committedQuantity, 0, "the concurrent update really committed");
   } finally {
     await removeFixtures(shopIds);
   }

@@ -9,10 +9,10 @@ import {
   PromotionCampaignStatus,
   PromotionTargetScope,
   SubscriptionProjectionStatus,
-  type Prisma,
   type PrismaClient,
 } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import { BillingSnapshotReader } from "./billing-snapshot.reader.js";
 
 export type BillingPresentationDatabase = Pick<PrismaClient, "$transaction">;
 
@@ -122,156 +122,26 @@ export class BillingPresentationReadService {
 
   async read(principal: WooInstallationPrincipal, now = new Date()): Promise<BillingPresentationResponse> {
     return this.database.$transaction(
-      (transaction) => readBillingSnapshot(transaction, principal, now),
+      (transaction) => readBillingSnapshot(new BillingSnapshotReader(transaction, principal.shopId), principal, now),
       { isolationLevel: "RepeatableRead" },
     );
   }
 }
 
 async function readBillingSnapshot(
-  transaction: Prisma.TransactionClient,
+  reader: BillingSnapshotReader,
   principal: WooInstallationPrincipal,
   now: Date,
 ): Promise<BillingPresentationResponse> {
-  const shop = await transaction.shop.findUnique({
-    where: { id: principal.shopId },
-    select: {
-      id: true,
-      domain: true,
-      platform: true,
-      shopifyShopId: true,
-      status: true,
-      onboardingCompleted: true,
-    },
-  });
+  const shop = await reader.readShop();
   if (
     !shop || shop.id !== principal.shopId || shop.domain !== principal.canonicalSiteUrl ||
     shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null || shop.status !== "ACTIVE"
   ) throw new BillingPresentationError("billing_integrity_invalid");
   if (!shop.onboardingCompleted) throw new BillingPresentationError("billing_not_initialized");
 
-  const [subscription, counters, selection, recurringOperations, latestPurchase, requestedPurchases] = await Promise.all([
-    transaction.subscription.findUnique({
-      where: { shopId: shop.id },
-      select: {
-        id: true,
-        shopId: true,
-        planId: true,
-        status: true,
-        billingPeriodId: true,
-        currentPeriodStart: true,
-        currentPeriodEnd: true,
-        cancelAtPeriodEnd: true,
-        providerSubscriptionId: true,
-        providerCoverageEndAt: true,
-        pendingPlanId: true,
-        pendingEffectiveAt: true,
-        plan: { select: { id: true, shopifyPlanHandle: true, kind: true, active: true } },
-        pendingPlan: { select: { id: true, shopifyPlanHandle: true, kind: true, active: true } },
-        billingPeriod: {
-          select: {
-            id: true,
-            shopId: true,
-            subscriptionId: true,
-            planId: true,
-            shopifyPlanHandleSnapshot: true,
-            planKindSnapshot: true,
-            includedRecoveryCreditsGranted: true,
-            periodStart: true,
-            periodEnd: true,
-            status: true,
-            entitlementCounters: {
-              where: { counter: BillingPeriodEntitlementCounterKind.INCLUDED_RECOVERY_CREDITS },
-              select: {
-                shopId: true,
-                billingPeriodId: true,
-                counter: true,
-                grantedQuantity: true,
-                currentAllowanceQuantity: true,
-                committedQuantity: true,
-                reservedQuantity: true,
-                forfeitedQuantity: true,
-              },
-            },
-          },
-        },
-      },
-    }),
-    transaction.shopEntitlementCounter.findMany({
-      where: {
-        shopId: shop.id,
-        counter: { in: [EntitlementCounter.LIFETIME_FREE_RECOVERY_CREDITS, EntitlementCounter.PURCHASED_RECOVERY_CREDITS] },
-      },
-      select: { shopId: true, counter: true, grantedQuantity: true, committedQuantity: true, reservedQuantity: true, refundingQuantity: true },
-    }),
-    transaction.merchantPromotionSelection.findUnique({
-      where: { shopId: shop.id },
-      select: {
-        shopId: true,
-        promotionalCreditGrant: {
-          select: {
-            id: true,
-            shopId: true,
-            quantity: true,
-            committedQuantity: true,
-            reservedQuantity: true,
-            campaign: {
-              select: {
-                id: true,
-                scope: true,
-                targetPlanId: true,
-                targetShopId: true,
-                startsAt: true,
-                expiresAt: true,
-                status: true,
-              },
-            },
-          },
-        },
-      },
-    }),
-    transaction.billingOperation.findMany({
-      where: {
-        shopId: shop.id,
-        kind: { in: [BillingOperationKind.SUBSCRIPTION_CREATE, BillingOperationKind.PLAN_SWITCH, BillingOperationKind.CANCEL] },
-        state: { in: [BillingOperationState.INITIATING, BillingOperationState.AWAITING_CONFIRMATION, BillingOperationState.OUTCOME_UNKNOWN] },
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      take: 3,
-      select: {
-        id: true,
-        shopId: true,
-        kind: true,
-        state: true,
-        merchantPricingPlanId: true,
-        providerReference: true,
-        createdAt: true,
-      },
-    }),
-    transaction.recoveryCreditPurchase.findFirst({
-      where: { shopId: shop.id },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      select: purchaseSelect,
-    }),
-    transaction.recoveryCreditPurchase.findMany({
-      where: {
-        shopId: shop.id,
-        status: "REQUESTED",
-        OR: [
-          { billingOperation: { is: { state: { in: [
-            BillingOperationState.INITIATING,
-            BillingOperationState.AWAITING_CONFIRMATION,
-            BillingOperationState.OUTCOME_UNKNOWN,
-            BillingOperationState.CONFIRMED,
-          ] } } } },
-          { billingOperation: { is: null } },
-        ],
-      },
-      orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-      take: 101,
-      select: purchaseSelect,
-    }),
-  ]);
+  const { subscription, counters, selection, recurringOperations, latestPurchase, requestedPurchases } =
+    await reader.readCore();
 
   if (recurringOperations.length > 1 || requestedPurchases.length > 100) {
     throw new BillingPresentationError("billing_operation_conflict");
@@ -281,33 +151,7 @@ async function readBillingSnapshot(
   }
 
   const currentCataloguePlan = subscription?.plan
-    ? await transaction.merchantPricingPlan.findUnique({
-        where: { shopifyPlanHandle: subscription.plan.shopifyPlanHandle },
-        select: {
-          id: true,
-          shopifyPlanHandle: true,
-          displayName: true,
-          planKind: true,
-          isActive: true,
-          recurringAmountMinor: true,
-          currency: true,
-          billingPeriod: true,
-          usageEvents: {
-            orderBy: [{ position: "asc" }, { id: "asc" }],
-            take: 101,
-            select: {
-              id: true,
-              merchantPricingPlanId: true,
-              adminLabel: true,
-              creditsGrantedPerUnit: true,
-              pricingMode: true,
-              fixedUnitAmountMinor: true,
-              currency: true,
-              position: true,
-            },
-          },
-        },
-      })
+    ? await reader.readCurrentCataloguePlan(subscription.plan.shopifyPlanHandle)
     : null;
   if (subscription?.plan && (
     !currentCataloguePlan || currentCataloguePlan.shopifyPlanHandle !== subscription.plan.shopifyPlanHandle ||
@@ -324,17 +168,17 @@ async function readBillingSnapshot(
     operation.kind === BillingOperationKind.SUBSCRIPTION_CREATE || operation.kind === BillingOperationKind.PLAN_SWITCH,
   );
   const durablePendingPlan = subscription?.pendingPlanId ? subscription.pendingPlan : null;
-  let operationTargetPlan: Awaited<ReturnType<typeof readCataloguePlanById>> = null;
+  let operationTargetPlan: Awaited<ReturnType<BillingSnapshotReader["readCataloguePlanById"]>> = null;
   if (pendingOperation && !pendingOperation.merchantPricingPlanId) {
     throw new BillingPresentationError("billing_catalogue_mapping_invalid");
   }
   if (pendingOperation?.merchantPricingPlanId) {
-    operationTargetPlan = await readCataloguePlanById(transaction, pendingOperation.merchantPricingPlanId);
+    operationTargetPlan = await reader.readCataloguePlanById(pendingOperation.merchantPricingPlanId);
     if (!operationTargetPlan) throw new BillingPresentationError("billing_catalogue_mapping_invalid");
   }
-  let durablePendingCataloguePlan: Awaited<ReturnType<typeof readCataloguePlanByHandle>> = null;
+  let durablePendingCataloguePlan: Awaited<ReturnType<BillingSnapshotReader["readCataloguePlanByHandle"]>> = null;
   if (durablePendingPlan) {
-    durablePendingCataloguePlan = await readCataloguePlanByHandle(transaction, durablePendingPlan.shopifyPlanHandle);
+    durablePendingCataloguePlan = await reader.readCataloguePlanByHandle(durablePendingPlan.shopifyPlanHandle);
     if (!durablePendingCataloguePlan) throw new BillingPresentationError("billing_catalogue_mapping_invalid");
   }
   if (operationTargetPlan && durablePendingCataloguePlan && operationTargetPlan.id !== durablePendingCataloguePlan.id) {
@@ -399,17 +243,7 @@ async function readBillingSnapshot(
   if (
     subscription?.providerSubscriptionId && paidPlan && !subscription.cancelAtPeriodEnd
   ) {
-    confirmedCancellation = await transaction.billingOperation.findMany({
-      where: {
-        shopId: shop.id,
-        kind: BillingOperationKind.CANCEL,
-        state: BillingOperationState.CONFIRMED,
-        providerReference: subscription.providerSubscriptionId,
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-      take: 2,
-      select: { id: true, shopId: true, kind: true, state: true, providerReference: true },
-    });
+    confirmedCancellation = await reader.readConfirmedCancellation(subscription.providerSubscriptionId);
     if (confirmedCancellation.length > 1) throw new BillingPresentationError("billing_operation_conflict");
     if (confirmedCancellation.length > 0 && (pendingOperation || pendingCancellationFromOperation)) {
       throw new BillingPresentationError("billing_operation_conflict");
@@ -524,43 +358,6 @@ async function readBillingSnapshot(
       unresolvedPurchases,
     },
   };
-}
-
-const purchaseSelect = {
-  id: true,
-  shopId: true,
-  status: true,
-  creditsGranted: true,
-  currentAmount: true,
-  reservedAmount: true,
-  createdAt: true,
-  activatedAt: true,
-  billingOperation: {
-    select: {
-      shopId: true,
-      kind: true,
-      state: true,
-      recoveryCreditPurchaseId: true,
-      merchantPricingUsageEventId: true,
-      merchantPricingUsageEvent: {
-        select: { id: true, adminLabel: true, creditsGrantedPerUnit: true, merchantPricingPlanId: true },
-      },
-    },
-  },
-} satisfies Prisma.RecoveryCreditPurchaseSelect;
-
-async function readCataloguePlanById(transaction: Prisma.TransactionClient, id: string) {
-  return transaction.merchantPricingPlan.findUnique({
-    where: { id },
-    select: { id: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
-  });
-}
-
-async function readCataloguePlanByHandle(transaction: Prisma.TransactionClient, shopifyPlanHandle: string) {
-  return transaction.merchantPricingPlan.findUnique({
-    where: { shopifyPlanHandle },
-    select: { id: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
-  });
 }
 
 function resolveExperienceState(status: string | undefined): ExperienceState {
