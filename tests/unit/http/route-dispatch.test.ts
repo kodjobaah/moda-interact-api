@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import type { IncomingMessage, ServerResponse } from "node:http";
+import type { IncomingMessage } from "node:http";
+import type { ApiRouteHandler } from "../../../src/http/route-handler.js";
 import test from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createWooPurchaseHistoryRoute } from "../../../src/billing/purchase-history/routes.js";
@@ -7,9 +8,9 @@ import { loadRuntimeConfig } from "../../../src/runtime-config.js";
 import { createApiRuntime } from "../../../src/server.js";
 import { WooUnauthenticatedError } from "../../../src/auth/woo-installation/authenticator.js";
 import {
-  createWooInstallationRoutes,
+  createBillingCommandRoutes,
   BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH,
-} from "../../../src/woocommerce/installation/routes.js";
+} from "../../../src/billing/commands/routes.js";
 
 const logger = createLogger({
   serviceName: "api-route-characterization-test",
@@ -17,19 +18,19 @@ const logger = createLogger({
   sink: () => undefined,
 });
 
-type Handler = { handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> };
+type Handler = ApiRouteHandler;
 
 async function withApi(
   callback: (origin: string) => Promise<void>,
-  options: { read?: Handler; webhook?: Handler; installation?: Handler; probe?: () => Promise<void> } = {},
+  options: { read?: Handler; webhook?: Handler; installation?: Handler; handlers?: readonly Handler[]; probe?: () => Promise<void> } = {},
 ): Promise<void> {
   const runtime = createApiRuntime(
     { ...loadRuntimeConfig({ DATABASE_URL: "postgresql://user:nonsecret@localhost:5432/test" }), port: 0 },
     { probe: options.probe ?? (async () => undefined), disconnect: async () => undefined },
     logger,
-    options.installation,
-    options.webhook,
-    options.read,
+    options.handlers ?? [options.read, options.webhook, options.installation].filter(
+      (handler): handler is Handler => handler !== undefined,
+    ),
   );
   await runtime.start();
   const address = runtime.server.address();
@@ -159,13 +160,8 @@ test("recovery-credit purchases GET belongs to purchase history, POST to purchas
     } as never,
     logger,
   });
-  const installation = createWooInstallationRoutes({
-    mode: "public",
+  const commands = createBillingCommandRoutes({
     authenticator: authenticator as never,
-    connectionService: { connect: async () => { throw new Error("unexpected connection"); } } as never,
-    bootstrapReadService: { read: async () => { throw new Error("unexpected bootstrap"); } } as never,
-    storeContextService: { update: async () => { throw new Error("unexpected update"); } } as never,
-    purchaseHistoryRoute: history,
     recoveryCreditPurchaseCommandService: {
       initiate: async (who: { shopId: string }, key: string, eventId: string) => {
         calls.push(`purchase:${who.shopId}:${key}:${eventId}`);
@@ -221,7 +217,7 @@ test("recovery-credit purchases GET belongs to purchase history, POST to purchas
     });
     assert.equal(wrong.status, 404);
     assert.deepEqual(await wrong.json(), { error: "not_found" });
-  }, { installation });
+  }, { handlers: [history, commands] });
   assert.deepEqual(calls, [
     "authenticate", // Denied GET, without invoking either business service.
     "authenticate", "history:shop-a:REFUNDED:2:10",

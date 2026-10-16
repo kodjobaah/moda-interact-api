@@ -15,6 +15,10 @@ import {
   BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH,
   createWooInstallationRoutes,
 } from "./routes.js";
+import { createMerchantBootstrapRoute } from "../../merchant/bootstrap/routes.js";
+import { createMerchantStoreContextRoute } from "../../merchant/store-context/routes.js";
+import { createBillingReadRoutes } from "../../billing/presentation/routes.js";
+import { createBillingCommandRoutes } from "../../billing/commands/routes.js";
 import { BillingPresentationError } from "../../billing/presentation/billing-read.service.js";
 import { BillingCatalogueError } from "../../billing/presentation/plan-catalogue-read.service.js";
 import { RecurringBillingCommandError } from "../../billing/commands/recurring-subscription-command.service.js";
@@ -143,23 +147,40 @@ async function withApi(
       };
     },
   };
-  const routes = createWooInstallationRoutes({
+  const installedAuth = authenticatorOverride ?? authenticator as never;
+  const installation = createWooInstallationRoutes({
     mode: "public",
     connectionService: connectionService as never,
-    bootstrapReadService: bootstrapReadService as never,
-    storeContextService: { update: async () => undefined } as never,
+    authenticator: installedAuth,
+    logger,
+  });
+  const bootstrap = createMerchantBootstrapRoute({
+    service: bootstrapReadService as never,
+    authenticator: installedAuth,
+    logger,
+  });
+  const storeContext = createMerchantStoreContextRoute({
+    service: { update: async () => undefined } as never,
+    authenticator: installedAuth,
+    logger,
+  });
+  const billingReads = createBillingReadRoutes({
     billingReadService: billingReadService as never,
     billingPlanCatalogueReadService: billingPlanCatalogueReadService as never,
+    authenticator: installedAuth,
+    logger,
+  });
+  const billingCommands = createBillingCommandRoutes({
     ...(recurringCommandOverride ? { recurringSubscriptionCommandService: recurringCommandOverride as never } : {}),
     ...(recoveryCreditPurchaseCommandOverride ? { recoveryCreditPurchaseCommandService: recoveryCreditPurchaseCommandOverride as never } : {}),
-    authenticator: authenticatorOverride ?? authenticator as never,
+    authenticator: installedAuth,
     logger,
   });
   const runtime = createApiRuntime(
     { ...loadRuntimeConfig({ DATABASE_URL: "postgresql://user:secret@localhost:5432/moda" }), port: 0 },
     { probe: async () => undefined, disconnect: async () => undefined },
     logger,
-    routes,
+    [billingReads, installation, bootstrap, storeContext, billingCommands],
   );
   await runtime.start();
   const address = runtime.server.address();

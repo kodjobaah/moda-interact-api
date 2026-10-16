@@ -4,7 +4,7 @@ import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { loadRuntimeConfig } from "../../runtime-config.js";
 import { createApiRuntime } from "../../server.js";
 import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
-import { createWooInstallationRoutes, MERCHANT_STORE_CONTEXT_ROUTE_PATH } from "../../woocommerce/installation/routes.js";
+import { createMerchantStoreContextRoute, MERCHANT_STORE_CONTEXT_ROUTE_PATH } from "./routes.js";
 import { MerchantStoreContextConflictError } from "./store-context.service.js";
 import type { MerchantStoreContextSnapshot } from "./schema.js";
 
@@ -21,11 +21,8 @@ async function withApi(
   const calls: MerchantStoreContextSnapshot[] = [];
   const logs: string[] = [];
   const logger = createLogger({ serviceName: "api-store-context-test", environment: "test", sink: (line) => logs.push(JSON.stringify(line)) });
-  const routes = createWooInstallationRoutes({
-    mode: "public",
-    connectionService: {} as never,
-    bootstrapReadService: { read: async () => ({}) } as never,
-    storeContextService: { update: async (_principal: unknown, snapshot: MerchantStoreContextSnapshot) => {
+  const routes = createMerchantStoreContextRoute({
+    service: { update: async (_principal: unknown, snapshot: MerchantStoreContextSnapshot) => {
       calls.push(snapshot);
       if (config.failure === "conflict") throw new MerchantStoreContextConflictError();
       if (config.failure === "internal") throw new Error("sensitive DB secret");
@@ -37,7 +34,7 @@ async function withApi(
     logger,
   });
   const runtime = createApiRuntime({ ...loadRuntimeConfig({ DATABASE_URL: "postgresql://user:secret@localhost/moda" }), port: 0 },
-    { probe: async () => undefined, disconnect: async () => undefined }, logger, routes);
+    { probe: async () => undefined, disconnect: async () => undefined }, logger, [routes]);
   await runtime.start();
   const address = runtime.server.address();
   assert.ok(address && typeof address !== "string");

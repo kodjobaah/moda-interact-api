@@ -80,8 +80,7 @@ async function withWebhookApi(
     { ...loadRuntimeConfig({ DATABASE_URL: "postgresql://user:secret@localhost:5432/moda" }), port: 0 },
     { probe: async () => undefined, disconnect: async () => undefined },
     logger,
-    undefined,
-    route,
+    [route],
   );
   await runtime.start();
   const address = runtime.server.address();
