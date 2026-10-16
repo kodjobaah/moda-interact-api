@@ -14,8 +14,8 @@
     "typecheck": "npm run prisma:generate && tsc --noEmit -p tsconfig.json",
     "lint": "eslint . --max-warnings=0",
     "pretest": "npm run prisma:generate",
-    "test": "tsx --test \"src/**/*.test.ts\" \"tests/unit/**/*.test.ts\"",
-    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs",
+    "test": "tsx --test \"tests/unit/**/*.test.ts\"",
+    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs && node scripts/test-arch036-discount-offers-postgres.mjs && node scripts/test-arch041-cross-domain-postgres.mjs",
     "prisma:generate": "prisma generate --schema database/prisma/schema.prisma",
     "test:arch026-woo-rest-read:postgres": "node scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
     "test:arch036-discount-offers:postgres": "node scripts/test-arch036-discount-offers-postgres.mjs"

@@ -2,6 +2,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import type { ApiRouteHandler } from "../../http/route-handler.js";
+import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
+import { singleHeader } from "../../http/headers.js";
+import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
 import {
@@ -10,16 +13,6 @@ import {
 } from "../billing/initial-free-activation.service.js";
 import { decodeSecret } from "../../auth/woo-installation/credential.js";
 import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode } from "./site-url.js";
-
-// Preserve the historic constant imports while routing ownership moves to each domain.
-export {
-  BILLING_SUBSCRIPTION_ROUTE_PATH,
-  BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH,
-  BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH,
-} from "../../billing/commands/routes.js";
-export { BILLING_PRESENTATION_ROUTE_PATH, BILLING_PLANS_ROUTE_PATH } from "../../billing/presentation/routes.js";
-export { MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../merchant/bootstrap/routes.js";
-export { MERCHANT_STORE_CONTEXT_ROUTE_PATH, MAX_STORE_CONTEXT_BODY_BYTES } from "../../merchant/store-context/routes.js";
 
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
@@ -138,12 +131,12 @@ async function parseConnectRequest(
     throw new HttpFailure(413, "request_too_large");
   }
 
-  const bytes = await readBoundedBody(request);
+  const bytes = await readBoundedBody(request, MAX_CONNECT_BODY_BYTES, (reason) => reason === "oversized"
+    ? new HttpFailure(413, "request_too_large")
+    : new HttpFailure(400, "invalid_request"));
   let value: unknown;
   try {
-    const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (bodyText.includes("\0")) throw new Error("nul");
-    value = JSON.parse(bodyText);
+    value = decodeStrictJsonBody(bytes);
   } catch {
     throw new HttpFailure(400, "invalid_request");
   }
@@ -168,60 +161,6 @@ async function parseConnectRequest(
   return { siteUrl: body.siteUrl, attemptId: body.attemptId, bootstrapSecret };
 }
 
-function readBoundedBody(request: IncomingMessage, maximumBytes = MAX_CONNECT_BODY_BYTES): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    const cleanup = () => {
-      request.off("data", onData);
-      request.off("end", onEnd);
-      request.off("aborted", onAbort);
-      request.off("error", onError);
-    };
-    const onData = (chunk: Buffer | string) => {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += bytes.length;
-      if (size > maximumBytes) {
-        cleanup();
-        request.resume();
-        reject(new HttpFailure(413, "request_too_large"));
-        return;
-      }
-      chunks.push(bytes);
-    };
-    const onEnd = () => {
-      cleanup();
-      resolve(Buffer.concat(chunks));
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(new HttpFailure(400, "invalid_request"));
-    };
-    const onError = () => {
-      cleanup();
-      reject(new HttpFailure(400, "invalid_request"));
-    };
-    request.on("data", onData);
-    request.once("end", onEnd);
-    request.once("aborted", onAbort);
-    request.once("error", onError);
-  });
-}
-
-function singleHeader(request: IncomingMessage, name: string): { count: number; value?: string } {
-  const values: string[] = [];
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    if (request.rawHeaders[index]?.toLowerCase() === name) {
-      const value = request.rawHeaders[index + 1];
-      if (value !== undefined) values.push(value);
-    }
-  }
-  const value = values[0];
-  return values.length === 1 && value !== undefined
-    ? { count: 1, value }
-    : { count: values.length };
-}
-
 class HttpFailure extends Error {
   constructor(readonly statusCode: number, readonly code: string) {
     super(code);
@@ -231,14 +170,4 @@ class HttpFailure extends Error {
 
 function sendError(response: ServerResponse, statusCode: number, code: string): void {
   sendJson(response, statusCode, { error: code });
-}
-
-function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {
-  if (response.destroyed || response.headersSent) return;
-  response.writeHead(statusCode, {
-    "cache-control": "no-store",
-    "content-type": "application/json; charset=utf-8",
-    "x-content-type-options": "nosniff",
-  });
-  response.end(JSON.stringify(value));
 }

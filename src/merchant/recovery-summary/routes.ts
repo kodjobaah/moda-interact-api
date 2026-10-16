@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { RecoverySummaryIntegrityError, type MerchantRecoverySummaryService } from "./recovery-summary.service.js";
 
@@ -55,14 +56,4 @@ function requestHasBody(request: IncomingMessage): boolean {
     if (name === "content-length" && (value === undefined || !/^0+$/.test(value))) return true;
   }
   return false;
-}
-
-function sendJson(response: ServerResponse, status: number, payload: unknown): void {
-  if (response.destroyed || response.headersSent) return;
-  response.writeHead(status, {
-    "cache-control": "no-store",
-    "content-type": "application/json; charset=utf-8",
-    "x-content-type-options": "nosniff",
-  });
-  response.end(JSON.stringify(payload));
 }
