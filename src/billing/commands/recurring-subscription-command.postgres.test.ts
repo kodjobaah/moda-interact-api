@@ -5,12 +5,14 @@ import test, { after } from "node:test";
 import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
 import { RecurringBillingCommandError, RecurringSubscriptionCommandService } from "./recurring-subscription-command.service.js";
 import { WooBillingProviderError } from "../../woocommerce/billing/woo-billing-client.js";
+import { publishedPricingTranslations } from "../../../tests/helpers/merchant-pricing-test-fixtures.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const suffix = randomUUID().replaceAll("-", "");
 const siteUrls: string[] = [];
 const planHandles: string[] = [];
 const catalogueIds: string[] = [];
+let nextCataloguePosition = 0;
 let prisma: PrismaClient | undefined;
 
 function database(): PrismaClient {
@@ -34,12 +36,13 @@ async function createCatalogue(label: string, kind: "FREE" | "PAID_METERED", fea
       displayName: label,
       planKind: kind,
       isActive: true,
-      cataloguePosition: kind === "FREE" ? 0 : 1,
+      cataloguePosition: nextCataloguePosition++,
       includedRecoveryCredits: kind === "FREE" ? 10 : 120,
       allowancePeriod: kind === "FREE" ? "LIFETIME" : "EVERY_30_DAYS",
       billingPeriod: "EVERY_30_DAYS",
       recurringAmountMinor: kind === "FREE" ? 0 : 4900,
       currency: "USD",
+      translations: { create: publishedPricingTranslations(label) },
       features: { create: { featureId, configuration: {} } },
     },
   });
@@ -105,11 +108,11 @@ test("PostgreSQL recurring create, replay, switch and cancel persist operations 
 }, async () => {
   const db = database();
   const featureId = await checkoutFeatureId();
-  const [freeCatalogue, paidCatalogue, secondPaidCatalogue] = await Promise.all([
-    createCatalogue("free", "FREE", featureId),
-    createCatalogue("paid", "PAID_METERED", featureId),
-    createCatalogue("second_paid", "PAID_METERED", featureId),
-  ]);
+  // The real migration validates dense catalogue positions at each commit;
+  // concurrent fixture insertion may commit position 1 before position 0.
+  const freeCatalogue = await createCatalogue("free", "FREE", featureId);
+  const paidCatalogue = await createCatalogue("paid", "PAID_METERED", featureId);
+  const secondPaidCatalogue = await createCatalogue("second_paid", "PAID_METERED", featureId);
   const [freePlan, currentPaidPlan] = await Promise.all([
     db.billingPlan.create({ data: { shopifyPlanHandle: freeCatalogue.shopifyPlanHandle, name: "Free", kind: "FREE" } }),
     db.billingPlan.create({ data: { shopifyPlanHandle: paidCatalogue.shopifyPlanHandle, name: "Paid", kind: "PAID_METERED" } }),

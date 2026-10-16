@@ -10,6 +10,7 @@ import {
   RecoveryCreditPurchaseCommandService,
 } from "./recovery-credit-purchase-command.service.js";
 import { recoveryCreditPurchaseFingerprint } from "./recurring-command-primitives.js";
+import { publishedPricingTranslations } from "../../../tests/helpers/merchant-pricing-test-fixtures.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const suffix = randomUUID().replaceAll("-", "");
@@ -17,6 +18,7 @@ const siteUrls: string[] = [];
 const catalogueHandles: string[] = [];
 const catalogueIds: string[] = [];
 const billingPlanHandles: string[] = [];
+let nextCataloguePosition = 0;
 let prisma: PrismaClient | undefined;
 
 function database(): PrismaClient {
@@ -41,7 +43,7 @@ async function featureId(): Promise<string> {
   return feature.id;
 }
 
-async function createCatalogue(label: string, kind: "FREE" | "PAID_METERED") {
+async function createCatalogue(label: string, kind: "FREE" | "PAID_METERED", currency = "USD") {
   const db = database();
   const handle = `api004_${label}_${suffix}`;
   const id = `api004_${label}_${suffix}`;
@@ -54,12 +56,13 @@ async function createCatalogue(label: string, kind: "FREE" | "PAID_METERED") {
       displayName: label,
       planKind: kind,
       isActive: true,
-      cataloguePosition: kind === "FREE" ? 0 : 1,
+      cataloguePosition: nextCataloguePosition++,
       includedRecoveryCredits: kind === "FREE" ? 10 : 120,
       allowancePeriod: kind === "FREE" ? "LIFETIME" : "EVERY_30_DAYS",
       billingPeriod: "EVERY_30_DAYS",
       recurringAmountMinor: kind === "FREE" ? 0 : 4900,
-      currency: "USD",
+      currency,
+      translations: { create: publishedPricingTranslations(label) },
       features: { create: { featureId: await featureId(), configuration: {} } },
     },
   });
@@ -171,7 +174,7 @@ test("PostgreSQL Free top-up commits exact purchase and operation before /charge
   const db = database();
   const { catalogue, plan } = await createCatalogue("free", "FREE");
   const shop = await createShop("free", plan.id, "FREE");
-  const bronze = await createBundle(catalogue.id, "Bronze", 0, { maximumUnitsPerBillingPeriod: 0 });
+  const bronze = await createBundle(catalogue.id, "Bronze", 0);
   const silver = await createBundle(catalogue.id, "Silver", 1);
   const requestKey = `free-topup-${suffix}`;
   const chargeId = randomUUID();
@@ -347,22 +350,37 @@ test("PostgreSQL admits scheduled-cancellation paid top-ups and rejects unavaila
   assert.equal(await db.recoveryCreditPurchase.count({ where: { shopId: shop.shopId } }), 0);
 });
 
-test("PostgreSQL catalogue validation hides foreign bundles and rejects non-FIXED or invalid USD offers", {
+test("PostgreSQL catalogue validation hides foreign bundles and rejects non-FIXED or non-USD offers", {
   skip: !databaseUrl,
 }, async () => {
   const { catalogue, plan } = await createCatalogue("eligibility", "FREE");
   const otherCatalogue = await createCatalogue("other", "FREE");
+  const euroCatalogue = await createCatalogue("non_usd", "FREE", "EUR");
   const shop = await createShop("eligibility", plan.id, "FREE");
+  const euroShop = await createShop("non_usd", euroCatalogue.plan.id, "FREE");
   const foreign = await createBundle(otherCatalogue.catalogue.id, "Foreign", 0);
+  const euroBundle = await createBundle(euroCatalogue.catalogue.id, "EUR pricing", 0, { currency: "EUR" });
+  const validTier = { create: { position: 0, upTo: null, amountPerUnitMinor: 99, flatAmountMinor: 0 } };
   const invalidBundles = [
-    await createBundle(catalogue.id, "Graduated", 0, { pricingMode: "GRADUATED", fixedUnitAmountMinor: null }),
-    await createBundle(catalogue.id, "Volume", 1, { pricingMode: "VOLUME", fixedUnitAmountMinor: null }),
-    await createBundle(catalogue.id, "No Price", 2, { fixedUnitAmountMinor: null }),
-    await createBundle(catalogue.id, "Zero Price", 3, { fixedUnitAmountMinor: 0 }),
-    await createBundle(catalogue.id, "No Credits", 4, { creditsGrantedPerUnit: 0 }),
-    await createBundle(catalogue.id, "Wrong Currency", 5, { currency: "EUR" }),
-    await createBundle(catalogue.id, " ", 6),
+    // These are database-valid catalogued offers that the API must still deny.
+    await createBundle(catalogue.id, "Graduated", 0, {
+      pricingMode: "GRADUATED", fixedUnitAmountMinor: null, tiers: validTier,
+    }),
+    await createBundle(catalogue.id, "Volume", 1, {
+      pricingMode: "VOLUME", fixedUnitAmountMinor: null, tiers: validTier,
+    }),
+    await createBundle(catalogue.id, "Zero Price", 2, {
+      fixedUnitAmountMinor: 0, maximumUnitsPerBillingPeriod: 1,
+    }),
   ];
+
+  // The migration itself prohibits the other historically invalid fixtures.
+  // Assert database rejection instead of bypassing its constraints to exercise
+  // an impossible production state in the purchase command.
+  await assert.rejects(createBundle(catalogue.id, "No Price", 3, { fixedUnitAmountMinor: null }));
+  await assert.rejects(createBundle(catalogue.id, "No Credits", 3, { creditsGrantedPerUnit: 0 }));
+  await assert.rejects(createBundle(catalogue.id, "Wrong Currency", 3, { currency: "EUR" }));
+  await assert.rejects(createBundle(catalogue.id, " ", 3));
   let calls = 0;
   const service = billingService({
     createCharge: async () => {
@@ -374,6 +392,11 @@ test("PostgreSQL catalogue validation hides foreign bundles and rejects non-FIXE
     service.initiate(principal(shop.shopId, shop.domain), `foreign-${suffix}`, foreign.id),
     "top_up_bundle_not_found",
     404,
+  );
+  await assertCommandError(
+    service.initiate(principal(euroShop.shopId, euroShop.domain), `non-usd-${suffix}`, euroBundle.id),
+    "top_up_bundle_unavailable",
+    409,
   );
   for (const [index, bundle] of invalidBundles.entries()) {
     await assertCommandError(
