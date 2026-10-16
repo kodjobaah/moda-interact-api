@@ -13,7 +13,9 @@ export {
   BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH,
 } from "../../billing/commands/routes.js";
 export { BILLING_PRESENTATION_ROUTE_PATH, BILLING_PLANS_ROUTE_PATH } from "../../billing/presentation/routes.js";
-import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
+import type { MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
+import { createMerchantBootstrapRoute } from "../../merchant/bootstrap/routes.js";
+export { MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../merchant/bootstrap/routes.js";
 import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
 import type { createMerchantRecoverySummaryRoute } from "../../merchant/recovery-summary/routes.js";
 import type { createMerchantRecoveryPolicyRoute } from "../../merchant/recovery-policy/routes.js";
@@ -35,7 +37,6 @@ import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode 
 
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
-export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";
 export const MERCHANT_STORE_CONTEXT_ROUTE_PATH = "/v1/merchant/store-context";
 export const MAX_CONNECT_BODY_BYTES = 8192;
 export const MAX_STORE_CONTEXT_BODY_BYTES = 2048;
@@ -101,6 +102,12 @@ export function createWooInstallationRoutes({
     ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),
     ...(recoveryCreditPurchaseCommandService ? { recoveryCreditPurchaseCommandService } : {}),
     authenticator,
+    logger,
+    now,
+  });
+  const merchantBootstrapRoute = createMerchantBootstrapRoute({
+    authenticator,
+    service: bootstrapReadService,
     logger,
     now,
   });
@@ -181,34 +188,7 @@ export function createWooInstallationRoutes({
         return true;
       }
 
-      if (requestUrl.pathname === MERCHANT_BOOTSTRAP_ROUTE_PATH && request.method === "GET") {
-        const startedAt = now();
-        try {
-          const principal = await authenticator.authenticate(request);
-          if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
-          const bootstrap = await bootstrapReadService.read(principal);
-          logger.info("merchant.bootstrap.read", {
-            installationId: principal.installationId,
-            shopId: principal.shopId,
-            outcome: "success",
-            onboardingCompleted: bootstrap.shop.onboardingCompleted,
-            durationMs: Math.max(0, now() - startedAt),
-          });
-          sendJson(response, 200, bootstrap);
-        } catch (error) {
-          if (error instanceof WooUnauthenticatedError) {
-            sendError(response, 401, "unauthorized");
-          } else if (error instanceof HttpFailure) {
-            sendError(response, error.statusCode, error.code);
-          } else {
-            logger.error("merchant.bootstrap.read.failed", {
-              reason: error instanceof MerchantBootstrapIntegrityError ? "integrity" : "internal",
-            });
-            sendError(response, 500, "internal_error");
-          }
-        }
-        return true;
-      }
+      if (await merchantBootstrapRoute.handle(request, response)) return true;
 
       if (requestUrl.pathname === MERCHANT_STORE_CONTEXT_ROUTE_PATH && request.method === "PUT") {
         const startedAt = now();

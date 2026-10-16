@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { parse } from "yaml";
 import { isMerchantBootstrapErrorResponse, isMerchantBootstrapResponse } from "./schema.js";
-import { MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../woocommerce/installation/routes.js";
+import { MERCHANT_BOOTSTRAP_ROUTE_PATH } from "./routes.js";
 
 test("merchant bootstrap OpenAPI contract is strict, authenticated and versioned", async () => {
   const contractPath = new URL("../../../openapi/merchant-bootstrap-v1.yaml", import.meta.url);
