@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { singleHeader } from "../../http/headers.js";
+import type { ApiRouteHandler } from "../../http/route-handler.js";
 import type { ModaSupportedLanguageTag } from "@modainteract/moda-interact-shared/internationalization";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { WooReadAuthorizationError, WooReadAuthorizationService, type WooCallbackPayload } from "./authorization.service.js";
@@ -17,15 +19,11 @@ class InvalidCallback extends Error {
   }
 }
 
-export interface WooRestReadRouteHandler {
-  handle(request: IncomingMessage, response: ServerResponse): Promise<boolean>;
-}
-
 export function createWooRestReadAuthorizationRoutes(options: {
   authenticator: WooInstallationAuthenticator;
   service: WooReadAuthorizationService;
   logger: StructuredLogger;
-}): WooRestReadRouteHandler {
+}): ApiRouteHandler {
   return {
     async handle(request, response) {
       const url = new URL(request.url ?? "/", "http://localhost");
@@ -159,17 +157,6 @@ function readBoundedBody(request: IncomingMessage): Promise<Buffer> {
     request.once("aborted", onAbort);
     request.once("error", onAbort);
   });
-}
-
-function singleHeader(request: IncomingMessage, name: string): { count: number; value?: string } {
-  const values: string[] = [];
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    if (request.rawHeaders[index]?.toLowerCase() === name && request.rawHeaders[index + 1] !== undefined) {
-      values.push(request.rawHeaders[index + 1] as string);
-    }
-  }
-  const value = values.length === 1 ? values[0] : undefined;
-  return value === undefined ? { count: values.length } : { count: 1, value };
 }
 
 /** WordPress sets this from get_user_locale() after its capability and nonce checks. */

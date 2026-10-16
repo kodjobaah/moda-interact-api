@@ -1,4 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
+import { singleHeader } from "../../http/headers.js";
+import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
@@ -66,19 +69,6 @@ export function createStoreCategorySelectionRoute(options: {
   };
 }
 
-function singleHeader(request: IncomingMessage, name: string): { count: number; value?: string } {
-  const values: string[] = [];
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    if (request.rawHeaders[index]?.toLowerCase() === name) {
-      const value = request.rawHeaders[index + 1];
-      if (value !== undefined) values.push(value);
-    }
-  }
-  const value = values[0];
-  return values.length === 1 && value !== undefined
-    ? { count: 1, value } : { count: values.length };
-}
-
 async function parseCategorySelectionRequest(request: IncomingMessage): Promise<StoreCategorySelectionRequest> {
   const contentType = singleHeader(request, "content-type");
   const encoding = singleHeader(request, "content-encoding");
@@ -92,51 +82,15 @@ async function parseCategorySelectionRequest(request: IncomingMessage): Promise<
   if (length.value && Number(length.value) > MAX_CATEGORY_SELECTION_BODY_BYTES) {
     throw new CategoryRequestError(413, "request_too_large");
   }
-  const bytes = await new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    const cleanup = () => {
-      request.off("data", onData);
-      request.off("end", onEnd);
-      request.off("error", onFailure);
-      request.off("aborted", onFailure);
-    };
-    const onData = (chunk: Buffer | string) => {
-      const data = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += data.length;
-      if (size > MAX_CATEGORY_SELECTION_BODY_BYTES) {
-        cleanup();
-        request.resume();
-        reject(new CategoryRequestError(413, "request_too_large"));
-        return;
-      }
-      chunks.push(data);
-    };
-    const onEnd = () => { cleanup(); resolve(Buffer.concat(chunks)); };
-    const onFailure = () => { cleanup(); reject(new CategoryRequestError(400, "invalid_request")); };
-    request.on("data", onData);
-    request.once("end", onEnd);
-    request.once("error", onFailure);
-    request.once("aborted", onFailure);
-  });
+  const bytes = await readBoundedBody(request, MAX_CATEGORY_SELECTION_BODY_BYTES, (reason) => reason === "oversized"
+    ? new CategoryRequestError(413, "request_too_large")
+    : new CategoryRequestError(400, "invalid_request"));
   let value: unknown;
   try {
-    const body = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (body.includes("\0")) throw new Error("nul");
-    value = JSON.parse(body);
+    value = decodeStrictJsonBody(bytes);
   } catch {
     throw new CategoryRequestError(400, "invalid_request");
   }
   if (!isStoreCategorySelectionRequest(value)) throw new CategoryRequestError(400, "invalid_request");
   return value;
-}
-
-function sendJson(response: ServerResponse, status: number, payload: unknown): void {
-  if (response.destroyed || response.headersSent) return;
-  response.writeHead(status, {
-    "cache-control": "no-store",
-    "content-type": "application/json; charset=utf-8",
-    "x-content-type-options": "nosniff",
-  });
-  response.end(JSON.stringify(payload));
 }

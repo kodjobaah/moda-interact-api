@@ -19,7 +19,7 @@ Current health endpoints return `200 {"status":"ok"}`, `200 {"status":"ready"}`,
 or readiness `503 {"status":"not_ready"}` with `Cache-Control: no-store`.
 Wrong-method health requests are not short-circuited and normally produce 404.
 The new `tests/unit/http/route-dispatch.test.ts` characterizes this sequence.
-`src/server.test.ts` additionally covers timeout, lifecycle and database failure.
+`tests/unit/http/server.test.ts` additionally covers timeout, lifecycle and database failure.
 
 ## Route and contract inventory
 
@@ -28,8 +28,8 @@ All paths below are from inspected handlers or OpenAPI v1 files. Method matters:
 
 | Method | Path | Current owner | Existing OpenAPI v1 | Existing test anchor |
 | --- | --- | --- | --- | --- |
-| GET | `/health/live` | `server.ts` | not published in OpenAPI | `src/server.test.ts` |
-| GET | `/health/ready` | `server.ts` | not published in OpenAPI | `src/server.test.ts` |
+| GET | `/health/live` | `server.ts` | not published in OpenAPI | `tests/unit/http/server.test.ts` |
+| GET | `/health/ready` | `server.ts` | not published in OpenAPI | `tests/unit/http/server.test.ts` |
 | POST | `/v1/woocommerce/installations/connect` | installation router | `woocommerce-installation-v1.yaml` | `woocommerce/installation/routes.test.ts`, `connection-service.postgres.test.ts` |
 | GET | `/v1/woocommerce/installation` | installation router | `woocommerce-installation-v1.yaml` | `tests/unit/auth/woo-installation/authenticator.test.ts`, `routes.test.ts` |
 | POST | `/v1/woocommerce/read-authorizations` | REST-read router | `woocommerce-read-authorization-v1.yaml` | `woocommerce/rest-read/authorization.routes.test.ts` |
@@ -49,13 +49,13 @@ All paths below are from inspected handlers or OpenAPI v1 files. Method matters:
 | POST | `/v1/merchant/store-category` | category-selection router via installation | `merchant-store-category-selection-v1.yaml` | `merchant/store-categories/selection-routes.test.ts` |
 | GET | `/v1/merchant/discount-catalogue` | discount-offers router via installation | `woocommerce-discount-offers-v1.yaml` | `tests/unit/merchant/discount-offers/routes.test.ts` |
 | GET, PUT | `/v1/merchant/discount-offers` | discount-offers router via installation | `woocommerce-discount-offers-v1.yaml` | `tests/unit/merchant/discount-offers/routes.test.ts` |
-| GET | `/v1/billing` | installation router | `woocommerce-billing-presentation-v1.yaml` | `billing/presentation/billing-read.service.test.ts`, `billing-read.postgres.test.ts`, installation `routes.test.ts` |
-| GET | `/v1/billing/plans` | installation router | `woocommerce-billing-presentation-v1.yaml` | `billing/presentation/plan-catalogue-read.service.test.ts`, installation `routes.test.ts` |
-| GET | `/v1/billing/recovery-credit-purchases` | purchase-history router via installation | `woocommerce-billing-purchase-history-v1.yaml` | `billing/purchase-history/routes.test.ts` |
-| POST | `/v1/billing/recovery-credit-purchases` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `billing/commands/recovery-credit-purchase-command.postgres.test.ts` |
-| POST | `/v1/billing/subscription` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `billing/commands/recurring-subscription-command.postgres.test.ts` |
-| DELETE | `/v1/billing/subscription` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `billing/commands/recurring-subscription-command.postgres.test.ts` |
-| POST | `/v1/billing/subscription/switch` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `billing/commands/recurring-subscription-command.postgres.test.ts` |
+| GET | `/v1/billing` | installation router | `woocommerce-billing-presentation-v1.yaml` | `tests/unit/billing/presentation/billing-read.service.test.ts`, `tests/integration/billing/presentation/billing-read.postgres.test.ts`, installation `routes.test.ts` |
+| GET | `/v1/billing/plans` | installation router | `woocommerce-billing-presentation-v1.yaml` | `tests/unit/billing/presentation/plan-catalogue-read.service.test.ts`, installation `routes.test.ts` |
+| GET | `/v1/billing/recovery-credit-purchases` | purchase-history router via installation | `woocommerce-billing-purchase-history-v1.yaml` | `tests/unit/billing/purchase-history/routes.test.ts` |
+| POST | `/v1/billing/recovery-credit-purchases` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `tests/integration/billing/commands/recovery-credit-purchase-command.postgres.test.ts` |
+| POST | `/v1/billing/subscription` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `tests/integration/billing/commands/recurring-subscription-command.postgres.test.ts` |
+| DELETE | `/v1/billing/subscription` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `tests/integration/billing/commands/recurring-subscription-command.postgres.test.ts` |
+| POST | `/v1/billing/subscription/switch` | installation router | `woocommerce-billing-commands-v1.yaml` | installation `routes.test.ts`, `tests/integration/billing/commands/recurring-subscription-command.postgres.test.ts` |
 
 Current unhandled method/path falls through to `404`. There is no automatic
 `405 Method Not Allowed` negotiation. Do not change this during the refactor.
@@ -64,7 +64,7 @@ Current unhandled method/path falls through to `404`. There is no automatic
 
 | Boundary | Proof and authoritative identity | Negative cases / existing tests |
 | --- | --- | --- |
-| Public health | No caller auth; readiness probes database on GET only | `src/server.test.ts`, `tests/unit/http/route-dispatch.test.ts` |
+| Public health | No caller auth; readiness probes database on GET only | `tests/unit/http/server.test.ts`, `tests/unit/http/route-dispatch.test.ts` |
 | Woo connection | Exact bounded JSON connect body with bootstrap secret, verified site-control HMAC challenge and canonical site URL; no pre-existing installation bearer | `woocommerce/installation/routes.test.ts`, `site-verifier.test.ts`, `connection-service.test.ts` |
 | Merchant / billing / REST-read grant administration | Exactly one `X-Moda-Installation-Id` and one `Authorization: Bearer <43-character base64url>` in `rawHeaders`; digest lookup against active Woo installation and active Woo shop | `tests/unit/auth/woo-installation/authenticator.test.ts`, `tests/unit/auth/woo-installation/authentication-contract.test.ts` |
 | Signed Woo billing webhook | HMAC SHA-256 over raw request body, unique signature header, bounded body and validated topic; not an installation bearer | `woocommerce/billing/webhooks/webhook-route.test.ts`, `webhook-payload.test.ts`, `webhook-receipt.service.postgres.test.ts` |
@@ -116,8 +116,8 @@ credential; this baseline makes no assertion about an already in-flight command.
   webhook tests assert the error contracts.
 - Billing command replays, idempotency, provider outcomes/failures and durable
   purchasing evidence are covered by:
-  `src/billing/commands/recurring-subscription-command.postgres.test.ts` and
-  `src/billing/commands/recovery-credit-purchase-command.postgres.test.ts`.
+  `tests/integration/billing/commands/recurring-subscription-command.postgres.test.ts` and
+  `tests/integration/billing/commands/recovery-credit-purchase-command.postgres.test.ts`.
   Billing read consistency is covered by
   `tests/integration/billing/presentation/billing-read.postgres.test.ts`.
   Run all three through `scripts/test-arch041-billing-postgres.mjs`, which uses
