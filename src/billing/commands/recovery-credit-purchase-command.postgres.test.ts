@@ -623,3 +623,48 @@ test("PostgreSQL transaction rolls back the purchase when operation creation fai
   assert.equal(await db.recoveryCreditPurchase.count({ where: { shopId: shop.shopId } }), 0);
   assert.equal(providerCalls, 0);
 });
+test("PostgreSQL same request key is scoped to Shop and cannot double-charge while the first provider call is in flight", {
+  skip: !databaseUrl,
+}, async () => {
+  const db = database();
+  const { catalogue, plan } = await createCatalogue("request-key-scope", "FREE");
+  const shopA = await createShop("request-key-a", plan.id, "FREE");
+  const shopB = await createShop("request-key-b", plan.id, "FREE");
+  const bundle = await createBundle(catalogue.id, "Key scope", 0);
+  const requestKey = `same-request-key-${suffix}`;
+  let releaseProvider!: () => void;
+  let providerStarted!: () => void;
+  const providerGate = new Promise<void>((resolve) => { releaseProvider = resolve; });
+  const providerReady = new Promise<void>((resolve) => { providerStarted = resolve; });
+  let providerCalls = 0;
+  const service = billingService({
+    createCharge: async () => {
+      providerCalls += 1;
+      providerStarted();
+      await providerGate;
+      return { id: randomUUID(), confirmation_url: "https://woocommerce.com/checkout/key-scope" };
+    },
+  });
+  const first = service.initiate(principal(shopA.shopId, shopA.domain), requestKey, bundle.id);
+  await providerReady;
+  try {
+    await assertCommandError(
+      service.initiate(principal(shopA.shopId, shopA.domain), requestKey, bundle.id),
+      "billing_operation_in_progress",
+      409,
+    );
+    assert.equal(providerCalls, 1, "replaying an in-flight key cannot initiate another charge");
+    assert.equal(await db.billingOperation.count({ where: { shopId: shopA.shopId } }), 1);
+    assert.equal(await db.recoveryCreditPurchase.count({ where: { shopId: shopA.shopId } }), 1);
+  } finally {
+    releaseProvider();
+  }
+  const resultA = await first;
+  const resultB = await service.initiate(principal(shopB.shopId, shopB.domain), requestKey, bundle.id);
+  assert.equal(resultA.state, "AWAITING_CONFIRMATION");
+  assert.equal(resultB.state, "AWAITING_CONFIRMATION");
+  assert.notEqual(resultA.purchaseId, resultB.purchaseId);
+  assert.equal(providerCalls, 2, "distinct shops own independent request-key namespaces");
+  assert.equal(await db.billingOperation.count({ where: { shopId: shopB.shopId } }), 1);
+  assert.equal(await db.recoveryCreditPurchase.count({ where: { shopId: shopB.shopId } }), 1);
+});
