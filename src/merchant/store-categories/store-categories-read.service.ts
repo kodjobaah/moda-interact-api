@@ -1,5 +1,5 @@
 import { CommerceEnvironment, type PrismaClient } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { readSelectableCategories } from "./catalogue-read.js";
 import { categoryPresentationLocale, StoreCategoryReadError } from "./locale.js";
 import { readStoreCategoryProfile } from "./profile-read.js";

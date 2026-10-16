@@ -11,7 +11,7 @@ import {
   SubscriptionProjectionStatus,
   type BillingOperation,
 } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../../../src/woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
 import {
   RecoveryCreditPurchaseCommandError,
   RecoveryCreditPurchaseCommandService,

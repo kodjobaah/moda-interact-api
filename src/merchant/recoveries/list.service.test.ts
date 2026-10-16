@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { MerchantRecoveryListService } from "./list.service.js";
 import { RecoveryListIntegrityError } from "./contract.js";
 import { isRecoveryListResponse } from "./schema.js";

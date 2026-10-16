@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import {
   PurchaseHistoryError, WOO_ORDERS_REFUND_URL,
   type PurchaseHistoryQuery, type PurchaseHistoryResponse,

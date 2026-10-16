@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage } from "node:http";
 import test from "node:test";
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../../../src/merchant/bootstrap/bootstrap-read.service.js";
 import { createMerchantBootstrapRoute, MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../../../src/merchant/bootstrap/routes.js";
-import { WooUnauthenticatedError } from "../../../../src/woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 
 const principal = {
   installationId: "installation_verified",

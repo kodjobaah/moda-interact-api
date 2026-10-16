@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import type { ModaSupportedLanguageTag } from "@modainteract/moda-interact-shared/internationalization";
-import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../installation/authenticator.js";
+import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { WooReadAuthorizationError, WooReadAuthorizationService, type WooCallbackPayload } from "./authorization.service.js";
 import { renderWooReadReturnPage } from "./return-page.js";
 

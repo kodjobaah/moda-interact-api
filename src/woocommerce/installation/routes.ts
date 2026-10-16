@@ -27,13 +27,13 @@ import type { createStoreCategorySelectionRoute } from "../../merchant/store-cat
 import type { MerchantStoreContextService } from "../../merchant/store-context/store-context.service.js";
 import { createMerchantStoreContextRoute } from "../../merchant/store-context/routes.js";
 export { MERCHANT_STORE_CONTEXT_ROUTE_PATH, MAX_STORE_CONTEXT_BODY_BYTES } from "../../merchant/store-context/routes.js";
-import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
+import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
 import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
 } from "../billing/initial-free-activation.service.js";
-import { decodeSecret } from "./credential.js";
+import { decodeSecret } from "../../auth/woo-installation/credential.js";
 import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode } from "./site-url.js";
 
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";

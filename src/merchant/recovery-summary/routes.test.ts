@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { WooUnauthenticatedError } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { createMerchantRecoverySummaryRoute } from "./routes.js";
 
 const principal = {

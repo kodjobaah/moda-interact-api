@@ -3,7 +3,7 @@ import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
 import { MerchantDiscountOffersService } from "../../../../src/merchant/discount-offers/service.js";
 import { DiscountOffersError } from "../../../../src/merchant/discount-offers/contract.js";
-import type { WooInstallationPrincipal } from "../../../../src/woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
 
 const now = new Date("2026-10-15T12:00:00Z");
 const principal: WooInstallationPrincipal = { shopId: "woo-shop", installationId: "installation",

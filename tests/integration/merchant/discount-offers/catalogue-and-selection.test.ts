@@ -5,7 +5,7 @@ import {PrismaClient} from "@prisma/client";
 import {MerchantDiscountOffersService} from "../../../../src/merchant/discount-offers/service.js";
 import {MerchantRecoverySummaryService} from "../../../../src/merchant/recovery-summary/recovery-summary.service.js";
 import {DiscountOffersError} from "../../../../src/merchant/discount-offers/contract.js";
-import type {WooInstallationPrincipal} from "../../../../src/woocommerce/installation/authenticator.js";
+import type {WooInstallationPrincipal} from "../../../../src/auth/woo-installation/principal.js";
 
 const url=process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 

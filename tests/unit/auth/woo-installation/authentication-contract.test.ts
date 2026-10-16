@@ -4,8 +4,8 @@ import test from "node:test";
 import {
   WooInstallationAuthenticator,
   WooUnauthenticatedError,
-} from "../../../../src/woocommerce/installation/authenticator.js";
-import { digestSecret } from "../../../../src/woocommerce/installation/credential.js";
+} from "../../../../src/auth/woo-installation/authenticator.js";
+import { digestSecret } from "../../../../src/auth/woo-installation/credential.js";
 
 const firstCredential = Buffer.alloc(32, 18);
 const rotatedCredential = Buffer.alloc(32, 23);

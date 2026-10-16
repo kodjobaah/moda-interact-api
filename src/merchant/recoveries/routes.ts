@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { RecoveryListIntegrityError } from "./contract.js";
 import { InvalidRecoveryListQuery } from "./query.js";
 import { isRecoveryListResponse } from "./schema.js";

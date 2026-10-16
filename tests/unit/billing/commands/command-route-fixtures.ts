@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { createBillingCommandRoutes } from "../../../../src/billing/commands/routes.js";
-import { WooUnauthenticatedError } from "../../../../src/woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 
 export const authorizedHeaders = {
   "x-moda-installation-id": "authenticated-installation",

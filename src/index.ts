@@ -24,7 +24,7 @@ import { StoreCategorySelectionService } from "./merchant/store-categories/store
 import { createStoreCategorySelectionRoute } from "./merchant/store-categories/selection-routes.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
-import { WooInstallationAuthenticator } from "./woocommerce/installation/authenticator.js";
+import { WooInstallationAuthenticator } from "./auth/woo-installation/authenticator.js";
 import { WooInstallationConnectionService } from "./woocommerce/installation/connection-service.js";
 import { createWooInstallationRoutes } from "./woocommerce/installation/routes.js";
 import { WooSiteVerifier } from "./woocommerce/installation/site-verifier.js";

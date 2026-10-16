@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import test, { after } from "node:test";
 import { MerchantBootstrapReadService } from "../bootstrap/bootstrap-read.service.js";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { MerchantStoreContextConflictError, MerchantStoreContextService } from "./store-context.service.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;

@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
-import { digestSecret } from "../installation/credential.js";
+import { digestSecret } from "../../auth/woo-installation/credential.js";
 import { WooReadAuthorizationService } from "./authorization.service.js";
 import { WooReadCredentialVerifier } from "./credential-verifier.js";
 import { loadWooRestReadAuthorizationConfig } from "./config.js";

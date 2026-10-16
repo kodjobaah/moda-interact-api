@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import test, { after } from "node:test";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { MerchantBootstrapReadService } from "./bootstrap-read.service.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;

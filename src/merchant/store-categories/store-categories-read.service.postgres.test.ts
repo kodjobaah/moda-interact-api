@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { CommerceEnvironment, PrismaClient } from "@prisma/client";
 import test, { after } from "node:test";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { StoreCategoriesReadService } from "./store-categories-read.service.js";
 import { StoreCategoryReadError } from "./locale.js";
 

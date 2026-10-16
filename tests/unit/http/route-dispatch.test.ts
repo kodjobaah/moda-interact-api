@@ -5,7 +5,7 @@ import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createWooPurchaseHistoryRoute } from "../../../src/billing/purchase-history/routes.js";
 import { loadRuntimeConfig } from "../../../src/runtime-config.js";
 import { createApiRuntime } from "../../../src/server.js";
-import { WooUnauthenticatedError } from "../../../src/woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../../src/auth/woo-installation/authenticator.js";
 import {
   createWooInstallationRoutes,
   BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH,

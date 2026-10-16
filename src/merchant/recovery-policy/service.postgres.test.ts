@@ -4,7 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import test from "node:test";
 import { MerchantRecoveryPolicyService } from "./service.js";
 import { RecoveryPolicyConflictError, RecoveryPolicyIntegrityError } from "./contract.js";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 

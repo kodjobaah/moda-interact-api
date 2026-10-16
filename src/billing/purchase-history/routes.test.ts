@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
-import { WooUnauthenticatedError } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { createWooPurchaseHistoryRoute, WOO_PURCHASE_HISTORY_ROUTE_PATH } from "./routes.js";
 
 async function withEndpoint(fn: (origin: string, calls: unknown[]) => Promise<void>): Promise<void> {

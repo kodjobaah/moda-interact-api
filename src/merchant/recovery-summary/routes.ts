@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { RecoverySummaryIntegrityError, type MerchantRecoverySummaryService } from "./recovery-summary.service.js";
 
 export const MERCHANT_RECOVERY_SUMMARY_ROUTE_PATH = "/v1/merchant/recovery-summary";

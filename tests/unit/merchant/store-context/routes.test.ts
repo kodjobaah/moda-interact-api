@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import test from "node:test";
 import { PassThrough } from "node:stream";
-import { WooUnauthenticatedError } from "../../../../src/woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import { MAX_STORE_CONTEXT_BODY_BYTES, MERCHANT_STORE_CONTEXT_ROUTE_PATH, createMerchantStoreContextRoute } from "../../../../src/merchant/store-context/routes.js";
 import { MerchantStoreContextConflictError } from "../../../../src/merchant/store-context/store-context.service.js";
 import type { MerchantStoreContextSnapshot } from "../../../../src/merchant/store-context/schema.js";

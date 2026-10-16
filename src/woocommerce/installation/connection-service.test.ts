@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { WooInstallationConnectionService, WooConnectionConflictError, WooSiteControlRejectedError } from "./connection-service.js";
-import { digestSecret } from "./credential.js";
+import { digestSecret } from "../../auth/woo-installation/credential.js";
 import { canonicalizeWooSiteUrl } from "./site-url.js";
 import { SiteVerificationError } from "./site-verifier.js";
 

@@ -4,7 +4,7 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { MerchantDiscountOffersService } from "../../../../src/merchant/discount-offers/service.js";
-import type { WooInstallationPrincipal } from "../../../../src/woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
 
 const url = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 

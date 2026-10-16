@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { BillingPresentationError } from "./billing-read.service.js";
 
 export interface BillingPlanCatalogueResponse {

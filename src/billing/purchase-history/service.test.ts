@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { WooPurchaseHistoryReadService } from "./service.js";
 import { projectPurchase } from "./projection.js";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 
 const principal: WooInstallationPrincipal = {
   installationId: "installation-1", shopId: "shop-1", canonicalSiteUrl: "https://merchant.example/", credentialVersion: 1,

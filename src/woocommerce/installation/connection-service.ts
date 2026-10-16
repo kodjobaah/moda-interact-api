@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { FreePlanDatabase } from "../billing/free-plan-preparation.service.js";
 import type { CanonicalWooSite } from "./site-url.js";
-import { digestSecret, encodeSecret, randomSecret } from "./credential.js";
+import { digestSecret, encodeSecret, randomSecret } from "../../auth/woo-installation/credential.js";
 import { SiteVerificationError, WooSiteVerifier } from "./site-verifier.js";
 import {
   FreePlanConfigurationUnavailableError,

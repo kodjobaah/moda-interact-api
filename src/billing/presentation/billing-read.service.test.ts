@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { BillingPresentationError, BillingPresentationReadService } from "./billing-read.service.js";
 
 const principal: WooInstallationPrincipal = {

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MerchantRecoveryPolicyService } from "./service.js";
 import { RecoveryPolicyConflictError, RecoveryPolicyIntegrityError, type RecoveryPolicyUpdate } from "./contract.js";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 
 const now = new Date("2026-10-12T10:00:00.000Z");
 const principal: WooInstallationPrincipal = {

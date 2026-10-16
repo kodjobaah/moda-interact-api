@@ -8,7 +8,7 @@ import {
   MerchantPricingPlanKind,
   SubscriptionProjectionStatus,
 } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import type { BillingSnapshotReader } from "./billing-snapshot.reader.js";
 import { BillingPresentationError, type BillingPresentationResponse, type ExperienceState } from "./billing-presentation.contract.js";
 import {

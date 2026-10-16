@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../woocommerce/installation/authenticator.js";
+import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { PurchaseHistoryError, type PageSize, type PurchaseFilter, type PurchaseHistoryQuery } from "./contract.js";
 import { WooPurchaseHistoryReadService } from "./service.js";
 import { isWooPurchaseHistoryResponse } from "./schema.js";

@@ -31,7 +31,7 @@ All paths below are from inspected handlers or OpenAPI v1 files. Method matters:
 | GET | `/health/live` | `server.ts` | not published in OpenAPI | `src/server.test.ts` |
 | GET | `/health/ready` | `server.ts` | not published in OpenAPI | `src/server.test.ts` |
 | POST | `/v1/woocommerce/installations/connect` | installation router | `woocommerce-installation-v1.yaml` | `woocommerce/installation/routes.test.ts`, `connection-service.postgres.test.ts` |
-| GET | `/v1/woocommerce/installation` | installation router | `woocommerce-installation-v1.yaml` | `woocommerce/installation/authenticator.test.ts`, `routes.test.ts` |
+| GET | `/v1/woocommerce/installation` | installation router | `woocommerce-installation-v1.yaml` | `tests/unit/auth/woo-installation/authenticator.test.ts`, `routes.test.ts` |
 | POST | `/v1/woocommerce/read-authorizations` | REST-read router | `woocommerce-read-authorization-v1.yaml` | `woocommerce/rest-read/authorization.routes.test.ts` |
 | GET, DELETE | `/v1/woocommerce/read-authorization` | REST-read router | `woocommerce-read-authorization-v1.yaml` | `woocommerce/rest-read/authorization.routes.test.ts` |
 | POST | `/v1/woocommerce/read-authorizations/callback/{opaqueAttemptToken}` | REST-read router | `woocommerce-read-authorization-v1.yaml` | `woocommerce/rest-read/authorization.routes.test.ts`, `authorization.postgres.test.ts` |
@@ -66,7 +66,7 @@ Current unhandled method/path falls through to `404`. There is no automatic
 | --- | --- | --- |
 | Public health | No caller auth; readiness probes database on GET only | `src/server.test.ts`, `tests/unit/http/route-dispatch.test.ts` |
 | Woo connection | Exact bounded JSON connect body with bootstrap secret, verified site-control HMAC challenge and canonical site URL; no pre-existing installation bearer | `woocommerce/installation/routes.test.ts`, `site-verifier.test.ts`, `connection-service.test.ts` |
-| Merchant / billing / REST-read grant administration | Exactly one `X-Moda-Installation-Id` and one `Authorization: Bearer <43-character base64url>` in `rawHeaders`; digest lookup against active Woo installation and active Woo shop | `woocommerce/installation/authenticator.test.ts`, `tests/unit/auth/woo-installation/authentication-contract.test.ts` |
+| Merchant / billing / REST-read grant administration | Exactly one `X-Moda-Installation-Id` and one `Authorization: Bearer <43-character base64url>` in `rawHeaders`; digest lookup against active Woo installation and active Woo shop | `tests/unit/auth/woo-installation/authenticator.test.ts`, `tests/unit/auth/woo-installation/authentication-contract.test.ts` |
 | Signed Woo billing webhook | HMAC SHA-256 over raw request body, unique signature header, bounded body and validated topic; not an installation bearer | `woocommerce/billing/webhooks/webhook-route.test.ts`, `webhook-payload.test.ts`, `webhook-receipt.service.postgres.test.ts` |
 | Woo REST-read callback | One-time opaque callback token, strict read-only provider payload, persisted attempt/grant checks; not a bearer principal | `woocommerce/rest-read/authorization.routes.test.ts`, `authorization.postgres.test.ts` |
 | Browser return | Informational GET only; not evidence of permission, grant or provider state | `woocommerce/rest-read/authorization.routes.test.ts`, `return-page.test.ts` |
@@ -74,7 +74,8 @@ Current unhandled method/path falls through to `404`. There is no automatic
 
 ### `WooInstallationAuthenticator` contract for API-014
 
-Located at `src/woocommerce/installation/authenticator.ts` in this baseline:
+Originally located at `src/woocommerce/installation/authenticator.ts` in the API-001 baseline;
+API-014 relocates the unchanged authenticator to `src/auth/woo-installation/authenticator.ts`:
 
 - Reads **raw**, not normalized, request headers; exactly one of each required header.
 - Installation ID is `[A-Za-z0-9_-]{1,128}`; bearer is strictly `Bearer ` plus
@@ -88,10 +89,10 @@ Located at `src/woocommerce/installation/authenticator.ts` in this baseline:
 - Returns only `{ installationId, shopId, canonicalSiteUrl, credentialVersion }`
   from the database row, never client-selected tenant metadata.
 - Secret representation: 32 random bytes, canonical 43-character base64url,
-  SHA-256 digest, and constant-time digest equality in `credential.ts`.
-- `credential.ts` ALSO implements Woo Connect HMAC site proof
-  (`createSiteProof`, `verifySiteProof`); those functions remain Woo-specific
-  and are separated in API-014, without changing the authenticated bytes.
+  SHA-256 digest, and constant-time digest equality in `src/auth/woo-installation/credential.ts`.
+- `src/woocommerce/installation/credential.ts` originally also implemented the
+  Woo Connect HMAC site proof. API-014 moves those functions to
+  `src/woocommerce/installation/site-proof.ts`, preserving authenticated bytes.
 - Existing direct consumers include Woo installation routes, Woo REST-read grant
   routes, merchant recovery summary/policy/list/detail, category routes and
   selection, discount offers, billing purchase history, and service principal

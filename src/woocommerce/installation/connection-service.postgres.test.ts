@@ -7,7 +7,7 @@ import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
 } from "../billing/initial-free-activation.service.js";
-import { digestSecret } from "./credential.js";
+import { digestSecret } from "../../auth/woo-installation/credential.js";
 import { WooSiteVerifier } from "./site-verifier.js";
 import { canonicalizeWooSiteUrl } from "./site-url.js";
 
