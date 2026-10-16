@@ -1,15 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { RecurringBillingCommandError, RecurringSubscriptionCommandService } from "../../billing/commands/recurring-subscription-command.service.js";
-import {
-  RecoveryCreditPurchaseCommandError,
-  RecoveryCreditPurchaseCommandService,
-} from "../../billing/commands/recovery-credit-purchase-command.service.js";
-import { validateIdempotencyKey } from "../../billing/commands/recurring-command-primitives.js";
+import type { RecurringSubscriptionCommandService } from "../../billing/commands/recurring-subscription-command.service.js";
+import type { RecoveryCreditPurchaseCommandService } from "../../billing/commands/recovery-credit-purchase-command.service.js";
 import type { BillingPresentationReadService } from "../../billing/presentation/billing-read.service.js";
 import type { BillingPlanCatalogueReadService } from "../../billing/presentation/plan-catalogue-read.service.js";
 import { createBillingReadRoutes } from "../../billing/presentation/routes.js";
+import { createBillingCommandRoutes } from "../../billing/commands/routes.js";
+export {
+  BILLING_SUBSCRIPTION_ROUTE_PATH,
+  BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH,
+  BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH,
+} from "../../billing/commands/routes.js";
 export { BILLING_PRESENTATION_ROUTE_PATH, BILLING_PLANS_ROUTE_PATH } from "../../billing/presentation/routes.js";
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
@@ -35,9 +37,6 @@ export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
 export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";
 export const MERCHANT_STORE_CONTEXT_ROUTE_PATH = "/v1/merchant/store-context";
-export const BILLING_SUBSCRIPTION_ROUTE_PATH = "/v1/billing/subscription";
-export const BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH = "/v1/billing/subscription/switch";
-export const BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH = "/v1/billing/recovery-credit-purchases";
 export const MAX_CONNECT_BODY_BYTES = 8192;
 export const MAX_STORE_CONTEXT_BODY_BYTES = 2048;
 export const MAX_SITE_URL_BYTES = 512;
@@ -94,6 +93,13 @@ export function createWooInstallationRoutes({
   const billingReadRoutes = createBillingReadRoutes({
     ...(billingReadService ? { billingReadService } : {}),
     ...(billingPlanCatalogueReadService ? { billingPlanCatalogueReadService } : {}),
+    authenticator,
+    logger,
+    now,
+  });
+  const billingCommandRoutes = createBillingCommandRoutes({
+    ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),
+    ...(recoveryCreditPurchaseCommandService ? { recoveryCreditPurchaseCommandService } : {}),
     authenticator,
     logger,
     now,
@@ -237,118 +243,7 @@ export function createWooInstallationRoutes({
         return true;
       }
 
-      if (
-        requestUrl.pathname === BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH && request.method === "POST"
-      ) {
-        const startedAt = now();
-        try {
-          const principal = await authenticator.authenticate(request);
-          const idempotencyHeader = singleHeader(request, "idempotency-key");
-          const requestKey = idempotencyHeader.count === 1 ? validateIdempotencyKey(idempotencyHeader.value) : null;
-          if (!requestKey) throw new HttpFailure(400, "invalid_idempotency_key");
-          if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
-          const merchantPricingUsageEventId = await parseRecoveryCreditPurchaseRequest(request);
-          if (!recoveryCreditPurchaseCommandService) {
-            throw new RecoveryCreditPurchaseCommandError(503, "billing_provider_unavailable");
-          }
-          const result = await recoveryCreditPurchaseCommandService.initiate(
-            principal,
-            requestKey,
-            merchantPricingUsageEventId,
-          );
-          logger.info("billing.recovery_credit_purchase.command", {
-            shopId: principal.shopId,
-            purchaseId: result.purchaseId,
-            operationId: result.operationId,
-            state: result.state,
-            outcome: "success",
-            durationMs: Math.max(0, now() - startedAt),
-          });
-          sendJson(response, result.state === "CONFIRMED" ? 200 : 202, result);
-        } catch (error) {
-          if (error instanceof WooUnauthenticatedError) {
-            sendError(response, 401, "unauthorized");
-          } else if (error instanceof HttpFailure) {
-            sendError(response, error.statusCode, error.code);
-          } else if (error instanceof RecoveryCreditPurchaseCommandError) {
-            logger.warn("billing.recovery_credit_purchase.command.failed", {
-              reason: error.code,
-              operationId: error.operationId ?? null,
-              durationMs: Math.max(0, now() - startedAt),
-            });
-            sendError(
-              response,
-              error.statusCode,
-              error.code,
-              error.operationId,
-              error.safeProviderCode,
-              error.purchaseId,
-            );
-          } else {
-            logger.error("billing.recovery_credit_purchase.command.failed", { reason: "internal" });
-            sendError(response, 500, "internal_error");
-          }
-        }
-        return true;
-      }
-
-      if (
-        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH && request.method === "POST") ||
-        (requestUrl.pathname === BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH && request.method === "POST") ||
-        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH && request.method === "DELETE")
-      ) {
-        const startedAt = now();
-        try {
-          const principal = await authenticator.authenticate(request);
-          const idempotencyHeader = singleHeader(request, "idempotency-key");
-          const requestKey = idempotencyHeader.count === 1 ? validateIdempotencyKey(idempotencyHeader.value) : null;
-          if (!requestKey) throw new HttpFailure(400, "invalid_idempotency_key");
-          if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
-
-          let result;
-          if (request.method === "DELETE") {
-            if (requestHasBody(request)) throw new HttpFailure(400, "invalid_request");
-            if (!recurringSubscriptionCommandService) {
-              throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
-            }
-            result = await recurringSubscriptionCommandService.cancel(principal, requestKey);
-          } else {
-            const merchantPricingPlanId = await parseRecurringPlanRequest(request);
-            if (!recurringSubscriptionCommandService) {
-              throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
-            }
-            result = requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH
-              ? await recurringSubscriptionCommandService.create(principal, requestKey, merchantPricingPlanId)
-              : await recurringSubscriptionCommandService.switchPlan(principal, requestKey, merchantPricingPlanId);
-          }
-          logger.info("billing.recurring.command", {
-            shopId: principal.shopId,
-            operationId: result.operationId,
-            kind: result.kind,
-            state: result.state,
-            outcome: "success",
-            durationMs: Math.max(0, now() - startedAt),
-          });
-          sendJson(response, result.state === "CONFIRMED" ? 200 : 202, result);
-        } catch (error) {
-          if (error instanceof WooUnauthenticatedError) {
-            sendError(response, 401, "unauthorized");
-          } else if (error instanceof HttpFailure) {
-            sendError(response, error.statusCode, error.code);
-          } else if (error instanceof RecurringBillingCommandError) {
-            logger.warn("billing.recurring.command.failed", {
-              reason: error.code,
-              operationId: error.operationId ?? null,
-              durationMs: Math.max(0, now() - startedAt),
-            });
-            sendError(response, error.statusCode, error.code, error.operationId, error.safeProviderCode);
-          } else {
-            logger.error("billing.recurring.command.failed", { reason: "internal" });
-            sendError(response, 500, "internal_error");
-          }
-        }
-        return true;
-      }
+      if (await billingCommandRoutes.handle(request, response)) return true;
 
       return false;
     },
@@ -433,70 +328,6 @@ async function parseStoreContextRequest(request: IncomingMessage): Promise<Merch
   return body;
 }
 
-async function parseRecurringPlanRequest(request: IncomingMessage): Promise<string> {
-  const contentType = singleHeader(request, "content-type");
-  const contentEncoding = singleHeader(request, "content-encoding");
-  const contentLength = singleHeader(request, "content-length");
-  if (
-    contentType.count !== 1 ||
-    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType.value ?? "") ||
-    contentEncoding.count > 1 ||
-    (contentEncoding.count === 1 && contentEncoding.value?.toLowerCase() !== "identity") ||
-    contentLength.count > 1 ||
-    (contentLength.count === 1 && !/^\d+$/.test(contentLength.value ?? ""))
-  ) throw new HttpFailure(400, "invalid_request");
-
-  const bytes = await readBoundedBody(request);
-  let value: unknown;
-  try {
-    const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (bodyText.includes("\0")) throw new Error("nul");
-    value = JSON.parse(bodyText);
-  } catch {
-    throw new HttpFailure(400, "invalid_request");
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpFailure(400, "invalid_request");
-  const body = value as Record<string, unknown>;
-  if (
-    Object.keys(body).length !== 1 || Object.keys(body)[0] !== "merchantPricingPlanId" ||
-    typeof body.merchantPricingPlanId !== "string" || body.merchantPricingPlanId.length < 1 ||
-    body.merchantPricingPlanId.length > 128
-  ) throw new HttpFailure(400, "invalid_request");
-  return body.merchantPricingPlanId;
-}
-
-async function parseRecoveryCreditPurchaseRequest(request: IncomingMessage): Promise<string> {
-  const contentType = singleHeader(request, "content-type");
-  const contentEncoding = singleHeader(request, "content-encoding");
-  const contentLength = singleHeader(request, "content-length");
-  if (
-    contentType.count !== 1 ||
-    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType.value ?? "") ||
-    contentEncoding.count > 1 ||
-    (contentEncoding.count === 1 && contentEncoding.value?.toLowerCase() !== "identity") ||
-    contentLength.count > 1 ||
-    (contentLength.count === 1 && !/^\d+$/.test(contentLength.value ?? ""))
-  ) throw new HttpFailure(400, "invalid_request");
-
-  const bytes = await readBoundedBody(request);
-  let value: unknown;
-  try {
-    const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (bodyText.includes("\0")) throw new Error("nul");
-    value = JSON.parse(bodyText);
-  } catch {
-    throw new HttpFailure(400, "invalid_request");
-  }
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpFailure(400, "invalid_request");
-  const body = value as Record<string, unknown>;
-  if (
-    Object.keys(body).length !== 1 || Object.keys(body)[0] !== "merchantPricingUsageEventId" ||
-    typeof body.merchantPricingUsageEventId !== "string" ||
-    body.merchantPricingUsageEventId.length < 1 || body.merchantPricingUsageEventId.length > 128
-  ) throw new HttpFailure(400, "invalid_request");
-  return body.merchantPricingUsageEventId;
-}
-
 function readBoundedBody(request: IncomingMessage, maximumBytes = MAX_CONNECT_BODY_BYTES): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
@@ -551,16 +382,6 @@ function singleHeader(request: IncomingMessage, name: string): { count: number; 
     : { count: values.length };
 }
 
-function requestHasBody(request: IncomingMessage): boolean {
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    const name = request.rawHeaders[index]?.toLowerCase();
-    const value = request.rawHeaders[index + 1];
-    if (name === "transfer-encoding") return true;
-    if (name === "content-length" && value !== undefined && (!/^\d+$/.test(value) || Number(value) > 0)) return true;
-  }
-  return false;
-}
-
 class HttpFailure extends Error {
   constructor(readonly statusCode: number, readonly code: string) {
     super(code);
@@ -574,20 +395,8 @@ function sendNoContent(response: ServerResponse): void {
   response.end();
 }
 
-function sendError(
-  response: ServerResponse,
-  statusCode: number,
-  code: string,
-  operationId?: string,
-  safeProviderCode?: string,
-  purchaseId?: string,
-): void {
-  sendJson(response, statusCode, {
-    error: code,
-    ...(operationId ? { operationId } : {}),
-    ...(safeProviderCode ? { providerErrorCode: safeProviderCode } : {}),
-    ...(purchaseId ? { purchaseId } : {}),
-  });
+function sendError(response: ServerResponse, statusCode: number, code: string): void {
+  sendJson(response, statusCode, { error: code });
 }
 
 function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {
