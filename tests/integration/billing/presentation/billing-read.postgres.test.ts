@@ -3,10 +3,10 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import test, { after } from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
-import { BillingPresentationError, BillingPresentationReadService, type BillingPresentationDatabase } from "./billing-read.service.js";
-import { BillingPlanCatalogueReadService } from "./plan-catalogue-read.service.js";
-import { publishedPricingTranslations } from "../../../tests/helpers/merchant-pricing-test-fixtures.js";
+import type { WooInstallationPrincipal } from "../../../../src/woocommerce/installation/authenticator.js";
+import { BillingPresentationError, BillingPresentationReadService, type BillingPresentationDatabase } from "../../../../src/billing/presentation/billing-read.service.js";
+import { BillingPlanCatalogueReadService } from "../../../../src/billing/presentation/plan-catalogue-read.service.js";
+import { publishedPricingTranslations } from "../../../helpers/merchant-pricing-test-fixtures.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const suffix = randomUUID();
