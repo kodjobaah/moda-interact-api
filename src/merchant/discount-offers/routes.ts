@@ -1,17 +1,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import { Prisma } from "@prisma/client";
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { DISCOUNT_CATALOGUE_PATH, DISCOUNT_OFFERS_PATH, DiscountOffersError,
   MAX_DISCOUNT_SAVE_BYTES, parseSaveDiscountOffers, readCatalogueQuery } from "./contract.js";
 import type { MerchantDiscountOffersService } from "./service.js";
 
-function sendJson(response: ServerResponse, status: number, result: unknown): void {
-  if (response.destroyed || response.headersSent) return;
-  response.writeHead(status,{"cache-control":"no-store","content-type":"application/json; charset=utf-8",
-    "x-content-type-options":"nosniff"});
-  response.end(JSON.stringify(result));
-}
 
 function requestHasBody(request: IncomingMessage): boolean {
   return request.rawHeaders.some((v,i) => i%2===0 && (

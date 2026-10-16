@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import type { ApiRouteHandler } from "../../http/route-handler.js";
 import type { ModaSupportedLanguageTag } from "@modainteract/moda-interact-shared/internationalization";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { WooReadAuthorizationError, WooReadAuthorizationService, type WooCallbackPayload } from "./authorization.service.js";
@@ -17,15 +18,11 @@ class InvalidCallback extends Error {
   }
 }
 
-export interface WooRestReadRouteHandler {
-  handle(request: IncomingMessage, response: ServerResponse): Promise<boolean>;
-}
-
 export function createWooRestReadAuthorizationRoutes(options: {
   authenticator: WooInstallationAuthenticator;
   service: WooReadAuthorizationService;
   logger: StructuredLogger;
-}): WooRestReadRouteHandler {
+}): ApiRouteHandler {
   return {
     async handle(request, response) {
       const url = new URL(request.url ?? "/", "http://localhost");

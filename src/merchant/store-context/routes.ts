@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import {
   WooUnauthenticatedError,
@@ -65,14 +66,4 @@ function sendNoContent(response: ServerResponse): void {
 
 function sendError(response: ServerResponse, statusCode: number, code: string): void {
   sendJson(response, statusCode, { error: code });
-}
-
-function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {
-  if (response.destroyed || response.headersSent) return;
-  response.writeHead(statusCode, {
-    "cache-control": "no-store",
-    "content-type": "application/json; charset=utf-8",
-    "x-content-type-options": "nosniff",
-  });
-  response.end(JSON.stringify(value));
 }

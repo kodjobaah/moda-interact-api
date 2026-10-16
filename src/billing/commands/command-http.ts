@@ -1,4 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
+import { singleHeader } from "../../http/headers.js";
+import { sendNoStoreJson as sendJson } from "../../http/response.js";
+
+export { singleHeader } from "../../http/headers.js";
+export { sendNoStoreJson as sendJson } from "../../http/response.js";
 
 // Preserve the command request limits and strict decoding from the pre-extraction Woo router.
 const MAX_COMMAND_BODY_BYTES = 8192;
@@ -23,12 +29,12 @@ export async function parseRecurringPlanRequest(request: IncomingMessage): Promi
     (contentLength.count === 1 && !/^\d+$/.test(contentLength.value ?? ""))
   ) throw new HttpFailure(400, "invalid_request");
 
-  const bytes = await readBoundedBody(request);
+  const bytes = await readBoundedBody(request, MAX_COMMAND_BODY_BYTES, (reason) => reason === "oversized"
+    ? new HttpFailure(413, "request_too_large")
+    : new HttpFailure(400, "invalid_request"));
   let value: unknown;
   try {
-    const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (bodyText.includes("\0")) throw new Error("nul");
-    value = JSON.parse(bodyText);
+    value = decodeStrictJsonBody(bytes);
   } catch {
     throw new HttpFailure(400, "invalid_request");
   }
@@ -55,12 +61,12 @@ export async function parseRecoveryCreditPurchaseRequest(request: IncomingMessag
     (contentLength.count === 1 && !/^\d+$/.test(contentLength.value ?? ""))
   ) throw new HttpFailure(400, "invalid_request");
 
-  const bytes = await readBoundedBody(request);
+  const bytes = await readBoundedBody(request, MAX_COMMAND_BODY_BYTES, (reason) => reason === "oversized"
+    ? new HttpFailure(413, "request_too_large")
+    : new HttpFailure(400, "invalid_request"));
   let value: unknown;
   try {
-    const bodyText = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    if (bodyText.includes("\0")) throw new Error("nul");
-    value = JSON.parse(bodyText);
+    value = decodeStrictJsonBody(bytes);
   } catch {
     throw new HttpFailure(400, "invalid_request");
   }
@@ -72,60 +78,6 @@ export async function parseRecoveryCreditPurchaseRequest(request: IncomingMessag
     body.merchantPricingUsageEventId.length < 1 || body.merchantPricingUsageEventId.length > 128
   ) throw new HttpFailure(400, "invalid_request");
   return body.merchantPricingUsageEventId;
-}
-
-function readBoundedBody(request: IncomingMessage, maximumBytes = MAX_COMMAND_BODY_BYTES): Promise<Buffer> {
-  return new Promise((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    const cleanup = () => {
-      request.off("data", onData);
-      request.off("end", onEnd);
-      request.off("aborted", onAbort);
-      request.off("error", onError);
-    };
-    const onData = (chunk: Buffer | string) => {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += bytes.length;
-      if (size > maximumBytes) {
-        cleanup();
-        request.resume();
-        reject(new HttpFailure(413, "request_too_large"));
-        return;
-      }
-      chunks.push(bytes);
-    };
-    const onEnd = () => {
-      cleanup();
-      resolve(Buffer.concat(chunks));
-    };
-    const onAbort = () => {
-      cleanup();
-      reject(new HttpFailure(400, "invalid_request"));
-    };
-    const onError = () => {
-      cleanup();
-      reject(new HttpFailure(400, "invalid_request"));
-    };
-    request.on("data", onData);
-    request.once("end", onEnd);
-    request.once("aborted", onAbort);
-    request.once("error", onError);
-  });
-}
-
-export function singleHeader(request: IncomingMessage, name: string): { count: number; value?: string } {
-  const values: string[] = [];
-  for (let index = 0; index < request.rawHeaders.length; index += 2) {
-    if (request.rawHeaders[index]?.toLowerCase() === name) {
-      const value = request.rawHeaders[index + 1];
-      if (value !== undefined) values.push(value);
-    }
-  }
-  const value = values[0];
-  return values.length === 1 && value !== undefined
-    ? { count: 1, value }
-    : { count: values.length };
 }
 
 export function requestHasBody(request: IncomingMessage): boolean {
@@ -152,14 +104,4 @@ export function sendError(
     ...(safeProviderCode ? { providerErrorCode: safeProviderCode } : {}),
     ...(purchaseId ? { purchaseId } : {}),
   });
-}
-
-export function sendJson(response: ServerResponse, statusCode: number, value: unknown): void {
-  if (response.destroyed || response.headersSent) return;
-  response.writeHead(statusCode, {
-    "cache-control": "no-store",
-    "content-type": "application/json; charset=utf-8",
-    "x-content-type-options": "nosniff",
-  });
-  response.end(JSON.stringify(value));
 }

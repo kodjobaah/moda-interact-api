@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import type { ApiRouteHandler } from "../../../http/route-handler.js";
 import { WooBillingWebhookError } from "./webhook-errors.js";
 import { parseWooBillingWebhookPayload, validateWooBillingWebhookTopic } from "./webhook-payload.js";
 import { WooBillingWebhookReceiptService } from "./webhook-receipt.service.js";
@@ -7,10 +8,6 @@ import { verifyWooWebhookSignature } from "./webhook-signature.js";
 
 export const WOO_BILLING_WEBHOOK_ROUTE_PATH = "/v1/billing/webhooks/woocommerce";
 export const MAX_WOO_BILLING_WEBHOOK_BODY_BYTES = 262144;
-
-export interface WooBillingWebhookRouteHandler {
-  handle(request: IncomingMessage, response: ServerResponse): Promise<boolean>;
-}
 
 interface WooBillingWebhookRouteOptions {
   apiSecret?: string;
@@ -22,7 +19,7 @@ export function createWooBillingWebhookRoute({
   apiSecret,
   receiptService,
   logger,
-}: WooBillingWebhookRouteOptions): WooBillingWebhookRouteHandler {
+}: WooBillingWebhookRouteOptions): ApiRouteHandler {
   return {
     async handle(request, response) {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");

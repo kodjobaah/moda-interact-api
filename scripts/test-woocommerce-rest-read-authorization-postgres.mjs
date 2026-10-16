@@ -42,7 +42,7 @@ try {
   const env = { ...process.env, DATABASE_URL: url, WOO_INSTALLATION_TEST_DATABASE_URL: url };
   // Do not substitute Prisma db push: the accepted migration contains replay and ownership triggers.
   run("npx", ["prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"], { env, stdio: "inherit" });
-  run("node", ["--import", "tsx", "--test", "--test-concurrency=1", "src/woocommerce/rest-read/authorization.postgres.test.ts", "src/woocommerce/rest-read/provider-connection.postgres.test.ts"], {
+  run("node", ["--import", "tsx", "--test", "--test-concurrency=1", "tests/integration/woocommerce/rest-read/authorization.postgres.test.ts", "tests/integration/woocommerce/rest-read/provider-connection.postgres.test.ts"], {
     env, stdio: "inherit",
   });
 } finally {
