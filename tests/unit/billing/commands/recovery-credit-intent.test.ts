@@ -53,10 +53,10 @@ function fixture() {
       plan: { id: "plan-a", kind: BillingPlanKind.FREE, shopifyPlanHandle: "free-handle", active: true },
       billingPeriod: null,
     } as FakeSubscription,
-    catalogue: { id: "catalogue-a", planKind: MerchantPricingPlanKind.FREE, isActive: true, currency: "USD" },
+    catalogue: { id: "catalogue-a", planKind: MerchantPricingPlanKind.FREE as MerchantPricingPlanKind, isActive: true, currency: "USD" },
     bundle: {
       id: "bundle-a", merchantPricingPlanId: "catalogue-a", adminLabel: " Bronze ",
-      creditsGrantedPerUnit: 25, pricingMode: MerchantPricingUsagePricingMode.FIXED,
+      creditsGrantedPerUnit: 25, pricingMode: MerchantPricingUsagePricingMode.FIXED as MerchantPricingUsagePricingMode,
       fixedUnitAmountMinor: 1999, currency: "USD",
     },
     pending: false,
