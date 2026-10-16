@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { CommerceEnvironment } from "@prisma/client";
 import test from "node:test";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { StoreCategoriesReadService, commerceEnvironmentForApi } from "./store-categories-read.service.js";
 import { StoreCategoryReadError } from "./locale.js";
 

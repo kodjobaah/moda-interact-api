@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 const CREDENTIAL_BYTES = 32;
 
@@ -23,16 +23,6 @@ export function digestSecret(secret: Uint8Array): Buffer {
   return createHash("sha256").update(secret).digest();
 }
 
-export function createSiteProof(
-  bootstrapSecret: Uint8Array,
-  attemptId: string,
-  nonce: string,
-  canonicalSiteUrl: string,
-): string {
-  const message = `moda-interact-connect-v1\n${attemptId}\n${nonce}\n${canonicalSiteUrl}`;
-  return createHmac("sha256", bootstrapSecret).update(message, "utf8").digest("base64url");
-}
-
 export function constantTimeDigestMatches(
   left: Uint8Array,
   right: Uint8Array,
@@ -40,20 +30,4 @@ export function constantTimeDigestMatches(
   return left.byteLength === CREDENTIAL_BYTES &&
     right.byteLength === CREDENTIAL_BYTES &&
     timingSafeEqual(left, right);
-}
-
-export function verifySiteProof(
-  bootstrapSecret: Uint8Array,
-  attemptId: string,
-  nonce: string,
-  canonicalSiteUrl: string,
-  encodedProof: string,
-): boolean {
-  const proof = decodeSecret(encodedProof);
-  if (!proof) return false;
-  const expected = Buffer.from(
-    createSiteProof(bootstrapSecret, attemptId, nonce, canonicalSiteUrl),
-    "base64url",
-  );
-  return constantTimeDigestMatches(expected, proof);
 }

@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { DiscountOffersError, offerRevision, type SaveDiscountOffers, type OfferMode } from "./contract.js";
 
 const MAX_SELECTED = 50;

@@ -5,7 +5,7 @@ import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createApiRuntime } from "../../server.js";
 import { loadRuntimeConfig } from "../../runtime-config.js";
 import { createWooInstallationRoutes } from "../../woocommerce/installation/routes.js";
-import { WooUnauthenticatedError } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { categoryPresentationLocale, StoreCategoryReadError } from "./locale.js";
 import { createStoreCategoriesRoute, MERCHANT_STORE_CATEGORIES_ROUTE_PATH } from "./routes.js";
 

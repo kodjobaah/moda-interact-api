@@ -6,8 +6,8 @@ import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { loadRuntimeConfig } from "../../runtime-config.js";
 import { MerchantBootstrapIntegrityError } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { createApiRuntime } from "../../server.js";
-import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
-import { digestSecret } from "./credential.js";
+import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
+import { digestSecret } from "../../auth/woo-installation/credential.js";
 import {
   BILLING_PLANS_ROUTE_PATH,
   BILLING_PRESENTATION_ROUTE_PATH,

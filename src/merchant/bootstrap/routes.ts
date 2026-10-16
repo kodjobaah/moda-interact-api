@@ -3,7 +3,7 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import {
   WooUnauthenticatedError,
   type WooInstallationAuthenticator,
-} from "../../woocommerce/installation/authenticator.js";
+} from "../../auth/woo-installation/authenticator.js";
 import { MerchantBootstrapIntegrityError, type MerchantBootstrapReadService } from "./bootstrap-read.service.js";
 
 export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";

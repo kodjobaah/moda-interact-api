@@ -1,5 +1,5 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { RecoveryListIntegrityError, type RecoveryListItem, type RecoveryListResponse } from "./contract.js";
 import { parseRecoveryListQuery, resolveRecoveryTimeZone, type RecoveryListQuery } from "./query.js";
 

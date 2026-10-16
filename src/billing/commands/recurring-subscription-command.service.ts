@@ -1,5 +1,5 @@
 import { type PrismaClient } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { InitialWooFreeActivationService } from "../../woocommerce/billing/initial-free-activation.service.js";
 import { WooBillingClient, type WooSubscriptionRequest } from "../../woocommerce/billing/woo-billing-client.js";
 import type { WooBillingConfig } from "../../woocommerce/billing/woo-billing-config.js";

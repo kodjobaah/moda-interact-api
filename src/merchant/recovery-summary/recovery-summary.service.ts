@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { parseEffectiveRecoveryPolicy } from "@modainteract/moda-interact-shared/recovery-policy";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 
 // Match the live Background RecoveryPolicyService fallback for shops without
 // ShopSettings. A read must not create or modify merchant policy records.

@@ -3,7 +3,7 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import {
   WooUnauthenticatedError,
   type WooInstallationAuthenticator,
-} from "../../woocommerce/installation/authenticator.js";
+} from "../../auth/woo-installation/authenticator.js";
 import { MerchantStoreContextConflictError, type MerchantStoreContextService } from "./store-context.service.js";
 import { MAX_STORE_CONTEXT_BODY_BYTES, parseStoreContextRequest, StoreContextHttpFailure } from "./request.js";
 

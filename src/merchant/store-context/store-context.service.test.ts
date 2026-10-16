@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MerchantStoreContextConflictError, MerchantStoreContextService } from "./store-context.service.js";
 import type { MerchantStoreContextSnapshot } from "./schema.js";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 
 const principal: WooInstallationPrincipal = {
   installationId: "installation_1", shopId: "shop_1", canonicalSiteUrl: "https://woo.example", credentialVersion: 3,

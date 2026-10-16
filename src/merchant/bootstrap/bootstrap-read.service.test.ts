@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "./bootstrap-read.service.js";
 import { isMerchantBootstrapResponse } from "./schema.js";
 

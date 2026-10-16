@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { Prisma } from "@prisma/client";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { DISCOUNT_CATALOGUE_PATH, DISCOUNT_OFFERS_PATH, DiscountOffersError,
   MAX_DISCOUNT_SAVE_BYTES, parseSaveDiscountOffers, readCatalogueQuery } from "./contract.js";
 import type { MerchantDiscountOffersService } from "./service.js";

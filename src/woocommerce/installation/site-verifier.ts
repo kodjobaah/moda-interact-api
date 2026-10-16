@@ -5,8 +5,8 @@ import { isIP } from "node:net";
 import type { LookupAddress } from "node:dns";
 import type { SecureContextOptions } from "node:tls";
 import { checkServerIdentity } from "node:tls";
-import { randomSecret } from "./credential.js";
-import { verifySiteProof } from "./credential.js";
+import { randomSecret } from "../../auth/woo-installation/credential.js";
+import { verifySiteProof } from "./site-proof.js";
 import type { CanonicalWooSite, WooConnectionMode } from "./site-url.js";
 
 const CHALLENGE_PATH = "/wp-json/moda-interact/v1/connection/challenge";

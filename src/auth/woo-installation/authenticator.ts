@@ -4,12 +4,8 @@ import { constantTimeDigestMatches, decodeSecret, digestSecret } from "./credent
 
 export type WooAuthenticationDatabase = Pick<PrismaClient, "wooCommerceInstallation">;
 
-export interface WooInstallationPrincipal {
-  installationId: string;
-  shopId: string;
-  canonicalSiteUrl: string;
-  credentialVersion: number;
-}
+export type { WooInstallationPrincipal } from "./principal.js";
+import type { WooInstallationPrincipal } from "./principal.js";
 
 export class WooUnauthenticatedError extends Error {
   constructor() {

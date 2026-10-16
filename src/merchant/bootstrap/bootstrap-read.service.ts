@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { isMerchantBootstrapResponse, type MerchantBootstrapResponse } from "./schema.js";
 
 export type MerchantBootstrapDatabase = Pick<PrismaClient, "shop">;

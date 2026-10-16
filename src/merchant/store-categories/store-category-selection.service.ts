@@ -4,7 +4,7 @@ import {
   SubscriptionProjectionStatus,
   type PrismaClient,
 } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { categoryConflict, StoreCategorySelectionError } from "./selection-errors.js";
 import { assertCategorySelectionStillCurrent, prepareCategorySelection } from "./selection-preparation.js";
 import { publishCategorySelection } from "./selection-publication.js";

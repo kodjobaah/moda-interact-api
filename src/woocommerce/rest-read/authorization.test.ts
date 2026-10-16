@@ -7,8 +7,8 @@ import { loadWooRestReadAuthorizationConfig } from "./config.js";
 import { openWooReadCredentials, sealWooReadCredentials } from "./envelope.js";
 import { WooReadCredentialVerifier, WooReadVerificationError } from "./credential-verifier.js";
 import { WooReadAuthorizationService, WooReadAuthorizationError } from "./authorization.service.js";
-import { digestSecret } from "../installation/credential.js";
-import type { WooInstallationPrincipal } from "../installation/authenticator.js";
+import { digestSecret } from "../../auth/woo-installation/credential.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { canonicalizeWooSiteUrl } from "../installation/site-url.js";
 import { verifyWooReturnLocale } from "./return-locale-proof.js";
 

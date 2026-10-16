@@ -1,6 +1,6 @@
 import { Prisma, type PrismaClient, type ShopSettings, type ShopRecoveryPolicyOverride } from "@prisma/client";
 import { parseEffectiveRecoveryPolicy } from "@modainteract/moda-interact-shared/recovery-policy";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { RecoveryPolicyConflictError, RecoveryPolicyIntegrityError,
   type MerchantRecoveryPolicyResponse, type RecoveryPolicyUpdate, type RecoveryPolicyValues } from "./contract.js";
 import { UNCONFIGURED_RECOVERY_POLICY } from "../recovery-summary/recovery-summary.service.js";

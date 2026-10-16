@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import test, { after } from "node:test";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { RecurringBillingCommandError, RecurringSubscriptionCommandService } from "./recurring-subscription-command.service.js";
 import { WooBillingProviderError } from "../../woocommerce/billing/woo-billing-client.js";
 import { publishedPricingTranslations } from "../../../tests/helpers/merchant-pricing-test-fixtures.js";

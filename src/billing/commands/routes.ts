@@ -3,7 +3,7 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import { validateIdempotencyKey } from "./recurring-command-primitives.js";
 import { RecurringBillingCommandError, type RecurringSubscriptionCommandService } from "./recurring-subscription-command.service.js";
 import { RecoveryCreditPurchaseCommandError, type RecoveryCreditPurchaseCommandService } from "./recovery-credit-purchase-command.service.js";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import {
   HttpFailure,
   parseRecurringPlanRequest,

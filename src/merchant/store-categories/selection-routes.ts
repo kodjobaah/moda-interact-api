@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { StoreCategorySelectionError } from "./selection-errors.js";
 import { isStoreCategorySelectionRequest, type StoreCategorySelectionRequest } from "./selection-schema.js";
 import type { StoreCategorySelectionService } from "./store-category-selection.service.js";

@@ -10,7 +10,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { randomUUID, timingSafeEqual } from "node:crypto";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { RecoveryCreditPurchaseCommandError } from "./recovery-credit-command-error.js";
 import { recoveryCreditPurchaseFingerprint } from "./recurring-command-primitives.js";
 

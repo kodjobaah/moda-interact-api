@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import test from "node:test";
-import { createSiteProof, randomSecret } from "./credential.js";
+import { randomSecret } from "../../auth/woo-installation/credential.js";
+import { createSiteProof } from "./site-proof.js";
 import { canonicalizeWooSiteUrl } from "./site-url.js";
 import {
   isApprovedPeerAddress,

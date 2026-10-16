@@ -3,7 +3,7 @@ import test from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { loadRuntimeConfig } from "../../runtime-config.js";
 import { createApiRuntime } from "../../server.js";
-import { WooUnauthenticatedError } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { createWooInstallationRoutes, MERCHANT_STORE_CONTEXT_ROUTE_PATH } from "../../woocommerce/installation/routes.js";
 import { MerchantStoreContextConflictError } from "./store-context.service.js";
 import type { MerchantStoreContextSnapshot } from "./schema.js";

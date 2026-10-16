@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessage } from "node:http";
-import { WooInstallationAuthenticator, WooUnauthenticatedError } from "./authenticator.js";
-import { digestSecret } from "./credential.js";
+import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
+import { digestSecret } from "../../../../src/auth/woo-installation/credential.js";
 
 const credential = Buffer.alloc(32, 4);
 const credentialHeader = `Bearer ${credential.toString("base64url")}`;

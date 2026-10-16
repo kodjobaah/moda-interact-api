@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { createBillingReadRoutes } from "../../../../src/billing/presentation/routes.js";
-import { WooUnauthenticatedError } from "../../../../src/woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 
 type Event = { level: "info" | "warn" | "error"; name: string; data: Record<string, unknown> };
 

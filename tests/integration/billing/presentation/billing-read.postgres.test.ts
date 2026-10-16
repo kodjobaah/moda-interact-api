@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient, type Prisma } from "@prisma/client";
 import test, { after } from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
-import type { WooInstallationPrincipal } from "../../../../src/woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
 import { BillingPresentationError, BillingPresentationReadService, type BillingPresentationDatabase } from "../../../../src/billing/presentation/billing-read.service.js";
 import { BillingPlanCatalogueReadService } from "../../../../src/billing/presentation/plan-catalogue-read.service.js";
 import { publishedPricingTranslations } from "../../../helpers/merchant-pricing-test-fixtures.js";

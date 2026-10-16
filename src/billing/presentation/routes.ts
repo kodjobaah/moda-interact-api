@@ -3,7 +3,7 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import { BillingPresentationError, type BillingPresentationReadService } from "./billing-read.service.js";
 import { BillingCatalogueError, type BillingPlanCatalogueReadService } from "./plan-catalogue-read.service.js";
 import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from "./schemas.js";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../woocommerce/installation/authenticator.js";
+import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 
 export const BILLING_PRESENTATION_ROUTE_PATH = "/v1/billing";
 export const BILLING_PLANS_ROUTE_PATH = "/v1/billing/plans";

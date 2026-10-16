@@ -5,7 +5,7 @@ import { PrismaClient } from "@prisma/client";
 import { WooReadAuthorizationService, WooReadAuthorizationError } from "./authorization.service.js";
 import { openWooReadCredentials } from "./envelope.js";
 import { loadWooRestReadAuthorizationConfig } from "./config.js";
-import { digestSecret } from "../installation/credential.js";
+import { digestSecret } from "../../auth/woo-installation/credential.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const configuration = loadWooRestReadAuthorizationConfig({

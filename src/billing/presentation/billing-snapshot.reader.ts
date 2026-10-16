@@ -5,7 +5,7 @@ import {
   EntitlementCounter,
   type Prisma,
 } from "@prisma/client";
-import type { WooInstallationPrincipal } from "../../woocommerce/installation/authenticator.js";
+import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 
 // API-internal, transaction-bound query collaborator. The caller retains shop
 // validation, integrity precedence and response projection; API-003 owns the
