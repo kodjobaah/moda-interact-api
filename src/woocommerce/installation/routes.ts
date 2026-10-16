@@ -1,32 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import type { RecurringSubscriptionCommandService } from "../../billing/commands/recurring-subscription-command.service.js";
-import type { RecoveryCreditPurchaseCommandService } from "../../billing/commands/recovery-credit-purchase-command.service.js";
-import type { BillingPresentationReadService } from "../../billing/presentation/billing-read.service.js";
-import type { BillingPlanCatalogueReadService } from "../../billing/presentation/plan-catalogue-read.service.js";
-import { createBillingReadRoutes } from "../../billing/presentation/routes.js";
-import { createBillingCommandRoutes } from "../../billing/commands/routes.js";
-export {
-  BILLING_SUBSCRIPTION_ROUTE_PATH,
-  BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH,
-  BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH,
-} from "../../billing/commands/routes.js";
-export { BILLING_PRESENTATION_ROUTE_PATH, BILLING_PLANS_ROUTE_PATH } from "../../billing/presentation/routes.js";
-import type { MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
-import { createMerchantBootstrapRoute } from "../../merchant/bootstrap/routes.js";
-export { MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../merchant/bootstrap/routes.js";
-import type { createMerchantRecoverySummaryRoute } from "../../merchant/recovery-summary/routes.js";
-import type { createMerchantRecoveryPolicyRoute } from "../../merchant/recovery-policy/routes.js";
-import type { createMerchantRecoveriesRoute } from "../../merchant/recoveries/routes.js";
-import type { createMerchantRecoveryDetailRoute } from "../../merchant/recoveries/detail/routes.js";
-import type { createMerchantDiscountOffersRoutes } from "../../merchant/discount-offers/routes.js";
-import type { createWooPurchaseHistoryRoute } from "../../billing/purchase-history/routes.js";
-import type { createStoreCategoriesRoute } from "../../merchant/store-categories/routes.js";
-import type { createStoreCategorySelectionRoute } from "../../merchant/store-categories/selection-routes.js";
-import type { MerchantStoreContextService } from "../../merchant/store-context/store-context.service.js";
-import { createMerchantStoreContextRoute } from "../../merchant/store-context/routes.js";
-export { MERCHANT_STORE_CONTEXT_ROUTE_PATH, MAX_STORE_CONTEXT_BODY_BYTES } from "../../merchant/store-context/routes.js";
+import type { ApiRouteHandler } from "../../http/route-handler.js";
 import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
 import {
@@ -36,6 +11,16 @@ import {
 import { decodeSecret } from "../../auth/woo-installation/credential.js";
 import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode } from "./site-url.js";
 
+// Preserve the historic constant imports while routing ownership moves to each domain.
+export {
+  BILLING_SUBSCRIPTION_ROUTE_PATH,
+  BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH,
+  BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH,
+} from "../../billing/commands/routes.js";
+export { BILLING_PRESENTATION_ROUTE_PATH, BILLING_PLANS_ROUTE_PATH } from "../../billing/presentation/routes.js";
+export { MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../merchant/bootstrap/routes.js";
+export { MERCHANT_STORE_CONTEXT_ROUTE_PATH, MAX_STORE_CONTEXT_BODY_BYTES } from "../../merchant/store-context/routes.js";
+
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
 export const MAX_CONNECT_BODY_BYTES = 8192;
@@ -43,27 +28,11 @@ export const MAX_SITE_URL_BYTES = 512;
 export const CONNECT_REQUEST_FIELDS = ["siteUrl", "attemptId", "bootstrapSecret"] as const;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export interface WooInstallationRouteHandler {
-  handle(request: IncomingMessage, response: ServerResponse): Promise<boolean>;
-}
+export type WooInstallationRouteHandler = ApiRouteHandler;
 
 interface WooInstallationRouteOptions {
   mode: WooConnectionMode;
   connectionService: WooInstallationConnectionService;
-  bootstrapReadService: MerchantBootstrapReadService;
-  storeContextService: MerchantStoreContextService;
-  recoverySummaryRoute?: ReturnType<typeof createMerchantRecoverySummaryRoute>;
-  recoveryPolicyRoute?: ReturnType<typeof createMerchantRecoveryPolicyRoute>;
-  recoveriesRoute?: ReturnType<typeof createMerchantRecoveriesRoute>;
-  recoveryDetailRoute?: ReturnType<typeof createMerchantRecoveryDetailRoute>;
-  discountOffersRoutes?: ReturnType<typeof createMerchantDiscountOffersRoutes>;
-  storeCategoriesRoute?: ReturnType<typeof createStoreCategoriesRoute>;
-  storeCategorySelectionRoute?: ReturnType<typeof createStoreCategorySelectionRoute>;
-  billingReadService?: BillingPresentationReadService;
-  purchaseHistoryRoute?: ReturnType<typeof createWooPurchaseHistoryRoute>;
-  billingPlanCatalogueReadService?: BillingPlanCatalogueReadService;
-  recurringSubscriptionCommandService?: RecurringSubscriptionCommandService;
-  recoveryCreditPurchaseCommandService?: RecoveryCreditPurchaseCommandService;
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
   now?: () => number;
@@ -72,61 +41,12 @@ interface WooInstallationRouteOptions {
 export function createWooInstallationRoutes({
   mode,
   connectionService,
-  bootstrapReadService,
-  storeContextService,
-  storeCategoriesRoute,
-  storeCategorySelectionRoute,
-  recoverySummaryRoute,
-  recoveryPolicyRoute,
-  recoveriesRoute,
-  recoveryDetailRoute,
-  discountOffersRoutes,
-  billingReadService,
-  purchaseHistoryRoute,
-  billingPlanCatalogueReadService,
-  recurringSubscriptionCommandService,
-  recoveryCreditPurchaseCommandService,
   authenticator,
   logger,
   now = Date.now,
 }: WooInstallationRouteOptions): WooInstallationRouteHandler {
-  const billingReadRoutes = createBillingReadRoutes({
-    ...(billingReadService ? { billingReadService } : {}),
-    ...(billingPlanCatalogueReadService ? { billingPlanCatalogueReadService } : {}),
-    authenticator,
-    logger,
-    now,
-  });
-  const billingCommandRoutes = createBillingCommandRoutes({
-    ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),
-    ...(recoveryCreditPurchaseCommandService ? { recoveryCreditPurchaseCommandService } : {}),
-    authenticator,
-    logger,
-    now,
-  });
-  const merchantBootstrapRoute = createMerchantBootstrapRoute({
-    authenticator,
-    service: bootstrapReadService,
-    logger,
-    now,
-  });
-  const merchantStoreContextRoute = createMerchantStoreContextRoute({
-    authenticator,
-    service: storeContextService,
-    logger,
-    now,
-  });
   return {
     async handle(request, response) {
-      if (recoverySummaryRoute && await recoverySummaryRoute.handle(request, response)) return true;
-      if (recoveryPolicyRoute && await recoveryPolicyRoute.handle(request, response)) return true;
-      if (recoveriesRoute && await recoveriesRoute.handle(request, response)) return true;
-      if (recoveryDetailRoute && await recoveryDetailRoute.handle(request, response)) return true;
-      if (discountOffersRoutes && await discountOffersRoutes.handle(request, response)) return true;
-      if (purchaseHistoryRoute && await purchaseHistoryRoute.handle(request, response)) return true;
-      if (storeCategoriesRoute && await storeCategoriesRoute.handle(request, response)) return true;
-      if (storeCategorySelectionRoute && await storeCategorySelectionRoute.handle(request, response)) return true;
-      if (await billingReadRoutes.handle(request, response)) return true;
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
       if (requestUrl.pathname === CONNECT_ROUTE_PATH && request.method === "POST") {
         const startedAt = now();
@@ -192,12 +112,6 @@ export function createWooInstallationRoutes({
         }
         return true;
       }
-
-      if (await merchantBootstrapRoute.handle(request, response)) return true;
-
-      if (await merchantStoreContextRoute.handle(request, response)) return true;
-
-      if (await billingCommandRoutes.handle(request, response)) return true;
 
       return false;
     },

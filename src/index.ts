@@ -1,39 +1,12 @@
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
+import { WooInstallationAuthenticator } from "./auth/woo-installation/authenticator.js";
+import { createBillingRoutes } from "./composition/billing.js";
+import { createMerchantRoutes } from "./composition/merchant.js";
+import { composeApiRoutes } from "./composition/routes.js";
+import { createWooRoutes } from "./composition/woocommerce.js";
 import { createDatabase } from "./database.js";
-import { BillingPresentationReadService } from "./billing/presentation/billing-read.service.js";
-import { BillingPlanCatalogueReadService } from "./billing/presentation/plan-catalogue-read.service.js";
-import { WooPurchaseHistoryReadService } from "./billing/purchase-history/service.js";
-import { createWooPurchaseHistoryRoute } from "./billing/purchase-history/routes.js";
-import { RecurringSubscriptionCommandService } from "./billing/commands/recurring-subscription-command.service.js";
-import { RecoveryCreditPurchaseCommandService } from "./billing/commands/recovery-credit-purchase-command.service.js";
-import { MerchantBootstrapReadService } from "./merchant/bootstrap/bootstrap-read.service.js";
-import { MerchantRecoverySummaryService } from "./merchant/recovery-summary/recovery-summary.service.js";
-import { MerchantRecoveryPolicyService } from "./merchant/recovery-policy/service.js";
-import { createMerchantRecoveryPolicyRoute } from "./merchant/recovery-policy/routes.js";
-import { MerchantDiscountOffersService } from "./merchant/discount-offers/service.js";
-import { createMerchantDiscountOffersRoutes } from "./merchant/discount-offers/routes.js";
-import { createMerchantRecoverySummaryRoute } from "./merchant/recovery-summary/routes.js";
-import { MerchantRecoveryListService } from "./merchant/recoveries/list.service.js";
-import { createMerchantRecoveriesRoute } from "./merchant/recoveries/routes.js";
-import { MerchantRecoveryDetailService } from "./merchant/recoveries/detail/read.service.js";
-import { createMerchantRecoveryDetailRoute } from "./merchant/recoveries/detail/routes.js";
-import { MerchantStoreContextService } from "./merchant/store-context/store-context.service.js";
-import { StoreCategoriesReadService, commerceEnvironmentForApi } from "./merchant/store-categories/store-categories-read.service.js";
-import { createStoreCategoriesRoute } from "./merchant/store-categories/routes.js";
-import { StoreCategorySelectionService } from "./merchant/store-categories/store-category-selection.service.js";
-import { createStoreCategorySelectionRoute } from "./merchant/store-categories/selection-routes.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
-import { WooInstallationAuthenticator } from "./auth/woo-installation/authenticator.js";
-import { WooInstallationConnectionService } from "./woocommerce/installation/connection-service.js";
-import { createWooInstallationRoutes } from "./woocommerce/installation/routes.js";
-import { WooSiteVerifier } from "./woocommerce/installation/site-verifier.js";
-import { WooReadCredentialVerifier } from "./woocommerce/rest-read/credential-verifier.js";
-import { WooReadAuthorizationService } from "./woocommerce/rest-read/authorization.service.js";
-import { createWooRestReadAuthorizationRoutes } from "./woocommerce/rest-read/authorization.routes.js";
-import { WooBillingClient } from "./woocommerce/billing/woo-billing-client.js";
-import { WooBillingWebhookReceiptService } from "./woocommerce/billing/webhooks/webhook-receipt.service.js";
-import { createWooBillingWebhookRoute } from "./woocommerce/billing/webhooks/woo-billing-webhook-route.js";
 
 const logger = createLogger({
   serviceName: "moda-interact-api",
@@ -44,86 +17,22 @@ async function main(): Promise<void> {
   try {
     const config = loadRuntimeConfig(process.env);
     const database = createDatabase(config.databaseUrl);
-    const verifier = new WooSiteVerifier({ mode: config.woocommerceConnectionMode });
-    const connectionService = new WooInstallationConnectionService(database.prisma, verifier);
     const authenticator = new WooInstallationAuthenticator(database.prisma);
-    const bootstrapReadService = new MerchantBootstrapReadService(database.prisma);
-    const storeContextService = new MerchantStoreContextService(database.prisma);
-    const storeCategoriesService = new StoreCategoriesReadService(database.prisma, commerceEnvironmentForApi(config.environment));
-    const storeCategoriesRoute = createStoreCategoriesRoute({ service: storeCategoriesService, authenticator, logger });
-    const storeCategorySelectionService = new StoreCategorySelectionService(
-      database.prisma, commerceEnvironmentForApi(config.environment),
-    );
-    const storeCategorySelectionRoute = createStoreCategorySelectionRoute({
-      service: storeCategorySelectionService, authenticator, logger,
+    const merchant = createMerchantRoutes({
+      prisma: database.prisma, authenticator, logger, environment: config.environment,
     });
-    const recoverySummaryRoute = createMerchantRecoverySummaryRoute({
-      service: new MerchantRecoverySummaryService(database.prisma), authenticator, logger,
+    const billing = createBillingRoutes({
+      prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling,
     });
-    const recoveryPolicyRoute = createMerchantRecoveryPolicyRoute({
-      service: new MerchantRecoveryPolicyService(database.prisma), authenticator, logger,
+    const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger });
+    const handlers = composeApiRoutes({
+      ...(woo.restRead ? { wooRestRead: woo.restRead } : {}),
+      wooBillingWebhook: woo.billingWebhook,
+      merchant,
+      billing,
+      wooInstallation: woo.installation,
     });
-    const recoveriesRoute = createMerchantRecoveriesRoute({
-      service: new MerchantRecoveryListService(database.prisma), authenticator, logger,
-    });
-    const recoveryDetailRoute = createMerchantRecoveryDetailRoute({
-      service: new MerchantRecoveryDetailService(database.prisma), authenticator, logger,
-    });
-    const discountOffersRoutes = createMerchantDiscountOffersRoutes({
-      service: new MerchantDiscountOffersService(database.prisma), authenticator, logger,
-    });
-    const billingReadService = new BillingPresentationReadService(database.prisma);
-    const purchaseHistoryRoute = createWooPurchaseHistoryRoute({
-      authenticator,
-      service: new WooPurchaseHistoryReadService(database.prisma),
-      logger,
-    });
-    const billingPlanCatalogueReadService = new BillingPlanCatalogueReadService(database.prisma, logger);
-    const wooBillingClient = config.wooBilling ? new WooBillingClient(config.wooBilling) : undefined;
-    const recurringSubscriptionCommandService = wooBillingClient && config.wooBilling
-      ? new RecurringSubscriptionCommandService(database.prisma, wooBillingClient, config.wooBilling.environment)
-      : undefined;
-    const recoveryCreditPurchaseCommandService = wooBillingClient && config.wooBilling
-      ? new RecoveryCreditPurchaseCommandService(database.prisma, wooBillingClient, config.wooBilling.environment)
-      : undefined;
-    const wooRoutes = createWooInstallationRoutes({
-      mode: config.woocommerceConnectionMode,
-      connectionService,
-      bootstrapReadService,
-      storeContextService,
-      storeCategoriesRoute,
-      storeCategorySelectionRoute,
-      recoverySummaryRoute,
-      recoveryPolicyRoute,
-      recoveriesRoute,
-      recoveryDetailRoute,
-      discountOffersRoutes,
-      billingReadService,
-      purchaseHistoryRoute,
-      billingPlanCatalogueReadService,
-      ...(recurringSubscriptionCommandService ? { recurringSubscriptionCommandService } : {}),
-      ...(recoveryCreditPurchaseCommandService ? { recoveryCreditPurchaseCommandService } : {}),
-      authenticator,
-      logger,
-    });
-    const wooBillingWebhookRoutes = createWooBillingWebhookRoute({
-      ...(config.wooBilling ? { apiSecret: config.wooBilling.apiSecret } : {}),
-      receiptService: new WooBillingWebhookReceiptService(database.prisma.wooCommerceBillingWebhookReceipt),
-      logger,
-    });
-    const wooRestReadRoutes = config.wooRestReadAuthorization
-      ? createWooRestReadAuthorizationRoutes({
-          authenticator,
-          service: new WooReadAuthorizationService(
-            database.prisma,
-            config.wooRestReadAuthorization,
-            config.woocommerceConnectionMode,
-            new WooReadCredentialVerifier({ mode: config.woocommerceConnectionMode }),
-          ),
-          logger,
-        })
-      : undefined;
-    const runtime = createApiRuntime(config, database, logger, wooRoutes, wooBillingWebhookRoutes, wooRestReadRoutes);
+    const runtime = createApiRuntime(config, database, logger, handlers);
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch {

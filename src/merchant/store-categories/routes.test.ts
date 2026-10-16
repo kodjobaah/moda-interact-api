@@ -4,7 +4,6 @@ import test from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import { createApiRuntime } from "../../server.js";
 import { loadRuntimeConfig } from "../../runtime-config.js";
-import { createWooInstallationRoutes } from "../../woocommerce/installation/routes.js";
 import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { categoryPresentationLocale, StoreCategoryReadError } from "./locale.js";
 import { createStoreCategoriesRoute, MERCHANT_STORE_CATEGORIES_ROUTE_PATH } from "./routes.js";
@@ -51,18 +50,9 @@ async function withServer(
     } as never,
     logger,
   });
-  const routes = createWooInstallationRoutes({
-    mode: "public",
-    connectionService: {} as never,
-    bootstrapReadService: {} as never,
-    storeContextService: {} as never,
-    authenticator: authenticator as never,
-    storeCategoriesRoute: categoryRoute,
-    logger,
-  });
   const runtime = createApiRuntime(
     { ...loadRuntimeConfig({ DATABASE_URL: "postgresql://user:pass@127.0.0.1/moda" }), port: 0 },
-    { probe: async () => undefined, disconnect: async () => undefined }, logger, routes,
+    { probe: async () => undefined, disconnect: async () => undefined }, logger, [categoryRoute],
   );
   await runtime.start();
   const address = runtime.server.address();
