@@ -13,6 +13,8 @@ tests/
     catalogue-and-selection.test.ts
     concurrent-updates.test.ts
     offer-settings-and-catalogue.test.ts
+  integration/billing/presentation/
+    billing-read.postgres.test.ts
 ```
 
 The repository still contains older co-located `src/**/*.test.ts` tests.
@@ -29,6 +31,10 @@ npm run build
 
 Feature-based filenames should describe test behavior (e.g. `offer-settings`,
 `concurrent-updates`) rather than naming an architecture task or attempt.
-PostgreSQL tests use the integration path and are run explicitly by the
-existing `scripts/test-arch036-discount-offers-postgres.mjs` harness.
-Production source and `tsconfig.build.json` are unchanged.
+PostgreSQL tests use the integration path and are run explicitly by their
+feature-specific disposable database harnesses. For billing presentation, run
+`node scripts/test-arch041-billing-postgres.mjs` (with `prisma migrate deploy`);
+for discount offers, run `npm run test:arch036-discount-offers:postgres`.
+The WooCommerce installation PostgreSQL runner also discovers the moved billing
+presentation suite via its updated file path. Production source and
+`tsconfig.build.json` are unchanged.

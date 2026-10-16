@@ -118,7 +118,7 @@ credential; this baseline makes no assertion about an already in-flight command.
   `src/billing/commands/recurring-subscription-command.postgres.test.ts` and
   `src/billing/commands/recovery-credit-purchase-command.postgres.test.ts`.
   Billing read consistency is covered by
-  `src/billing/presentation/billing-read.postgres.test.ts`.
+  `tests/integration/billing/presentation/billing-read.postgres.test.ts`.
   Run all three through `scripts/test-arch041-billing-postgres.mjs`, which uses
   `prisma migrate deploy`, not `prisma db push`.
 
