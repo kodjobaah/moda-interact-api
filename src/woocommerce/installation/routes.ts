@@ -7,9 +7,10 @@ import {
   RecoveryCreditPurchaseCommandService,
 } from "../../billing/commands/recovery-credit-purchase-command.service.js";
 import { validateIdempotencyKey } from "../../billing/commands/recurring-command-primitives.js";
-import { BillingPresentationError, BillingPresentationReadService } from "../../billing/presentation/billing-read.service.js";
-import { BillingCatalogueError, BillingPlanCatalogueReadService } from "../../billing/presentation/plan-catalogue-read.service.js";
-import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from "../../billing/presentation/schemas.js";
+import type { BillingPresentationReadService } from "../../billing/presentation/billing-read.service.js";
+import type { BillingPlanCatalogueReadService } from "../../billing/presentation/plan-catalogue-read.service.js";
+import { createBillingReadRoutes } from "../../billing/presentation/routes.js";
+export { BILLING_PRESENTATION_ROUTE_PATH, BILLING_PLANS_ROUTE_PATH } from "../../billing/presentation/routes.js";
 import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../merchant/bootstrap/bootstrap-read.service.js";
 import { isMerchantStoreContextSnapshot, type MerchantStoreContextSnapshot } from "../../merchant/store-context/schema.js";
 import type { createMerchantRecoverySummaryRoute } from "../../merchant/recovery-summary/routes.js";
@@ -34,8 +35,6 @@ export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
 export const MERCHANT_BOOTSTRAP_ROUTE_PATH = "/v1/merchant/bootstrap";
 export const MERCHANT_STORE_CONTEXT_ROUTE_PATH = "/v1/merchant/store-context";
-export const BILLING_PRESENTATION_ROUTE_PATH = "/v1/billing";
-export const BILLING_PLANS_ROUTE_PATH = "/v1/billing/plans";
 export const BILLING_SUBSCRIPTION_ROUTE_PATH = "/v1/billing/subscription";
 export const BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH = "/v1/billing/subscription/switch";
 export const BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH = "/v1/billing/recovery-credit-purchases";
@@ -92,6 +91,13 @@ export function createWooInstallationRoutes({
   logger,
   now = Date.now,
 }: WooInstallationRouteOptions): WooInstallationRouteHandler {
+  const billingReadRoutes = createBillingReadRoutes({
+    ...(billingReadService ? { billingReadService } : {}),
+    ...(billingPlanCatalogueReadService ? { billingPlanCatalogueReadService } : {}),
+    authenticator,
+    logger,
+    now,
+  });
   return {
     async handle(request, response) {
       if (recoverySummaryRoute && await recoverySummaryRoute.handle(request, response)) return true;
@@ -102,6 +108,7 @@ export function createWooInstallationRoutes({
       if (purchaseHistoryRoute && await purchaseHistoryRoute.handle(request, response)) return true;
       if (storeCategoriesRoute && await storeCategoriesRoute.handle(request, response)) return true;
       if (storeCategorySelectionRoute && await storeCategorySelectionRoute.handle(request, response)) return true;
+      if (await billingReadRoutes.handle(request, response)) return true;
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
       if (requestUrl.pathname === CONNECT_ROUTE_PATH && request.method === "POST") {
         const startedAt = now();
@@ -226,78 +233,6 @@ export function createWooInstallationRoutes({
           else if (error instanceof HttpFailure) sendError(response, error.statusCode, error.code);
           else if (error instanceof MerchantStoreContextConflictError) sendError(response, 409, "store_context_conflict");
           else sendError(response, 500, "internal_error");
-        }
-        return true;
-      }
-
-      if (requestUrl.pathname === BILLING_PRESENTATION_ROUTE_PATH && request.method === "GET" && billingReadService) {
-        const startedAt = now();
-        try {
-          const principal = await authenticator.authenticate(request);
-          if (requestUrl.search || requestHasBody(request)) throw new HttpFailure(400, "invalid_request");
-          const billing = await billingReadService.read(principal, new Date(now()));
-          if (!isBillingPresentationResponse(billing)) throw new BillingPresentationError("billing_integrity_invalid");
-          logger.info("billing.presentation.read", {
-            shopId: principal.shopId,
-            experienceState: billing.experienceState,
-            planKind: billing.currentPlan?.planKind ?? null,
-            planId: billing.currentPlan?.merchantPricingPlanId ?? null,
-            returnedTopUpCount: billing.topUps.offers.length,
-            outcome: "success",
-            durationMs: Math.max(0, now() - startedAt),
-          });
-          sendJson(response, 200, billing);
-        } catch (error) {
-          if (error instanceof WooUnauthenticatedError) {
-            sendError(response, 401, "unauthorized");
-          } else if (error instanceof HttpFailure) {
-            sendError(response, error.statusCode, error.code);
-          } else if (error instanceof BillingPresentationError) {
-            logger.warn("billing.presentation.read.failed", { reason: error.code });
-            sendError(response, 409, error.code);
-          } else {
-            logger.error("billing.presentation.read.failed", { reason: "internal" });
-            sendError(response, 500, "internal_error");
-          }
-        }
-        return true;
-      }
-
-      if (requestUrl.pathname === BILLING_PLANS_ROUTE_PATH && request.method === "GET" && billingPlanCatalogueReadService) {
-        const startedAt = now();
-        try {
-          const principal = await authenticator.authenticate(request);
-          const localeValues = requestUrl.searchParams.getAll("locale");
-          if (
-            requestHasBody(request) || requestUrl.searchParams.size !== localeValues.length || localeValues.length > 1
-          ) throw new HttpFailure(400, "invalid_request");
-          const catalogue = await billingPlanCatalogueReadService.read(principal, localeValues[0]);
-          if (!isBillingPlanCatalogueResponse(catalogue)) throw new BillingCatalogueError("billing_catalogue_invalid");
-          logger.info("billing.plans.read", {
-            shopId: principal.shopId,
-            resolvedLocale: catalogue.resolvedLocale,
-            returnedPlanCount: catalogue.plans.length,
-            outcome: "success",
-            durationMs: Math.max(0, now() - startedAt),
-          });
-          sendJson(response, 200, catalogue);
-        } catch (error) {
-          if (error instanceof WooUnauthenticatedError) {
-            sendError(response, 401, "unauthorized");
-          } else if (error instanceof HttpFailure) {
-            sendError(response, error.statusCode, error.code);
-          } else if (error instanceof BillingCatalogueError) {
-            if (error.code !== "billing_locale_invalid") {
-              logger.warn("billing.plans.read.failed", { reason: error.code });
-            }
-            sendError(response, error.code === "billing_locale_invalid" ? 400 : 409, error.code);
-          } else if (error instanceof BillingPresentationError) {
-            logger.warn("billing.plans.read.failed", { reason: error.code });
-            sendError(response, 409, error.code);
-          } else {
-            logger.error("billing.plans.read.failed", { reason: "internal" });
-            sendError(response, 500, "internal_error");
-          }
         }
         return true;
       }
