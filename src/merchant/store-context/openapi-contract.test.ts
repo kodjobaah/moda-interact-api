@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { parse } from "yaml";
 import { isMerchantStoreContextSnapshot } from "./schema.js";
-import { MERCHANT_STORE_CONTEXT_ROUTE_PATH } from "../../woocommerce/installation/routes.js";
+import { MERCHANT_STORE_CONTEXT_ROUTE_PATH } from "./routes.js";
 
 test("versioned HTTP contract is strict, authenticated and matches the actual runtime snapshot", () => {
   const source = readFileSync(new URL("../../../openapi/merchant-store-context-v1.yaml", import.meta.url), "utf8");
