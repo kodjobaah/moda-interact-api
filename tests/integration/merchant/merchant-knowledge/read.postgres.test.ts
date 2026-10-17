@@ -63,7 +63,7 @@ test("migration-backed Woo Merchant Knowledge read: tenant, entitlement, revisio
       } });
       await db.merchantKnowledgeSourceRevision.create({ data: {
         sourceId: source.id, generation: 2, reason: "REFRESH", status: "FAILED",
-        requestedUrl: "https://faq.example.com/page?token=TOP_SECRET", failureCode: "NETWORK_FAILURE",
+        requestedUrl: "https://faq.example.com/page?token=TOP_SECRET", failureCode: "HTTP_5XX",
       } });
       const asset = await db.merchantKnowledgeUploadedAsset.create({ data: {
         shopId: woo.id, dataFormatId: csv.id, objectKey: `private/${marker}/product.csv`,
@@ -84,6 +84,7 @@ test("migration-backed Woo Merchant Knowledge read: tenant, entitlement, revisio
       assert.equal(read.planEligibleSourceCount, 2);
       assert.equal(read.catalogue.some((entry) => entry.dataFormat.key === "CSV"), true);
       assert.equal(read.sources[0]?.revision?.status, "FAILED");
+      assert.equal(read.sources[0]?.revision?.failureCode, "HTTP_5XX");
       assert.equal(read.sources[0]?.activeRevision?.generation, 1);
       assert.equal(read.sources[0]?.revision?.activeContentUnits, 55);
       assert.equal(read.sources[0]?.revision?.requestedUrl, "https://faq.example.com/page");

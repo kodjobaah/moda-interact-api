@@ -27,9 +27,32 @@ function publicWebUrl(value: string | null): string | null {
   }
 }
 
-/** Failure payloads and provider diagnostics are not public error-code fields. */
+/** Only documented Merchant Knowledge failure categories are safe to disclose.
+ * Background can persist a sanitized Error.name, so identifier syntax alone is
+ * not evidence that a stored value is a public diagnostic code.
+ * Source: ARCH-023-BACKGROUND-004, R13.
+ */
+const PUBLIC_MERCHANT_KNOWLEDGE_FAILURE_CODES: ReadonlySet<string> = new Set([
+  "SOURCE_TYPE_UNSUPPORTED",
+  "LOCATOR_FORMAT_MISMATCH",
+  "UNSAFE_URL",
+  "UNSUPPORTED_MEDIA_TYPE",
+  "UPLOAD_HASH_MISMATCH",
+  "UPLOAD_FORMAT_INVALID",
+  "XLSX_ACTIVE_CONTENT",
+  "CONTENT_INVALID",
+  "DNS_TEMPORARY",
+  "FETCH_TIMEOUT",
+  "HTTP_429",
+  "HTTP_5XX",
+  "R2_TEMPORARY",
+  "EMBEDDING_PROVIDER_TEMPORARY",
+  "DATABASE_TRANSIENT",
+  "RETRIES_EXHAUSTED",
+]);
+
 function publicFailureCode(value: string | null): string | null {
-  return value && /^[A-Z][A-Z0-9_]{0,63}$/.test(value) ? value : null;
+  return value !== null && PUBLIC_MERCHANT_KNOWLEDGE_FAILURE_CODES.has(value) ? value : null;
 }
 
 export function projectCatalogue(row: {

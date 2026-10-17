@@ -132,7 +132,7 @@ components:
         truncated: { type: boolean }
         fetchedAt: { type: [string, 'null'], format: date-time }
         completedAt: { type: [string, 'null'], format: date-time }
-        failureCode: { type: [string, 'null'], maxLength: 64, description: Bounded machine code, never raw error payload }
+        failureCode: { type: [string, 'null'], maxLength: 64, description: Approved Merchant Knowledge failure category only; unknown persisted values and provider diagnostics are returned as null }
         activeContentUnits: { type: [integer, 'null'], minimum: 0 }
         activeTruncated: { type: boolean }
         activeFetchedAt: { type: [string, 'null'], format: date-time }

@@ -110,6 +110,34 @@ test("entitled, preference-off read returns existing capacity, correct dormant s
   assert.equal(JSON.stringify(result).includes("object-key"), false);
 });
 
+test("public revision failure codes are strictly allowlisted, never inferred from Error.name syntax", async () => {
+  const accepted = ["HTTP_5XX", "UNSAFE_URL", "RETRIES_EXHAUSTED"];
+  const rejected = [
+    "Acquisition_Failure___secret",
+    "ACQUISITION_FAILURE___SECRET",
+    "INTERNAL_PROVIDER_EXCEPTION",
+    "HTTP_5XX_EXTRA",
+    "PROVIDER_SECRET=https://example.org/private",
+  ];
+  const cases: Array<{ failureCode: string; expected: string | null }> = [
+    ...accepted.map((failureCode) => ({ failureCode, expected: failureCode })),
+    ...rejected.map((failureCode) => ({ failureCode, expected: null })),
+  ];
+  for (const { failureCode, expected } of cases) {
+    const source = row(1);
+    source.revisions[0]!.failureCode = failureCode;
+    const response = await fake({ rows: [source] }).service.read(principal);
+    const serialized = JSON.stringify(response);
+    assert.equal(response.sources[0]?.revision?.failureCode, expected, failureCode);
+    if (expected === null) {
+      assert.equal(serialized.includes(failureCode), false, failureCode);
+      assert.match(serialized, /"failureCode":null/);
+    } else {
+      assert.equal(serialized.includes(`"failureCode":"${expected}"`), true, failureCode);
+    }
+  }
+});
+
 test("entitled enabled merchant can process first eligible source only", async () => {
   const result = await fake({ preference: true }).service.read(principal);
   assert.equal(result.state, "ENABLED");
