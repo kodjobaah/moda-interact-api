@@ -71,7 +71,7 @@ test("real domain composition registers every authenticated route and retains tr
   const merchant = createMerchantRoutes({ prisma, authenticator, logger, environment: config.environment });
   const billing = createBillingRoutes({ prisma, authenticator, logger, wooBilling: config.wooBilling });
   const woo = createWooRoutes({ prisma, authenticator, logger, config });
-  assert.equal(merchant.length, 10);
+  assert.equal(merchant.length, 11);
   assert.equal(billing.length, 3);
   assert.ok(woo.restRead, "REST-read callbacks must be registered when enabled");
   const handlers = composeApiRoutes({
@@ -81,7 +81,7 @@ test("real domain composition registers every authenticated route and retains tr
     billing,
     wooInstallation: woo.installation,
   });
-  assert.equal(handlers.length, 16);
+  assert.equal(handlers.length, 17);
 
   const database = { async probe() {}, async disconnect() {} };
   const runtime = createApiRuntime(config, database, logger, handlers);
