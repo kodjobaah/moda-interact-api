@@ -1,4 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
+import { MerchantKnowledgeUploadService } from "../merchant/merchant-knowledge/upload.service.js";
+import { createMerchantKnowledgeUploadRoutes } from "../merchant/merchant-knowledge/upload.routes.js";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import type { ApiRouteHandler } from "../http/route-handler.js";
 import type { WooInstallationAuthenticator } from "../auth/woo-installation/authenticator.js";
@@ -74,6 +76,9 @@ export function createMerchantRoutes(options: {
     }),
     createMerchantStoreContextRoute({
       service: new MerchantStoreContextService(prisma), authenticator, logger,
+    }),
+    createMerchantKnowledgeUploadRoutes({
+      service: new MerchantKnowledgeUploadService(prisma, { environment }), authenticator, logger,
     }),
   ];
 }

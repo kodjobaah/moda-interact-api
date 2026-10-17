@@ -135,6 +135,140 @@ paths:
         '409': { $ref: '#/components/responses/CommandConflict' }
         '413': { $ref: '#/components/responses/TooLarge' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/merchant/merchant-knowledge/upload-intents:
+    post:
+      operationId: createWooKnowledgeUploadIntent
+      summary: Create or replay a short-lived Woo CSV/XLSX R2 upload intent
+      description: >-
+        The WordPress PHP server calls this route with authenticated installation headers.
+        No browser is given R2 credentials. IdempotencyKey is a UUID unique per upload;
+        repeat calls with changed declared metadata fail. The returned signed PUT URL
+        is for PHP server-side transport only and must not follow redirects.
+        PHP must enforce HTTPS, the configured R2 origin, non-private host, timeout,
+        exact Content-Type, If-None-Match and x-amz-meta-sha256 headers. Signed
+        URL expires no later than 600 seconds; failed signing leaves an expiring
+        pending intent, safe to retry using the same idempotency key.
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [idempotencyKey, purposeKey, dataFormatKey, originalFileName, contentType, sizeBytes, sha256]
+              properties:
+                idempotencyKey: { type: string, format: uuid }
+                purposeKey: { type: string, maxLength: 64 }
+                dataFormatKey: { type: string, enum: [CSV, XLSX] }
+                originalFileName: { type: string, minLength: 1, maxLength: 255 }
+                contentType: { type: string, maxLength: 128 }
+                sizeBytes: { type: integer, minimum: 1 }
+                sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+      responses:
+        '200':
+          description: Immutable intent bound to authenticated Shop ID and uploaded bytes
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [schemaVersion, assetId, uploadUrl, expiresAt, requiredHeaders, maxUploadBytes]
+                properties:
+                  schemaVersion: { type: integer, const: 1 }
+                  assetId: { type: string }
+                  uploadUrl: { type: string, format: uri }
+                  expiresAt: { type: string, format: date-time }
+                  maxUploadBytes: { type: integer, minimum: 1 }
+                  requiredHeaders:
+                    type: object
+                    additionalProperties: false
+                    required: [Content-Type, If-None-Match, x-amz-meta-sha256]
+                    properties:
+                      Content-Type: { type: string }
+                      If-None-Match: { type: string, const: '*' }
+                      x-amz-meta-sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+        '400': { description: Invalid request/body/file contract }
+        '401': { description: Revoked or invalid installation }
+        '403': { description: Feature entitlement/source type/quota denied }
+        '409': { description: Conflicting/expired idempotency key }
+        '413': { description: Upload exceeds configured limit }
+        '503': { description: R2/configuration/transaction unavailable }
+  /v1/merchant/merchant-knowledge/upload-finalize:
+    post:
+      operationId: finalizeWooKnowledgeUpload
+      summary: Verify R2 bytes and atomically accept source and pending revision
+      description: >-
+        HEAD size, MIME and declared checksum metadata are checked, followed by
+        bounded GET streaming SHA-256 verification. Repeated finalisation returns
+        the existing source/revision. The revision remains durable PENDING for
+        Background reconciliation; disabled merchant preference permits configuration
+        but does not promise ingestion. No Redis operation runs inside a transaction.
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [assetId, purposeKey, name, languageTag, contentType, sizeBytes, sha256]
+              properties:
+                assetId: { type: string, maxLength: 128 }
+                purposeKey: { type: string, maxLength: 64 }
+                name: { type: string, maxLength: 160 }
+                languageTag: { type: string, maxLength: 16 }
+                contentType: { type: string, maxLength: 128 }
+                sizeBytes: { type: integer, minimum: 1 }
+                sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                sourceId: { type: string, maxLength: 128, description: Optional owned upload source to replace }
+      responses:
+        '200': { description: Accepted sourceId, revisionId, generation and ACCEPTED status }
+        '400': { description: Malformed request }
+        '401': { description: Unauthorized installation }
+        '403': { description: Not entitled, not owned or invalid source format }
+        '404': { description: Missing asset }
+        '409': { description: Expired/conflicting intent or integrity mismatch }
+        '413': { description: Excessive request body }
+        '503': { description: R2 unavailable or persistence failed }
+  /v1/merchant/merchant-knowledge/uploads/{sourceId}:
+    patch:
+      operationId: editWooKnowledgeUploadSource
+      summary: Update name and language of owned, currently entitled upload source
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      parameters: [{ name: sourceId, in: path, required: true, schema: { type: string, maxLength: 128 } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [name, languageTag]
+              properties:
+                name: { type: string, minLength: 1, maxLength: 160 }
+                languageTag: { type: string, maxLength: 16 }
+      responses:
+        '200': { description: Updated source identity }
+        '400': { description: Invalid request }
+        '401': { description: Invalid installation }
+        '403': { description: Denied }
+        '503': { description: Unavailable }
+  /v1/merchant/merchant-knowledge/uploads/{sourceId}/reprocess:
+    post:
+      operationId: reprocessWooKnowledgeUploadSource
+      summary: Durably append PENDING revision using latest AVAILABLE upload asset
+      description: >-
+        Request has no body. Background reconciles the PENDING revision; do not
+        claim processing was queued if merchant preference is disabled.
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      parameters: [{ name: sourceId, in: path, required: true, schema: { type: string, maxLength: 128 } }]
+      responses:
+        '200': { description: Accepted revision identity and generation }
+        '400': { description: Invalid request }
+        '401': { description: Invalid installation }
+        '403': { description: Denied }
+        '503': { description: Unavailable }
 components:
   securitySchemes:
     WooInstallationId:
