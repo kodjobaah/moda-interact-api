@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
 import test from "node:test";
 import { S3Client, HeadObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { KnowledgeUploadError } from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
 import { createUploadR2 } from "../../../../src/merchant/merchant-knowledge/upload-r2.js";
 
 const endpoint = `https://${"a".repeat(32)}.r2.cloudflarestorage.com`;
@@ -48,4 +49,15 @@ test("R2 finalisation performs HEAD metadata and bounded GET byte SHA-256, not o
     : { Body: Readable.from([Buffer.alloc(body.length, 0x78)]) }) as typeof client.send;
   await assert.rejects(() => r2.verify({ key: "object", contentType: "text/csv", sha256: hash,
     sizeBytes: body.length }));
+});
+
+test("R2 transport failures return a bounded unavailable error without provider details", async () => {
+  const client = new S3Client({ endpoint, region: "auto", forcePathStyle: true,
+    credentials: { accessKeyId: "test-key", secretAccessKey: "test-secret" } });
+  client.send = (async () => { throw new Error("private bucket credential diagnostic"); }) as typeof client.send;
+  const r2 = createUploadR2(config, client);
+  await assert.rejects(() => r2.verify({ key: "object", contentType: "text/csv", sha256: hash,
+    sizeBytes: body.length }), (error: unknown) => error instanceof KnowledgeUploadError &&
+      error.status === 503 && error.code === "knowledge_upload_unavailable" &&
+      !error.message.includes("private bucket credential diagnostic"));
 });
