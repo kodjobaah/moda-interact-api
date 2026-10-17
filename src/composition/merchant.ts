@@ -20,6 +20,8 @@ import { StoreCategoriesReadService, commerceEnvironmentForApi } from "../mercha
 import { createStoreCategoriesRoute } from "../merchant/store-categories/routes.js";
 import { StoreCategorySelectionService } from "../merchant/store-categories/store-category-selection.service.js";
 import { createStoreCategorySelectionRoute } from "../merchant/store-categories/selection-routes.js";
+import { MerchantFeaturePreferencesService } from "../merchant/feature-preferences/service.js";
+import { createMerchantFeaturePreferencesRoute } from "../merchant/feature-preferences/routes.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -31,6 +33,9 @@ export function createMerchantRoutes(options: {
   const { prisma, authenticator, logger, environment } = options;
   const commerceEnvironment = commerceEnvironmentForApi(environment);
   return [
+    createMerchantFeaturePreferencesRoute({
+      service: new MerchantFeaturePreferencesService(prisma), authenticator, logger,
+    }),
     createMerchantRecoverySummaryRoute({
       service: new MerchantRecoverySummaryService(prisma), authenticator, logger,
     }),
