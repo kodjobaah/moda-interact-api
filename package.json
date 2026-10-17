@@ -19,7 +19,8 @@
     "prisma:generate": "prisma generate --schema database/prisma/schema.prisma",
     "test:arch026-woo-rest-read:postgres": "node scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
     "test:arch036-discount-offers:postgres": "node scripts/test-arch036-discount-offers-postgres.mjs",
-    "test:arch035-merchant-knowledge:postgres": "node scripts/test-arch035-merchant-knowledge-postgres.mjs"
+    "test:arch035-merchant-knowledge:postgres": "node scripts/test-arch035-merchant-knowledge-postgres.mjs",
+    "test:arch035-features:postgres": "node scripts/test-arch035-feature-preferences-postgres.mjs"
   },
   "dependencies": {
     "@modainteract/moda-interact-shared": "2.4.1",

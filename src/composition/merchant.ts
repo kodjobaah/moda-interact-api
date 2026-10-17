@@ -22,6 +22,8 @@ import { StoreCategorySelectionService } from "../merchant/store-categories/stor
 import { createStoreCategorySelectionRoute } from "../merchant/store-categories/selection-routes.js";
 import { MerchantKnowledgeReadService } from "../merchant/merchant-knowledge/read.service.js";
 import { createMerchantKnowledgeRoute } from "../merchant/merchant-knowledge/routes.js";
+import { MerchantFeaturePreferencesService } from "../merchant/feature-preferences/service.js";
+import { createMerchantFeaturePreferencesRoute } from "../merchant/feature-preferences/routes.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -36,6 +38,9 @@ export function createMerchantRoutes(options: {
     createMerchantKnowledgeRoute({
       service: new MerchantKnowledgeReadService(prisma, process.env.MERCHANT_KNOWLEDGE_MAX_UPLOAD_BYTES),
       authenticator, logger,
+    }),
+    createMerchantFeaturePreferencesRoute({
+      service: new MerchantFeaturePreferencesService(prisma), authenticator, logger,
     }),
     createMerchantRecoverySummaryRoute({
       service: new MerchantRecoverySummaryService(prisma), authenticator, logger,
