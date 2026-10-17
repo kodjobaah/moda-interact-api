@@ -1,0 +1,180 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact Woo Merchant Knowledge Read API
+  version: 1.0.0
+  description: >-
+    Installation-authenticated, read-only tenant projection. Source management is
+    owned by API-016/017. The plan can be entitled while merchant activation is off;
+    absence of entitlement retains read access to historical source metadata.
+paths:
+  /v1/merchant/merchant-knowledge:
+    get:
+      operationId: readWooMerchantKnowledge
+      summary: Read entitled source catalogue, capacity and existing knowledge sources
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - name: afterPosition
+          in: query
+          required: false
+          description: >-
+            Continue after the previous page's nextPosition. Positions are unique
+            per Shop. Each page contains at most 100 source rows.
+          schema: { type: integer, minimum: 0, maximum: 2147483647 }
+      responses:
+        '200':
+          description: >-
+            Readable state: ENABLED, MERCHANT_DISABLED or PLAN_UNENTITLED.
+            The latter two states do not hide previously configured sources.
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/MerchantKnowledgeReadResponse' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/IntegrityInvalid' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+      bearerFormat: base64url(32-byte credential)
+  responses:
+    InvalidRequest:
+      description: Unknown query/body or malformed page position
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: invalid_request }
+    Unauthorized:
+      description: Invalid/revoked/rotated WooCommerce installation credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: unauthorized }
+    IntegrityInvalid:
+      description: Shop or installation state no longer matches the authenticated principal
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: merchant_knowledge_integrity_invalid }
+    Unavailable:
+      description: Missing/malformed plan configuration or backend integration failure, not an entitlement denial
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: merchant_knowledge_unavailable }
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, unauthorized, merchant_knowledge_integrity_invalid, merchant_knowledge_unavailable]
+    Purpose:
+      type: object
+      additionalProperties: false
+      required: [key, displayName]
+      properties:
+        key:
+          type: string
+          enum: [COMPANY_INFORMATION, CUSTOMER_SUPPORT, POLICIES, FAQ, PRODUCT_INFORMATION, SHIPPING_AND_DELIVERY, PRICING]
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+    DataFormat:
+      type: object
+      additionalProperties: false
+      required: [key, displayName, inputKind, canonicalExtension, acceptedContentTypes]
+      properties:
+        key: { type: string, enum: [WEB_PAGE, CSV, XLSX] }
+        displayName: { type: string, minLength: 1, maxLength: 160 }
+        inputKind: { type: string, enum: [REMOTE_URL, UPLOAD] }
+        canonicalExtension: { type: [string, 'null'], maxLength: 16 }
+        acceptedContentTypes: { type: array, maxItems: 20, items: { type: string, maxLength: 128 } }
+    CatalogueEntry:
+      type: object
+      additionalProperties: false
+      required: [purpose, dataFormat]
+      properties:
+        purpose: { $ref: '#/components/schemas/Purpose' }
+        dataFormat: { $ref: '#/components/schemas/DataFormat' }
+    ActiveRevision:
+      type: object
+      additionalProperties: false
+      required: [id, generation, contentUnits, truncated, fetchedAt]
+      properties:
+        id: { type: string, maxLength: 128 }
+        generation: { type: integer, minimum: 1 }
+        contentUnits: { type: [integer, 'null'], minimum: 0 }
+        truncated: { type: boolean }
+        fetchedAt: { type: [string, 'null'], format: date-time }
+    Revision:
+      type: object
+      additionalProperties: false
+      required: [id, generation, reason, status, requestedUrl, resolvedUrl, contentUnits, truncated, fetchedAt, completedAt, failureCode, activeContentUnits, activeTruncated, activeFetchedAt]
+      properties:
+        id: { type: string, maxLength: 128 }
+        generation: { type: integer, minimum: 1 }
+        reason: { type: string, enum: [CREATE, URL_CHANGE, FILE_REPLACE, REFRESH, REPROCESS, ENTITLEMENT_CHANGE] }
+        status: { type: string, enum: [PENDING, PROCESSING, ACTIVE, FAILED, SUPERSEDED] }
+        requestedUrl: { type: [string, 'null'], maxLength: 2048, description: HTTPS web address without query/fragment, never a signed/object-storage URL }
+        resolvedUrl: { type: [string, 'null'], maxLength: 2048 }
+        contentUnits: { type: [integer, 'null'], minimum: 0 }
+        truncated: { type: boolean }
+        fetchedAt: { type: [string, 'null'], format: date-time }
+        completedAt: { type: [string, 'null'], format: date-time }
+        failureCode: { type: [string, 'null'], maxLength: 64, description: Bounded machine code, never raw error payload }
+        activeContentUnits: { type: [integer, 'null'], minimum: 0 }
+        activeTruncated: { type: boolean }
+        activeFetchedAt: { type: [string, 'null'], format: date-time }
+    Source:
+      type: object
+      additionalProperties: false
+      required: [id, name, purposeKey, purposeDisplayName, dataFormatKey, dataFormatDisplayName, uploadedFileName, languageTag, position, currentGeneration, currentlyPlanEntitled, processingEligible, dormantReason, revision, activeRevision]
+      properties:
+        id: { type: string, maxLength: 128 }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        purposeKey: { type: string, enum: [COMPANY_INFORMATION, CUSTOMER_SUPPORT, POLICIES, FAQ, PRODUCT_INFORMATION, SHIPPING_AND_DELIVERY, PRICING] }
+        purposeDisplayName: { type: string, maxLength: 160 }
+        dataFormatKey: { type: string, enum: [WEB_PAGE, CSV, XLSX] }
+        dataFormatDisplayName: { type: string, maxLength: 160 }
+        uploadedFileName: { type: [string, 'null'], maxLength: 255 }
+        languageTag: { type: string, maxLength: 16 }
+        position: { type: integer, minimum: 0 }
+        currentGeneration: { type: integer, minimum: 0 }
+        currentlyPlanEntitled: { type: boolean }
+        processingEligible: { type: boolean }
+        dormantReason: { type: [string, 'null'], enum: [NO_CURRENT_PLAN, SOURCE_TYPE, SOURCE_COUNT, MERCHANT_DISABLED, null] }
+        revision:
+          anyOf: [{ $ref: '#/components/schemas/Revision' }, { type: 'null' }]
+        activeRevision:
+          anyOf: [{ $ref: '#/components/schemas/ActiveRevision' }, { type: 'null' }]
+    MerchantKnowledgeReadResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, state, planEntitled, merchantEnabled, effectiveEnabled, maxKnowledgeSources, maxContentUnitsPerSource, maxUploadBytes, configuredCount, planEligibleSourceCount, defaultLanguageTag, supportedLanguageTags, catalogue, sources, nextPosition]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        state: { type: string, enum: [ENABLED, MERCHANT_DISABLED, PLAN_UNENTITLED] }
+        planEntitled: { type: boolean }
+        merchantEnabled: { type: boolean }
+        effectiveEnabled: { type: boolean }
+        maxKnowledgeSources: { type: integer, minimum: 0, maximum: 100 }
+        maxContentUnitsPerSource: { type: integer, minimum: 0, maximum: 25000 }
+        maxUploadBytes: { type: integer, minimum: 0 }
+        configuredCount: { type: integer, minimum: 0 }
+        planEligibleSourceCount: { type: integer, minimum: 0 }
+        defaultLanguageTag: { type: string, maxLength: 16 }
+        supportedLanguageTags: { type: array, minItems: 20, maxItems: 20, items: { type: string, maxLength: 16 } }
+        catalogue: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/CatalogueEntry' } }
+        sources: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/Source' } }
+        nextPosition: { type: [integer, 'null'], minimum: 0 }
