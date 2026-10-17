@@ -20,6 +20,8 @@ import { StoreCategoriesReadService, commerceEnvironmentForApi } from "../mercha
 import { createStoreCategoriesRoute } from "../merchant/store-categories/routes.js";
 import { StoreCategorySelectionService } from "../merchant/store-categories/store-category-selection.service.js";
 import { createStoreCategorySelectionRoute } from "../merchant/store-categories/selection-routes.js";
+import { MerchantKnowledgeReadService } from "../merchant/merchant-knowledge/read.service.js";
+import { createMerchantKnowledgeRoute } from "../merchant/merchant-knowledge/routes.js";
 import { MerchantFeaturePreferencesService } from "../merchant/feature-preferences/service.js";
 import { createMerchantFeaturePreferencesRoute } from "../merchant/feature-preferences/routes.js";
 
@@ -33,6 +35,10 @@ export function createMerchantRoutes(options: {
   const { prisma, authenticator, logger, environment } = options;
   const commerceEnvironment = commerceEnvironmentForApi(environment);
   return [
+    createMerchantKnowledgeRoute({
+      service: new MerchantKnowledgeReadService(prisma, process.env.MERCHANT_KNOWLEDGE_MAX_UPLOAD_BYTES),
+      authenticator, logger,
+    }),
     createMerchantFeaturePreferencesRoute({
       service: new MerchantFeaturePreferencesService(prisma), authenticator, logger,
     }),
