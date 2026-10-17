@@ -15,10 +15,11 @@
     "lint": "eslint . --max-warnings=0",
     "pretest": "npm run prisma:generate",
     "test": "tsx --test \"tests/unit/**/*.test.ts\"",
-    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs && node scripts/test-arch036-discount-offers-postgres.mjs && node scripts/test-arch041-cross-domain-postgres.mjs",
+    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs && node scripts/test-arch036-discount-offers-postgres.mjs && node scripts/test-arch041-cross-domain-postgres.mjs && node scripts/test-arch035-feature-preferences-postgres.mjs",
     "prisma:generate": "prisma generate --schema database/prisma/schema.prisma",
     "test:arch026-woo-rest-read:postgres": "node scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
-    "test:arch036-discount-offers:postgres": "node scripts/test-arch036-discount-offers-postgres.mjs"
+    "test:arch036-discount-offers:postgres": "node scripts/test-arch036-discount-offers-postgres.mjs",
+    "test:arch035-features:postgres": "node scripts/test-arch035-feature-preferences-postgres.mjs"
   },
   "dependencies": {
     "@modainteract/moda-interact-shared": "2.4.1",
