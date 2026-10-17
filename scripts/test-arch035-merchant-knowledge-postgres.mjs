@@ -40,7 +40,8 @@ try {
   phase = "deploying migrations";
   run("npx", ["--no-install", "prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"], { env, stdio: "inherit" });
   phase = "running Merchant Knowledge integration suite";
-  run("node", ["--import", "tsx", "--test", "tests/integration/merchant/merchant-knowledge/read.postgres.test.ts"], { env, stdio: "inherit" });
+  run("node", ["--import", "tsx", "--test", "tests/integration/merchant/merchant-knowledge/read.postgres.test.ts",
+    "tests/integration/merchant/merchant-knowledge/commands.postgres.test.ts"], { env, stdio: "inherit" });
 } catch {
   // Never print the exception: child-process arguments may include generated credentials.
   process.stderr.write(`ARCH-035-API-015 PostgreSQL validation failed during ${phase}.\n`);

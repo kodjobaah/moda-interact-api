@@ -8,7 +8,7 @@ import { projectCatalogue, projectSource, type ActiveRevisionRow } from "./proje
 export type KnowledgeReadDatabase = Pick<PrismaClient, "$transaction">;
 type Transaction = Prisma.TransactionClient;
 
-async function assertWooPrincipal(transaction: Transaction, principal: WooInstallationPrincipal): Promise<string | null> {
+export async function assertWooPrincipal(transaction: Transaction, principal: WooInstallationPrincipal): Promise<string | null> {
   const [shop, installation] = await Promise.all([
     transaction.shop.findUnique({
       where: { id: principal.shopId },
@@ -31,7 +31,7 @@ async function assertWooPrincipal(transaction: Transaction, principal: WooInstal
 }
 
 /** Only the accepted BillingPlan feature mapping grants capacity; a preference never creates entitlement. */
-async function readEntitlement(transaction: Transaction, shopId: string) {
+export async function readEntitlement(transaction: Transaction, shopId: string) {
   const [subscription, feature] = await Promise.all([
     transaction.subscription.findUnique({
       where: { shopId },
