@@ -52,6 +52,10 @@ const protectedRoutes: ReadonlyArray<readonly [method: string, path: string]> = 
   ["DELETE", "/v1/merchant/merchant-knowledge/sources/example"],
   ["POST", "/v1/merchant/merchant-knowledge/sources/example/refresh"],
   ["PUT", "/v1/merchant/merchant-knowledge/order"],
+  ["POST", "/v1/merchant/merchant-knowledge/upload-intents"],
+  ["POST", "/v1/merchant/merchant-knowledge/upload-finalize"],
+  ["PATCH", "/v1/merchant/merchant-knowledge/uploads/source_1"],
+  ["POST", "/v1/merchant/merchant-knowledge/uploads/source_1/reprocess"],
   ["GET", "/v1/merchant/discount-catalogue"],
   ["GET", "/v1/merchant/discount-offers"],
   ["PUT", "/v1/merchant/discount-offers"],
@@ -76,7 +80,7 @@ test("real domain composition registers every authenticated route and retains tr
   const merchant = createMerchantRoutes({ prisma, authenticator, logger, environment: config.environment });
   const billing = createBillingRoutes({ prisma, authenticator, logger, wooBilling: config.wooBilling });
   const woo = createWooRoutes({ prisma, authenticator, logger, config });
-  assert.equal(merchant.length, 12);
+  assert.equal(merchant.length, 13);
   assert.equal(billing.length, 3);
   assert.ok(woo.restRead, "REST-read callbacks must be registered when enabled");
   const handlers = composeApiRoutes({
@@ -86,7 +90,7 @@ test("real domain composition registers every authenticated route and retains tr
     billing,
     wooInstallation: woo.installation,
   });
-  assert.equal(handlers.length, 18);
+  assert.equal(handlers.length, 19);
 
   const database = { async probe() {}, async disconnect() {} };
   const runtime = createApiRuntime(config, database, logger, handlers);
