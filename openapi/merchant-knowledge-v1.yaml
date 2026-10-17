@@ -1,10 +1,10 @@
 openapi: 3.1.0
 info:
-  title: Moda Interact Woo Merchant Knowledge Read API
+  title: Moda Interact Woo Merchant Knowledge API
   version: 1.0.0
   description: >-
-    Installation-authenticated, read-only tenant projection. Source management is
-    owned by API-016/017. The plan can be entitled while merchant activation is off;
+    Installation-authenticated tenant projection and durable web-source commands.
+    File uploads are owned by API-017. The plan can be entitled while merchant activation is off;
     absence of entitlement retains read access to historical source metadata.
 paths:
   /v1/merchant/merchant-knowledge:
@@ -37,6 +37,104 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '409': { $ref: '#/components/responses/IntegrityInvalid' }
         '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/merchant/merchant-knowledge/sources:
+    post:
+      operationId: createWooKnowledgeWebSource
+      summary: Create a WEB_PAGE source and durable PENDING revision
+      description: Exact retries return created=false without creating another source or revision; disabled merchant preference does not prevent configuration.
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateWebSource' }
+      responses:
+        '201': { $ref: '#/components/responses/CommandSuccess' }
+        '200': { $ref: '#/components/responses/CommandSuccess' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CommandDenied' }
+        '409': { $ref: '#/components/responses/CommandConflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/merchant/merchant-knowledge/sources/{id}:
+    parameters:
+      - $ref: '#/components/parameters/SourceId'
+    patch:
+      operationId: editWooKnowledgeWebSource
+      summary: Edit web source metadata and optionally create URL_CHANGE revision
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EditWebSource' }
+      responses:
+        '200': { $ref: '#/components/responses/CommandSuccess' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CommandDenied' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CommandConflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+    delete:
+      operationId: deleteWooKnowledgeWebSource
+      summary: Delete a web source and atomically compact positions
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExpectedGeneration' }
+      responses:
+        '200': { $ref: '#/components/responses/CommandSuccess' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CommandDenied' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CommandConflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/merchant/merchant-knowledge/sources/{id}/refresh:
+    parameters:
+      - $ref: '#/components/parameters/SourceId'
+    post:
+      operationId: refreshWooKnowledgeWebSource
+      summary: Create a pending REFRESH revision if not already pending/processing
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExpectedGeneration' }
+      responses:
+        '200': { $ref: '#/components/responses/CommandSuccess' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CommandDenied' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/CommandConflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '503': { $ref: '#/components/responses/Unavailable' }
+  /v1/merchant/merchant-knowledge/order:
+    put:
+      operationId: reorderWooKnowledgeSources
+      summary: Atomically reorder all shop-owned sources, including dormant sources
+      security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SourceOrder' }
+      responses:
+        '200': { $ref: '#/components/responses/CommandSuccess' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CommandDenied' }
+        '409': { $ref: '#/components/responses/CommandConflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '503': { $ref: '#/components/responses/Unavailable' }
 components:
   securitySchemes:
     WooInstallationId:
@@ -47,7 +145,40 @@ components:
       type: http
       scheme: bearer
       bearerFormat: base64url(32-byte credential)
+  parameters:
+    SourceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
   responses:
+    CommandSuccess:
+      description: Command committed; knowledge is the canonical API-015 projection after commit
+      headers:
+        Cache-Control: { schema: { type: string, const: no-store } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/CommandResult' }
+    CommandDenied:
+      description: Plan or source type is not currently entitled
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Source missing, belongs to another shop, or is not a web source
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    CommandConflict:
+      description: Generation mismatch, stale ordering or inconsistent installation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    TooLarge:
+      description: Request body exceeds 65536 bytes
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
     InvalidRequest:
       description: Unknown query/body or malformed page position
       content:
@@ -73,6 +204,53 @@ components:
           schema: { $ref: '#/components/schemas/Error' }
           example: { error: merchant_knowledge_unavailable }
   schemas:
+    CommandResult:
+      type: object
+      additionalProperties: false
+      required: [knowledge]
+      properties:
+        sourceId: { type: string, maxLength: 128 }
+        created: { type: boolean }
+        knowledge: { $ref: '#/components/schemas/MerchantKnowledgeReadResponse' }
+    ExpectedGeneration:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration]
+      properties:
+        expectedGeneration: { type: integer, minimum: 1, maximum: 2147483646 }
+    CreateWebSource:
+      type: object
+      additionalProperties: false
+      required: [name, purposeKey, dataFormatKey, url]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 160 }
+        purposeKey: { type: string, enum: [COMPANY_INFORMATION, CUSTOMER_SUPPORT, POLICIES, FAQ, PRODUCT_INFORMATION, SHIPPING_AND_DELIVERY, PRICING] }
+        dataFormatKey: { type: string, const: WEB_PAGE }
+        url: { type: string, maxLength: 2048, description: Canonical HTTPS public hostname; no credentials, private hosts or nondefault ports }
+        languageTag: { type: string, maxLength: 16, description: One of the 20 Shared-supported language tags; defaults to store language }
+    EditWebSource:
+      type: object
+      additionalProperties: false
+      required: [expectedGeneration]
+      anyOf:
+        - required: [name]
+        - required: [url]
+        - required: [languageTag]
+      properties:
+        expectedGeneration: { type: integer, minimum: 1, maximum: 2147483646 }
+        name: { type: string, minLength: 1, maxLength: 160 }
+        url: { type: string, maxLength: 2048 }
+        languageTag: { type: string, maxLength: 16 }
+    SourceOrder:
+      type: object
+      additionalProperties: false
+      required: [sourceIds]
+      properties:
+        sourceIds:
+          type: array
+          maxItems: 1000
+          uniqueItems: true
+          items: { type: string, minLength: 1, maxLength: 128 }
     Error:
       type: object
       additionalProperties: false
@@ -80,7 +258,7 @@ components:
       properties:
         error:
           type: string
-          enum: [invalid_request, unauthorized, merchant_knowledge_integrity_invalid, merchant_knowledge_unavailable]
+          enum: [invalid_request, request_too_large, unauthorized, merchant_knowledge_integrity_invalid, merchant_knowledge_unavailable, merchant_knowledge_denied, merchant_knowledge_source_not_found, merchant_knowledge_conflict]
     Purpose:
       type: object
       additionalProperties: false
