@@ -1,4 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
+import { MerchantKnowledgeUploadService } from "../merchant/merchant-knowledge/upload.service.js";
+import { createMerchantKnowledgeUploadRoutes } from "../merchant/merchant-knowledge/upload.routes.js";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import type { ApiRouteHandler } from "../http/route-handler.js";
 import type { WooInstallationAuthenticator } from "../auth/woo-installation/authenticator.js";
@@ -22,6 +24,8 @@ import { StoreCategorySelectionService } from "../merchant/store-categories/stor
 import { createStoreCategorySelectionRoute } from "../merchant/store-categories/selection-routes.js";
 import { MerchantKnowledgeReadService } from "../merchant/merchant-knowledge/read.service.js";
 import { createMerchantKnowledgeRoute } from "../merchant/merchant-knowledge/routes.js";
+import { MerchantKnowledgeCommandService } from "../merchant/merchant-knowledge/commands.service.js";
+import { createMerchantKnowledgeCommandRoute } from "../merchant/merchant-knowledge/commands.routes.js";
 import { MerchantFeaturePreferencesService } from "../merchant/feature-preferences/service.js";
 import { createMerchantFeaturePreferencesRoute } from "../merchant/feature-preferences/routes.js";
 
@@ -34,9 +38,13 @@ export function createMerchantRoutes(options: {
 }): readonly ApiRouteHandler[] {
   const { prisma, authenticator, logger, environment } = options;
   const commerceEnvironment = commerceEnvironmentForApi(environment);
+  const knowledgeRead = new MerchantKnowledgeReadService(prisma, process.env.MERCHANT_KNOWLEDGE_MAX_UPLOAD_BYTES);
   return [
+    createMerchantKnowledgeCommandRoute({
+      service: new MerchantKnowledgeCommandService(prisma, knowledgeRead), authenticator, logger,
+    }),
     createMerchantKnowledgeRoute({
-      service: new MerchantKnowledgeReadService(prisma, process.env.MERCHANT_KNOWLEDGE_MAX_UPLOAD_BYTES),
+      service: knowledgeRead,
       authenticator, logger,
     }),
     createMerchantFeaturePreferencesRoute({
@@ -68,6 +76,9 @@ export function createMerchantRoutes(options: {
     }),
     createMerchantStoreContextRoute({
       service: new MerchantStoreContextService(prisma), authenticator, logger,
+    }),
+    createMerchantKnowledgeUploadRoutes({
+      service: new MerchantKnowledgeUploadService(prisma, { environment }), authenticator, logger,
     }),
   ];
 }
