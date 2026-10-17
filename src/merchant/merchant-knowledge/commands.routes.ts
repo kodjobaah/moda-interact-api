@@ -15,10 +15,11 @@ function match(url: URL, method: string | undefined): Command | null {
   if (url.pathname === KNOWLEDGE_SOURCES_PATH && method === "POST") return { operation: "create" };
   if (url.pathname === KNOWLEDGE_ORDER_PATH && method === "PUT") return { operation: "order" };
   const detail = /^\/v1\/merchant\/merchant-knowledge\/sources\/([A-Za-z0-9_-]{1,128})(\/refresh)?$/.exec(url.pathname);
-  if (!detail) return null;
-  if (detail[2] === "/refresh" && method === "POST") return { operation: "refresh", sourceId: detail[1] };
-  if (!detail[2] && method === "PATCH") return { operation: "patch", sourceId: detail[1] };
-  if (!detail[2] && method === "DELETE") return { operation: "remove", sourceId: detail[1] };
+  const sourceId = detail?.[1];
+  if (!sourceId) return null;
+  if (detail[2] === "/refresh" && method === "POST") return { operation: "refresh", sourceId };
+  if (!detail[2] && method === "PATCH") return { operation: "patch", sourceId };
+  if (!detail[2] && method === "DELETE") return { operation: "remove", sourceId };
   return null;
 }
 async function body(request: IncomingMessage): Promise<unknown> {

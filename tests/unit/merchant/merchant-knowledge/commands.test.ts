@@ -23,6 +23,13 @@ test("strict URL entry gate and Shared source types exclude SSRF candidates", ()
     { ...create, credential: "secret" }, { ...create, url: "https://localhost/" }]) {
     rejects(() => parseCreateWebSource(input));
   }
+  // Reject ASCII control bytes even when URL parsing would otherwise strip them.
+  for (const character of ["\u0000", "\u001f", "\u0020", "\u007f"]) {
+    rejects(() => parseKnowledgeHttpsUrl(`https://example.org/${character}unsafe`));
+  }
+  for (const character of ["\u0000", "\u001f", "\u007f"]) {
+    rejects(() => parseCreateWebSource({ ...create, name: `FAQ${character}unsafe` }));
+  }
   assert.deepEqual(parseCreateWebSource(create), create);
 });
 
@@ -75,7 +82,7 @@ test("all five command endpoints require installation authentication and reject 
     try {
       const denyAddress = denyServer.address(); assert.ok(denyAddress && typeof denyAddress !== "string");
       for (const [method, path, input] of cases) {
-        const response = await fetch(`http://127.0.0.1:${denyAddress.port}${path}`, { method,
+        const response: Response = await fetch(`http://127.0.0.1:${denyAddress.port}${path}`, { method,
           headers: { "content-type": "application/json" }, body: JSON.stringify(input) });
         assert.equal(response.status, 401);
       }

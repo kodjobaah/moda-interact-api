@@ -9,7 +9,7 @@ import { KnowledgeCommandError, type CreateWebSource, type PatchWebSource, type 
 type Tx = Prisma.TransactionClient;
 type Configuration = NonNullable<Awaited<ReturnType<typeof readEntitlement>>["configuration"]>;
 const denied = (): never => { throw new KnowledgeCommandError(403, "merchant_knowledge_denied"); };
-const conflict = (): never => { throw new KnowledgeCommandError(409, "merchant_knowledge_conflict"); };
+function conflict(): never { throw new KnowledgeCommandError(409, "merchant_knowledge_conflict"); }
 const notFound = (): never => { throw new KnowledgeCommandError(404, "merchant_knowledge_source_not_found"); };
 
 async function lockedEntitlement(tx: Tx, principal: WooInstallationPrincipal): Promise<{ config: Configuration; language: string }> {
@@ -40,7 +40,7 @@ const selectSource = {
   id: true, shopId: true, name: true, languageTag: true, position: true, currentGeneration: true,
   purpose: { select: { key: true, active: true } },
   dataFormat: { select: { key: true, active: true, inputKind: true } },
-  revisions: { orderBy: [{ generation: "desc" as const }], take: 1,
+  revisions: { orderBy: { generation: "desc" as const }, take: 1,
     select: { requestedUrl: true, status: true } },
 } as const;
 async function sources(tx: Tx, shopId: string) {

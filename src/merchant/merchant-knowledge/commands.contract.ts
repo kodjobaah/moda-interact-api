@@ -10,6 +10,14 @@ const object = (input: unknown): input is Record<string, unknown> =>
   input !== null && typeof input === "object" && !Array.isArray(input);
 const keysAllowed = (row: Record<string, unknown>, keys: readonly string[]) =>
   Object.keys(row).every((key) => keys.includes(key));
+/** Keep ASCII control checks explicit without control-code regex literals. */
+function hasForbiddenAscii(value: string, upperBound: number): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= upperBound || code === 0x7f) return true;
+  }
+  return false;
+}
 
 export class KnowledgeCommandError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409 | 413 | 503,
@@ -27,7 +35,7 @@ export function parseSourceId(value: string): string {
 
 /** Entry validation only; Background performs DNS/IP/redirect validation at fetch time. */
 export function parseKnowledgeHttpsUrl(value: unknown): string {
-  if (typeof value !== "string" || !value || value.length > 2048 || /[\u0000-\u0020\u007f]/.test(value)) return invalid();
+  if (typeof value !== "string" || !value || value.length > 2048 || hasForbiddenAscii(value, 0x20)) return invalid();
   let url: URL;
   try { url = new URL(value); } catch { return invalid(); }
   const host = url.hostname.replace(/\.$/, "").toLowerCase();
@@ -39,7 +47,7 @@ export function parseKnowledgeHttpsUrl(value: unknown): string {
   return url.toString();
 }
 function parseName(value: unknown): string {
-  if (typeof value !== "string" || !value.trim() || value.trim().length > 160 || /[\u0000-\u001f\u007f]/.test(value)) return invalid();
+  if (typeof value !== "string" || !value.trim() || value.trim().length > 160 || hasForbiddenAscii(value, 0x1f)) return invalid();
   return value.trim();
 }
 function parseLanguage(value: unknown): string {
