@@ -39,8 +39,8 @@ async function main(): Promise<void> {
     const runtime = createApiRuntime(config, database, logger, handlers);
     registerShutdownHandlers(runtime);
     await runtime.start();
-  } catch {
-    logger.error("api.startup.failed", { reason: "configuration_or_initialization" });
+  } catch (error) {
+    logger.error("api.startup.failed", { error });
     process.exitCode = 1;
   }
 }
