@@ -14,6 +14,7 @@ const runnerScripts = [
   "scripts/test-arch035-merchant-knowledge-postgres.mjs",
   "scripts/test-arch035-feature-preferences-postgres.mjs",
   "scripts/test-arch035-knowledge-upload-postgres.mjs",
+  "scripts/run-arch043-platform-configuration-postgres.mjs",
 ] as const;
 
 async function integrationTests(directory: string): Promise<string[]> {
