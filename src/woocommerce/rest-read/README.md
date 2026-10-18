@@ -4,23 +4,20 @@ The existing WooCommerce installation credential authenticates plugin -> Moda AP
 
 ## Runtime configuration
 
-The feature is disabled when the public origin and both canonical credential variables are absent; supplying only some causes startup to fail closed. The API must not use `COMMERCE_CONNECTION_COMMAND_HMAC_KEY`.
+Production startup reads only the callback origin and connection mode. The Commerce keyring is loaded from the sealed `commerce.connectionKeys` platform-configuration record through API-001 for each protected authorization operation; it is not loaded from process environment or cached across operations. Configure the sealed record through the authorized Admin workflow before enabling the route. The API must not use `COMMERCE_CONNECTION_COMMAND_HMAC_KEY`.
 
 - `MODA_WOO_REST_READ_PUBLIC_ORIGIN`: the fixed public HTTPS origin of `moda-interact-api`, e.g. `https://api.example.com`; no path, query, credentials or fragment. In explicit nonproduction `MODA_WOOCOMMERCE_CONNECTION_MODE=local-development`, an HTTP `localhost`/loopback origin is permitted for locally routed callbacks.
-- `COMMERCE_CONNECTION_ACTIVE_KEY_ID`: active encryption key ID, e.g. `2026-10-a`. Never reuse the value of an installation credential.
-- `COMMERCE_CONNECTION_KEYS_JSON`: a JSON object mapping key IDs to **32-byte canonical **padded standard Base64**-encoded AES-256 keys**. During future rotations keep prior key IDs until all referencing grants and return links have expired. The developer will clear pre-production grants at this breaking cutover. Use a secure secrets manager; do not commit values or log them.
+- `MODA_WOOCOMMERCE_CONNECTION_MODE`: `public` by default; `local-development` is permitted only for nonproduction local testing.
 
-Example for a **disposable local test** only:
+Example for a **disposable local test** only (no Commerce key material is supplied through environment variables):
 
 ```sh
 export PORT=3100
 export MODA_WOO_REST_READ_PUBLIC_ORIGIN='http://localhost:3100'
-export COMMERCE_CONNECTION_ACTIVE_KEY_ID='local-v1'
-export COMMERCE_CONNECTION_KEYS_JSON="$(node -e 'process.stdout.write(JSON.stringify({"local-v1":require("node:crypto").randomBytes(32).toString("base64")}))')"
 export MODA_WOOCOMMERCE_CONNECTION_MODE=local-development
 ```
 
-Set the two encryption variables securely before running `start-dev.sh`; the script does not generate fallback keys. Do not enable production until the public callback route has confirmed HTTPS reachability from the merchant's WooCommerce server, gateway access logs **redact the `/read-authorizations/callback/*` path**, and database migrations/client generation are deployed.
+The route requires the sealed configuration record to be present and valid when an authorization operation runs; missing or invalid configuration fails closed. Do not enable production until the public callback route has confirmed HTTPS reachability from the merchant's WooCommerce server, gateway access logs **redact the `/read-authorizations/callback/*` path**, and database migrations/client generation are deployed.
 
 ## API lifecycle
 

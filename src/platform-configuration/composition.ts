@@ -31,20 +31,22 @@ export function createApiPlatformConfigurationReader(input: {
     });
   };
   /** Log only the fixed purpose and bounded outcome: no values, URLs, key IDs or exception text. */
+  function logRead(level: "info" | "warn" | "error", fields: Record<string, string>): void {
+    try {
+      input.logger?.[level]("api.platform_configuration.read", fields);
+    } catch { /* Logging is diagnostic and must not affect configuration reads. */ }
+  }
+
   async function observedRead<T>(key: ApiConfigurationKey, operation: string, read: () => Promise<T>): Promise<T> {
     try {
       const result = await read();
-      input.logger?.info("api.platform_configuration.read", { key, operation, outcome: "success" });
+      logRead("info", { key, operation, outcome: "success" });
       return result;
     } catch (error) {
       if (error instanceof ApiPlatformConfigurationError) {
-        input.logger?.warn("api.platform_configuration.read", {
-          key, operation, outcome: "failed", reasonCode: error.code,
-        });
+        logRead("warn", { key, operation, outcome: "failed", reasonCode: error.code });
       } else {
-        input.logger?.error("api.platform_configuration.read", {
-          key, operation, outcome: "failed", reasonCode: "UNEXPECTED",
-        });
+        logRead("error", { key, operation, outcome: "failed", reasonCode: "UNEXPECTED" });
       }
       throw error;
     }

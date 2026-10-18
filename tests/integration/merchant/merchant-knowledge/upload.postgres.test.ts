@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
-import { randomUUID, createHash } from "node:crypto";
+import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
+import { encryptCredential, parseCredentialKeyring } from "@modainteract/moda-interact-shared/security/credentials/node";
 import { MerchantKnowledgeUploadService } from "../../../../src/merchant/merchant-knowledge/upload.service.js";
 import { KnowledgeUploadError, parseFinalize, parseIntent } from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
 import type { UploadR2 } from "../../../../src/merchant/merchant-knowledge/upload-r2.js";
+import { apiPlatformConfigurationAad } from "../../../../src/platform-configuration/contracts.js";
+import { createApiPlatformConfigurationReader } from "../../../../src/platform-configuration/composition.js";
+import { adminR2PlaintextFixture } from "../../../fixtures/platform-configuration/r2-admin-payload.js";
 
 const connection = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const config = { schemaVersion: 1, maxKnowledgeSources: 2, maxContentUnitsPerSource: 1500,
@@ -42,6 +46,20 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
     } });
     await db.billingPlanFeature.create({ data: { planId: plan.id, featureId: feature.id, enabled: true, configuration: config } });
     await db.subscription.create({ data: { shopId: shop.id, planId: plan.id, status: "ACTIVE" } });
+    const wrappingKeyJson = JSON.stringify({ wrapping: randomBytes(32).toString("base64") });
+    const wrappingKeyring = parseCredentialKeyring(wrappingKeyJson);
+    const sealR2Configuration = (version: number, maxUploadBytes: number) => {
+      const envelope = encryptCredential({ keyring: wrappingKeyring, activeKeyId: "wrapping",
+        plaintext: JSON.stringify({ ...adminR2PlaintextFixture, maxUploadBytes }),
+        aad: apiPlatformConfigurationAad("test", "merchant.knowledge.r2", version) });
+      return { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM", wrappingKeyId: envelope.keyId,
+        nonce: Buffer.from(envelope.nonce).toString("base64"), ciphertext: Buffer.from(envelope.ciphertext).toString("base64"),
+        authTag: Buffer.from(envelope.authTag).toString("base64") };
+    };
+    await db.platformConfiguration.create({ data: { environment: "test", key: "merchant.knowledge.r2", version: 1,
+      value: sealR2Configuration(1, 10000) } });
+    const platformConfiguration = createApiPlatformConfigurationReader({ prisma: db, environment: "test",
+      unsealEnvironment: { MODA_CONFIG_UNSEAL_KEY: wrappingKeyJson, MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID: "wrapping" } });
     const objects = new Map<string, { bytes: Buffer; contentType: string; sha256: string }>();
     const r2: UploadR2 = {
       async sign({ key, contentType, sha256 }) { objects.set(key, { bytes: contentType === xlsxContentType ? xlsxBytes : bytes, contentType, sha256 }); return `https://r2.example.invalid/${key}`; },
@@ -55,15 +73,22 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
       },
     };
     let current = new Date("2026-10-17T09:00:00Z");
-    const service = new MerchantKnowledgeUploadService(db, { r2,
-      config: { endpoint: "https://r2.example.invalid", bucket: "knowledge-test", accessKeyId: "dummy",
-        secretAccessKey: "dummy", maxUploadBytes: 10000 }, environment: "test", now: () => current });
+    const service = new MerchantKnowledgeUploadService(db, { r2, configuration: platformConfiguration,
+      environment: "test", now: () => current });
     const request = parseIntent({ idempotencyKey: randomUUID(), purposeKey: "PRODUCT_INFORMATION",
       dataFormatKey: "CSV", originalFileName: "products.csv", contentType: "text/csv",
       sizeBytes: bytes.length, sha256: checksum });
     try {
       const first = await service.intent(principal, request);
       assert.equal(first.assetId, (await service.intent(principal, request)).assetId);
+      await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
+        data: { value: sealR2Configuration(2, 10), version: 2 } });
+      await assert.rejects(() => service.intent(principal, { ...request, idempotencyKey: randomUUID() }),
+        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 413);
+      await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
+        data: { value: sealR2Configuration(3, 10000), version: 3 } });
+      const refreshed = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
+      assert.equal(refreshed.maxUploadBytes, 10000);
       assert.match((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey,
         new RegExp(`^merchant-knowledge/test/woocommerce/${shop.id}/`));
       await assert.rejects(() => service.intent(principal, { ...request, sizeBytes: 3 }),

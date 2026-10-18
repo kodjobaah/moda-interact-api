@@ -44,7 +44,7 @@ function fixture() {
       authTag: Buffer.from(envelope.authTag).toString("base64"),
     } });
   }
-  return { reader, events, seal, rootMaterial, get calls() { return calls; },
+  return { reader, events, logger, seal, rootMaterial, get calls() { return calls; },
     setDatabaseFailure(value: boolean) { failDatabase = value; },
     setRow(key: string, value: unknown) { rows.set(`test:${key}`, value); },
   };
@@ -93,6 +93,18 @@ test("database failures are logged by bounded reason code, with no raw cause and
     },
   }]);
   assert.equal(JSON.stringify(state.events).includes("sensitive database error"), false);
+});
+
+test("logger sink failures do not change read success or configuration failure", async () => {
+  const state = fixture();
+  state.seal("merchant.knowledge.r2", adminR2PlaintextFixture);
+  state.logger.info = () => { throw new Error("sink unavailable"); };
+  const policy = await state.reader.readMerchantKnowledgeUploadPolicy();
+  assert.equal(policy.r2Bucket, adminR2PlaintextFixture.bucket);
+
+  state.setDatabaseFailure(true);
+  state.logger.warn = () => { throw new Error("sink unavailable"); };
+  await assert.rejects(state.reader.requireCommerceConnectionSecurity(), { code: "DATABASE_UNAVAILABLE" });
 });
 
 test("invalid envelopes and revoked webhook credentials fail closed and emit only safe reasons", async () => {

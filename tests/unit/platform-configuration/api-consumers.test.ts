@@ -32,6 +32,47 @@ test("Woo return proof takes exactly one fresh key snapshot when a proof is supp
   assert.equal(calls, 1, "plain return never needs a secret lookup");
 });
 
+test("Woo return proofs use the current keyring after rotation while retaining old-key verification", async () => {
+  const previous = commerceConfig();
+  const rotated = loadWooRestReadAuthorizationConfig({
+    MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.invalid",
+    COMMERCE_CONNECTION_ACTIVE_KEY_ID: "new",
+    COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({
+      old: Buffer.alloc(32, 3).toString("base64"),
+      new: Buffer.alloc(32, 4).toString("base64"),
+    }),
+  }, "public")!;
+  let current = previous;
+  let resolutionCount = 0;
+  let attemptCount = 0;
+  const service = new WooReadAuthorizationService({
+    wooCommerceRestReadAttempt: {
+      create: async () => ({ id: `attempt-${++attemptCount}`, expiresAt: new Date("2026-10-18T16:00:00Z") }),
+      findUnique: async () => ({ shopId: "shop-one",
+        installation: { shopId: "shop-one", shop: { storeLocale: "de_DE", defaultLanguageTag: "de-DE" } } }),
+    },
+  } as never, { publicOrigin: previous.publicOrigin, resolveSecurity: async () => {
+    resolutionCount++;
+    return { keyring: current.keyring, activeKeyId: current.activeKeyId };
+  } }, "public", {} as never, () => new Date("2026-10-18T15:00:00Z"), () => Buffer.alloc(32, attemptCount + 1));
+  const principal = { shopId: "shop-one", installationId: "installation-one",
+    canonicalSiteUrl: "https://shop.example", credentialVersion: 1 };
+
+  const first = await service.start(principal, "en");
+  current = rotated;
+  const second = await service.start(principal, "en");
+  const proofFrom = (authorizationUrl: string) => {
+    const returnUrl = new URL(new URL(authorizationUrl).searchParams.get("return_url")!);
+    return returnUrl.searchParams.get("display_proof");
+  };
+  const oldProof = proofFrom(first.authorizationUrl);
+  const newProof = proofFrom(second.authorizationUrl);
+  assert.notEqual(oldProof, newProof);
+  assert.equal(await service.returnLocale("attempt-1", "en", oldProof), "en");
+  assert.equal(await service.returnLocale("attempt-2", "en", newProof), "en");
+  assert.equal(resolutionCount, 4);
+});
+
 test("Woo protected key-resolution failure is not replaced with an environment keyring", async () => {
   const service = new WooReadAuthorizationService({} as never,
     { publicOrigin: "https://api.example.invalid", resolveSecurity: async () => { throw Error("unavailable"); } },
