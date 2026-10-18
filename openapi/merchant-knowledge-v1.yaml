@@ -4,7 +4,9 @@ info:
   version: 1.0.0
   description: >-
     Installation-authenticated tenant projection and durable web-source commands.
-    File uploads are owned by API-017. The plan can be entitled while merchant activation is off;
+    File upload persistence and finalisation are owned by API-017; API-018 certifies
+    the browser-direct signed PUT transport without adding a new hosted API endpoint.
+    The plan can be entitled while merchant activation is off;
     absence of entitlement retains read access to historical source metadata.
 paths:
   /v1/merchant/merchant-knowledge:
@@ -140,14 +142,23 @@ paths:
       operationId: createWooKnowledgeUploadIntent
       summary: Create or replay a short-lived Woo CSV/XLSX R2 upload intent
       description: >-
-        The WordPress PHP server calls this route with authenticated installation headers.
-        No browser is given R2 credentials. IdempotencyKey is a UUID unique per upload;
-        repeat calls with changed declared metadata fail. The returned signed PUT URL
-        is for PHP server-side transport only and must not follow redirects.
-        PHP must enforce HTTPS, the configured R2 origin, non-private host, timeout,
-        exact Content-Type, If-None-Match and x-amz-meta-sha256 headers. Signed
-        URL expires no later than 600 seconds; failed signing leaves an expiring
-        pending intent, safe to retry using the same idempotency key.
+        Privileged WordPress PHP (never an unauthenticated browser) calls this hosted
+        route with its installation credential and brokers only metadata. It returns an
+        object-scoped, short-lived bearer URL to the authenticated WordPress administrator;
+        the browser PUTs the Blob directly to the R2 HTTPS S3 API endpoint using exactly
+        requiredHeaders, credentials omit and redirect error. The PUT sends no WordPress
+        cookie, nonce, Moda bearer token or other installation secret. PHP never handles
+        the file bytes. The browser/WordPress client must validate the exact approved R2
+        account origin before using/forwarding the capability and must not cache, log,
+        persist or reflect the signed URL/query. An arbitrary Origin header is not an
+        authorisation decision. Browser OPTIONS preflight requires an explicit Gateway-owned
+        R2 CORS policy for each approved Woo site origin and PUT plus content-type,
+        if-none-match and x-amz-meta-sha256 request headers; this API does not grant R2 CORS.
+        IdempotencyKey is a UUID per upload; changed retry metadata conflicts. The PUT
+        signature expires no later than the durable upload intent (at most 600 seconds).
+        HTTP redirect, non-2xx, CORS/network/abort or expired signature is not upload
+        success and must never trigger finalisation. An unsuccessful sign leaves a bounded
+        expiring pending intent which can be retried using the same metadata/key.
       security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
       requestBody:
         required: true
@@ -167,7 +178,12 @@ paths:
                 sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
       responses:
         '200':
-          description: Immutable intent bound to authenticated Shop ID and uploaded bytes
+          description: >-
+            Immutable Shop-bound intent. The uploadUrl is an opaque bearer capability,
+            not a server credential; only the authenticated WordPress administrator may
+            receive it via the privileged no-store WordPress broker. Never log or persist it.
+          headers:
+            Cache-Control: { schema: { type: string, const: no-store } }
           content:
             application/json:
               schema:
@@ -177,10 +193,20 @@ paths:
                 properties:
                   schemaVersion: { type: integer, const: 1 }
                   assetId: { type: string }
-                  uploadUrl: { type: string, format: uri }
+                  uploadUrl:
+                    type: string
+                    format: uri
+                    description: >-
+                      Object-scoped presigned HTTPS R2 S3 endpoint PUT URL. Opaque; never
+                      decode/append parameters, follow redirects or use as an API origin.
                   expiresAt: { type: string, format: date-time }
                   maxUploadBytes: { type: integer, minimum: 1 }
                   requiredHeaders:
+                    description: >-
+                      Forward this complete map to the browser's R2 PUT without modifying
+                      any value (HTTP field-name matching is case-insensitive). The signed
+                      If-None-Match prevents overwrite; the SHA-256 metadata alone does not
+                      prove integrity. Do not append WordPress/Moda authentication headers.
                     type: object
                     additionalProperties: false
                     required: [Content-Type, If-None-Match, x-amz-meta-sha256]
@@ -188,19 +214,33 @@ paths:
                       Content-Type: { type: string }
                       If-None-Match: { type: string, const: '*' }
                       x-amz-meta-sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
-        '400': { description: Invalid request/body/file contract }
-        '401': { description: Revoked or invalid installation }
-        '403': { description: Feature entitlement/source type/quota denied }
-        '409': { description: Conflicting/expired idempotency key }
-        '413': { description: Upload exceeds configured limit }
-        '503': { description: R2/configuration/transaction unavailable }
+        '400':
+          description: Invalid request/body/file contract
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '401':
+          description: Revoked or invalid installation; never includes signed capabilities
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '403':
+          description: Feature entitlement/source type/quota denied
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '409':
+          description: Conflicting/expired idempotency key
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '413':
+          description: Upload exceeds configured limit
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '503':
+          description: R2/configuration/transaction unavailable (bounded error, no signed URL)
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
   /v1/merchant/merchant-knowledge/upload-finalize:
     post:
       operationId: finalizeWooKnowledgeUpload
       summary: Verify R2 bytes and atomically accept source and pending revision
       description: >-
-        HEAD size, MIME and declared checksum metadata are checked, followed by
-        bounded GET streaming SHA-256 verification. Repeated finalisation returns
+        Privileged WordPress PHP calls this hosted route with metadata only, and only
+        after a successful non-redirected browser PUT. HTTP 200 from R2 is not proof of
+        correct bytes. HEAD size, MIME and declared checksum metadata are checked,
+        followed by bounded GET streaming SHA-256 verification. Repeated finalisation returns
         the existing source/revision. The revision remains durable PENDING for
         Background reconciliation; disabled merchant preference permits configuration
         but does not promise ingestion. No Redis operation runs inside a transaction.
@@ -223,14 +263,30 @@ paths:
                 sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
                 sourceId: { type: string, maxLength: 128, description: Optional owned upload source to replace }
       responses:
-        '200': { description: Accepted sourceId, revisionId, generation and ACCEPTED status }
-        '400': { description: Malformed request }
-        '401': { description: Unauthorized installation }
-        '403': { description: Not entitled, not owned or invalid source format }
-        '404': { description: Missing asset }
-        '409': { description: Expired/conflicting intent or integrity mismatch }
-        '413': { description: Excessive request body }
-        '503': { description: R2 unavailable or persistence failed }
+        '200':
+          description: Accepted sourceId, revisionId, generation and ACCEPTED status
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '400':
+          description: Malformed request
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '401':
+          description: Unauthorized installation
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '403':
+          description: Not entitled, not owned or invalid source format
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '404':
+          description: Missing asset
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '409':
+          description: Expired/conflicting intent or integrity mismatch
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '413':
+          description: Excessive request body
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        '503':
+          description: R2 unavailable or persistence failed
+          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
   /v1/merchant/merchant-knowledge/uploads/{sourceId}:
     patch:
       operationId: editWooKnowledgeUploadSource

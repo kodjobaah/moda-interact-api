@@ -273,6 +273,10 @@ export class MerchantKnowledgeUploadService {
 
 export function normaliseUploadError(error: unknown): KnowledgeUploadError {
   if (error instanceof KnowledgeUploadError) return error;
-  if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code)) return conflict();
+  // If the generated Prisma client has not exposed its runtime error constructor,
+  // the normaliser must still return a bounded upload error for provider failures.
+  const knownRequestError = Prisma.PrismaClientKnownRequestError;
+  if (typeof knownRequestError === "function" && error instanceof knownRequestError &&
+      ["P2002", "P2034"].includes(error.code)) return conflict();
   return unavailable();
 }

@@ -31,13 +31,18 @@ export function loadUploadR2Configuration(env: NodeJS.ProcessEnv = process.env):
 export function createUploadR2(config: UploadR2Configuration, injectedClient?: S3Client): UploadR2 {
   const client = injectedClient ?? new S3Client({ endpoint: config.endpoint, region: "auto", forcePathStyle: true,
     credentials: { accessKeyId: config.accessKeyId, secretAccessKey: config.secretAccessKey },
+    // The Blob bytes are sent later by a different client. Do not automatically
+    // sign an SDK-computed CRC32 of the empty presigning request into its URL.
+    // Finalise independently rehashes the actual uploaded object with SHA-256.
+    requestChecksumCalculation: "WHEN_REQUIRED",
     maxAttempts: 2 });
   return {
     async sign({ key, contentType, sha256, expiresIn }) {
       try {
         const signed = await getSignedUrl(client, new PutObjectCommand({ Bucket: config.bucket, Key: key,
           ContentType: contentType, IfNoneMatch: "*", Metadata: { sha256 } }), { expiresIn,
-          // Keep these requirements in signed request headers for the PHP R2 proxy.
+          // Preserve browser-sendable signed headers for the direct R2 Blob PUT.
+          // Do not hoist requiredHeaders metadata into the signed URL query.
           unhoistableHeaders: new Set(["x-amz-meta-sha256"]),
           signableHeaders: new Set(["content-type", "if-none-match"]),
         });
