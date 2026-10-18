@@ -28,6 +28,7 @@ import { MerchantKnowledgeCommandService } from "../merchant/merchant-knowledge/
 import { createMerchantKnowledgeCommandRoute } from "../merchant/merchant-knowledge/commands.routes.js";
 import { MerchantFeaturePreferencesService } from "../merchant/feature-preferences/service.js";
 import { createMerchantFeaturePreferencesRoute } from "../merchant/feature-preferences/routes.js";
+import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -35,10 +36,11 @@ export function createMerchantRoutes(options: {
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
   environment: string;
+  platformConfiguration?: ApiPlatformConfigurationReader;
 }): readonly ApiRouteHandler[] {
   const { prisma, authenticator, logger, environment } = options;
   const commerceEnvironment = commerceEnvironmentForApi(environment);
-  const knowledgeRead = new MerchantKnowledgeReadService(prisma, process.env.MERCHANT_KNOWLEDGE_MAX_UPLOAD_BYTES);
+  const knowledgeRead = new MerchantKnowledgeReadService(prisma, undefined, options.platformConfiguration);
   return [
     createMerchantKnowledgeCommandRoute({
       service: new MerchantKnowledgeCommandService(prisma, knowledgeRead), authenticator, logger,
@@ -78,7 +80,7 @@ export function createMerchantRoutes(options: {
       service: new MerchantStoreContextService(prisma), authenticator, logger,
     }),
     createMerchantKnowledgeUploadRoutes({
-      service: new MerchantKnowledgeUploadService(prisma, { environment }), authenticator, logger,
+      service: new MerchantKnowledgeUploadService(prisma, { environment, ...(options.platformConfiguration ? { configuration: options.platformConfiguration } : {}) }), authenticator, logger,
     }),
   ];
 }

@@ -11,6 +11,7 @@ import { createWooBillingWebhookRoute } from "../woocommerce/billing/webhooks/wo
 import { WooReadCredentialVerifier } from "../woocommerce/rest-read/credential-verifier.js";
 import { WooReadAuthorizationService } from "../woocommerce/rest-read/authorization.service.js";
 import { createWooRestReadAuthorizationRoutes } from "../woocommerce/rest-read/authorization.routes.js";
+import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
 
 /** The Woo routes each retain their distinct connect, signed-webhook and callback trust boundaries. */
 export function createWooRoutes(options: {
@@ -18,6 +19,7 @@ export function createWooRoutes(options: {
   config: RuntimeConfig;
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
+  platformConfiguration?: ApiPlatformConfigurationReader;
 }): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; restRead?: ApiRouteHandler } {
   const { prisma, config, authenticator, logger } = options;
   const installation = createWooInstallationRoutes({
@@ -33,12 +35,18 @@ export function createWooRoutes(options: {
     receiptService: new WooBillingWebhookReceiptService(prisma.wooCommerceBillingWebhookReceipt),
     logger,
   });
-  const restRead = config.wooRestReadAuthorization
+  const restRead = (config.wooRestReadPublicOrigin || config.wooRestReadAuthorization)
     ? createWooRestReadAuthorizationRoutes({
         authenticator,
         service: new WooReadAuthorizationService(
           prisma,
-          config.wooRestReadAuthorization,
+          config.wooRestReadPublicOrigin
+            ? { publicOrigin: config.wooRestReadPublicOrigin,
+                resolveSecurity: async () => {
+                  if (!options.platformConfiguration) throw new Error("platform_configuration_unavailable");
+                  return options.platformConfiguration.requireCommerceConnectionSecurity();
+                } }
+            : config.wooRestReadAuthorization!,
           config.woocommerceConnectionMode,
           new WooReadCredentialVerifier({ mode: config.woocommerceConnectionMode }),
         ),

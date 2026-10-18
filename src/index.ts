@@ -7,6 +7,7 @@ import { createWooRoutes } from "./composition/woocommerce.js";
 import { createDatabase } from "./database.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
+import { createApiPlatformConfigurationReader } from "./platform-configuration/composition.js";
 
 const logger = createLogger({
   serviceName: "moda-interact-api",
@@ -18,13 +19,16 @@ async function main(): Promise<void> {
     const config = loadRuntimeConfig(process.env);
     const database = createDatabase(config.databaseUrl);
     const authenticator = new WooInstallationAuthenticator(database.prisma);
+    const platformConfiguration = createApiPlatformConfigurationReader({
+      prisma: database.prisma, environment: config.environment, logger,
+    });
     const merchant = createMerchantRoutes({
-      prisma: database.prisma, authenticator, logger, environment: config.environment,
+      prisma: database.prisma, authenticator, logger, environment: config.environment, platformConfiguration,
     });
     const billing = createBillingRoutes({
       prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling,
     });
-    const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger });
+    const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger, platformConfiguration });
     const handlers = composeApiRoutes({
       ...(woo.restRead ? { wooRestRead: woo.restRead } : {}),
       wooBillingWebhook: woo.billingWebhook,
