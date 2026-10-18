@@ -103,6 +103,77 @@ test("upload intent never loads retired environment credentials when DB configur
   });
 });
 
+test("R2 configuration revoked after intent prevents finalisation before verification or activation", async () => {
+  const principal = { shopId: "shop-one", installationId: "installation-one",
+    canonicalSiteUrl: "https://woo.example.test", credentialVersion: 1 };
+  const featureConfiguration = { schemaVersion: 1, maxKnowledgeSources: 1, maxContentUnitsPerSource: 1500,
+    allowedSourceTypes: [{ purposeKey: "PRODUCT_INFORMATION", dataFormatKey: "CSV" }] };
+  const pending = {
+    id: "asset-one", shopId: principal.shopId, objectKey: "merchant-knowledge/test/woocommerce/shop-one/asset-one/source.csv",
+    status: "PENDING_UPLOAD", uploadExpiresAt: new Date("2026-10-18T19:00:00.000Z"),
+    dataFormatId: "format-csv", contentType: "text/csv", sizeBytes: 12n, sha256: "a".repeat(64),
+    dataFormat: { key: "CSV", inputKind: "UPLOAD" },
+  };
+  let queryCount = 0;
+  let transactionCount = 0;
+  let configurationReads = 0;
+  let verificationCount = 0;
+  let persistedPending = false;
+  const tx = {
+    async $queryRaw() {
+      queryCount++;
+      if (queryCount % 2 === 1) return [{ id: principal.shopId, domain: principal.canonicalSiteUrl,
+        platform: "WOOCOMMERCE", shopifyShopId: null, status: "ACTIVE" }];
+      return [{ id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl,
+        credentialVersion: principal.credentialVersion, status: "ACTIVE", revokedAt: null }];
+    },
+    subscription: { async findUnique() { return { status: "ACTIVE", plan: { active: true,
+      features: [{ configuration: featureConfiguration }] } }; } },
+    merchantKnowledgePurposeDataFormat: { async findFirst() { return { purposeId: "purpose-products",
+      dataFormatId: "format-csv", dataFormat: { key: "CSV", active: true, canonicalExtension: ".csv",
+        acceptedContentTypes: ["text/csv"] } }; } },
+    merchantKnowledgeUploadedAsset: {
+      async findUnique() { return persistedPending ? pending : null; },
+      async count() { return 0; },
+      async create() { persistedPending = true; return pending; },
+      async findFirst() { return pending; },
+      async update() { throw Error("revoked configuration must prevent asset activation"); },
+    },
+  };
+  const database = { async $transaction<T>(operation: (client: typeof tx) => Promise<T>): Promise<T> {
+    transactionCount++;
+    return operation(tx);
+  } };
+  const service = new MerchantKnowledgeUploadService(database as never, {
+    environment: "test",
+    configuration: { async requireMerchantKnowledgeR2Configuration() {
+      configurationReads++;
+      if (configurationReads === 1) return { r2Endpoint: `https://${"a".repeat(32)}.r2.cloudflarestorage.com`,
+        r2Bucket: "knowledge-bucket", r2AccessKeyId: "access", r2SecretAccessKey: "secret", maxUploadBytes: 1024,
+        maxXlsxUncompressedBytes: 2048 };
+      throw new Error("configuration revoked");
+    } },
+    r2: { async sign() { return "https://signed.example.test/object?signature=opaque"; },
+      async verify() { verificationCount++; } },
+    now: () => new Date("2026-10-18T18:00:00.000Z"),
+  });
+  const upload = { idempotencyKey: "550e8400-e29b-41d4-a716-446655440000", purposeKey: "PRODUCT_INFORMATION",
+    dataFormatKey: "CSV" as const, originalFileName: "products.csv", contentType: "text/csv", sizeBytes: 12,
+    sha256: "a".repeat(64) };
+
+  const intent = await service.intent(principal, upload);
+  assert.equal(intent.assetId.length > 0, true);
+  assert.equal(persistedPending, true);
+  await assert.rejects(() => service.finalize(principal, { assetId: intent.assetId, purposeKey: upload.purposeKey,
+    name: "Products", languageTag: "en", contentType: upload.contentType, sizeBytes: upload.sizeBytes,
+    sha256: upload.sha256 }), (error: unknown) => error instanceof KnowledgeUploadError &&
+      error.status === 503 && error.code === "knowledge_upload_unavailable");
+  assert.equal(configurationReads, 2, "intent and finalize each resolve the current sealed configuration");
+  assert.equal(verificationCount, 0, "revoked configuration must stop before reading from R2");
+  assert.equal(transactionCount, 1, "revoked configuration must stop before finalization's database transaction");
+  assert.equal(persistedPending, true, "the existing pending intent is not promoted to an available asset");
+});
+
 test("startup keeps public origin but ignores legacy Commerce environment key material", () => {
   const cfg = loadRuntimeConfig({
     DATABASE_URL: "postgresql://localhost:5432/moda",
