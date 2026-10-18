@@ -8,14 +8,14 @@ import { apiPlatformConfigurationAad } from "../../../src/platform-configuration
 import { ApiPlatformConfigurationError } from "../../../src/platform-configuration/errors.js";
 import { createApiPlatformConfigurationService } from "../../../src/platform-configuration/service.js";
 import type { ApiPlatformConfigurationDatabase, PlatformConfigurationRow } from "../../../src/platform-configuration/repository.js";
+import { adminR2PlaintextFixture } from "../../fixtures/platform-configuration/r2-admin-payload.js";
 
 const root = parseCredentialKeyring(JSON.stringify({ "root-v1": randomBytes(32).toString("base64") }));
 const previous = randomBytes(32).toString("base64");
 const current = randomBytes(32).toString("base64");
 const hmac = randomBytes(32).toString("base64");
 const keyValues = { connectionKeysJson: JSON.stringify({ previous, current }), activeKeyId: "current", commandHmacKey: hmac };
-const validPolicy = { r2AccessKeyId: "r2-access-key-id", r2SecretAccessKey: "r2-very-secret-access-key", maxUploadBytes: 10000, maxXlsxUncompressedBytes: 50000,
-  r2Endpoint: `https://${"a".repeat(32)}.r2.cloudflarestorage.com`, r2Bucket: "knowledge-bucket" };
+const validPolicy = adminR2PlaintextFixture;
 
 function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta", version: number, payload: unknown) {
   const envelope = encryptCredential({ keyring: root, activeKeyId: "root-v1", plaintext: JSON.stringify(payload),
@@ -55,13 +55,13 @@ test("upload policy: editable location, size bounds, no cache, no cross-environm
   set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 1, validPolicy));
   assert.equal((await service.readMerchantKnowledgeUploadPolicy()).r2Bucket, "knowledge-bucket");
   set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 2,
-    { ...validPolicy, r2Bucket: "next-bucket", maxUploadBytes: 500 }), 2);
+    { ...validPolicy, bucket: "next-bucket", maxUploadBytes: 500 }), 2);
   assert.equal((await service.readMerchantKnowledgeUploadPolicy()).maxUploadBytes, 500);
   assert.equal((await service.readMerchantKnowledgeUploadPolicy()).r2Bucket, "next-bucket");
   assert.ok(queries.every((q) => q === "test:merchant.knowledge.r2"));
   const full = await service.requireMerchantKnowledgeR2Configuration();
-  assert.equal(full.r2AccessKeyId, validPolicy.r2AccessKeyId);
-  assert.equal(full.r2SecretAccessKey, validPolicy.r2SecretAccessKey);
+  assert.equal(full.r2AccessKeyId, validPolicy.accessKeyId);
+  assert.equal(full.r2SecretAccessKey, validPolicy.secretAccessKey);
   assert.equal(Object.hasOwn(await service.readMerchantKnowledgeUploadPolicy(), "r2AccessKeyId"), false);
   assert.equal(Object.hasOwn(await service.readMerchantKnowledgeUploadPolicy(), "r2SecretAccessKey"), false);
   // Credentials must not be accepted as plaintext configuration.
@@ -71,13 +71,17 @@ test("upload policy: editable location, size bounds, no cache, no cross-environm
   const tampered = sealed("test", "merchant.knowledge.r2", 3, validPolicy);
   set("test", "merchant.knowledge.r2", { ...tampered, ciphertext: "AAAA" }, 3);
   await fails(service.requireMerchantKnowledgeR2Configuration(), "UNSEAL_FAILED");
-  for (const value of [{ ...validPolicy, r2Endpoint: "http://localhost" },
-    { ...validPolicy, r2Endpoint: "https://127.0.0.1" },
+  for (const value of [{ ...validPolicy, endpoint: "http://localhost" },
+    { ...validPolicy, endpoint: "https://127.0.0.1" },
     { ...validPolicy, extraField: true },
     { ...validPolicy, maxUploadBytes: 25 * 1024 * 1024 + 1 },
     { ...validPolicy, maxXlsxUncompressedBytes: 100 * 1024 * 1024 + 1 },
-    { ...validPolicy, r2AccessKeyId: "" },
-    { ...validPolicy, r2SecretAccessKey: "" }]) {
+    { ...validPolicy, accessKeyId: "" },
+    { ...validPolicy, secretAccessKey: "" },
+    { ...validPolicy, r2Endpoint: validPolicy.endpoint },
+    { ...validPolicy, r2Bucket: validPolicy.bucket },
+    { ...validPolicy, r2AccessKeyId: validPolicy.accessKeyId },
+    { ...validPolicy, r2SecretAccessKey: validPolicy.secretAccessKey }]) {
     set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 3, value), 3);
     await fails(service.readMerchantKnowledgeUploadPolicy(), "INVALID_VALUE");
   }
@@ -145,4 +149,56 @@ test("database errors, invalid deployment environment and malformed row fail clo
   const down = createApiPlatformConfigurationService({ environment: "test", unsealKeyring: root,
     database: { platformConfiguration: { async findUnique() { throw new Error("secret-bearing connection detail"); } } } });
   await fails(down.requireMetaWebhookSecrets(), "DATABASE_UNAVAILABLE");
+});
+
+
+test("R2: ADMIN-002 sealed six-field interoperability, no legacy alias or fallback", async () => {
+  const { service, set, queries } = fixture();
+  assert.deepEqual(Object.keys(validPolicy).sort(), [
+    "endpoint", "bucket", "accessKeyId", "secretAccessKey", "maxUploadBytes", "maxXlsxUncompressedBytes",
+  ].sort());
+  set("test", "merchantKnowledge.upload", validPolicy);
+  // A populated old key must not make a missing canonical record appear configured.
+  await fails(service.readMerchantKnowledgeUploadPolicy(), "MISSING");
+  assert.deepEqual(queries, ["test:merchant.knowledge.r2"]);
+  set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 1, validPolicy));
+  assert.deepEqual(await service.readMerchantKnowledgeUploadPolicy(), {
+    r2Endpoint: `${validPolicy.endpoint}/`, r2Bucket: validPolicy.bucket,
+    maxUploadBytes: validPolicy.maxUploadBytes,
+    maxXlsxUncompressedBytes: validPolicy.maxXlsxUncompressedBytes,
+  });
+  const credentials = await service.requireMerchantKnowledgeR2Configuration();
+  assert.equal(credentials.r2AccessKeyId, validPolicy.accessKeyId);
+  assert.equal(credentials.r2SecretAccessKey, validPolicy.secretAccessKey);
+  assert.equal("r2AccessKeyId" in await service.readMerchantKnowledgeUploadPolicy(), false);
+  assert.equal("r2SecretAccessKey" in await service.readMerchantKnowledgeUploadPolicy(), false);
+  assert.ok(queries.every((entry) => entry === "test:merchant.knowledge.r2"));
+});
+
+test("R2: disabled/malformed envelopes, missing and wrong unseal root fail without secrets", async () => {
+  const { service, set, database } = fixture();
+  const key = "merchant.knowledge.r2";
+  set("test", key, { kind: "disabled", schemaVersion: 1 });
+  await fails(service.readMerchantKnowledgeUploadPolicy(), "DISABLED");
+  await fails(service.requireMerchantKnowledgeR2Configuration(), "DISABLED");
+  set("test", key, { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM" }, 2);
+  await fails(service.readMerchantKnowledgeUploadPolicy(), "INVALID_ENVELOPE");
+  set("test", key, sealed("test", key, 3, validPolicy), 3);
+  const missingRoot = createApiPlatformConfigurationService({ database, environment: "test" });
+  await fails(missingRoot.requireMerchantKnowledgeR2Configuration(), "UNSEAL_FAILED");
+  const wrongRoot = createApiPlatformConfigurationService({ database, environment: "test",
+    unsealKeyring: parseCredentialKeyring(JSON.stringify({ "root-v1": randomBytes(32).toString("base64") })) });
+  await fails(wrongRoot.readMerchantKnowledgeUploadPolicy(), "UNSEAL_FAILED");
+  // A row-version change must invalidate AAD and must not reveal the plaintext.
+  set("test", key, sealed("test", key, 3, validPolicy), 4);
+  await fails(service.requireMerchantKnowledgeR2Configuration(), "UNSEAL_FAILED");
+  // The error must not contain any part of the R2 plaintext or envelope.
+  try { await service.requireMerchantKnowledgeR2Configuration(); assert.fail("should reject"); }
+  catch (error) {
+    assert.ok(error instanceof ApiPlatformConfigurationError);
+    const diagnostic = JSON.stringify(error);
+    for (const secret of [validPolicy.accessKeyId, validPolicy.secretAccessKey, "fixture-only-secret-key"]) {
+      assert.equal(diagnostic.includes(secret), false);
+    }
+  }
 });

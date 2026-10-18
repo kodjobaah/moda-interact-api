@@ -7,6 +7,7 @@ import { encryptCredential, parseCredentialKeyring } from
 import { apiPlatformConfigurationAad } from "../../../src/platform-configuration/contracts.js";
 import { ApiPlatformConfigurationError } from "../../../src/platform-configuration/errors.js";
 import { createApiPlatformConfigurationService } from "../../../src/platform-configuration/service.js";
+import { adminR2PlaintextFixture } from "../../fixtures/platform-configuration/r2-admin-payload.js";
 
 const url = process.env.ARCH043_API_TEST_DATABASE_URL;
 function requireDatabaseUrl(): string {
@@ -17,9 +18,8 @@ const root = parseCredentialKeyring(JSON.stringify({ wrapping: randomBytes(32).t
 const cryptoPrevious = randomBytes(32).toString("base64");
 const cryptoCurrent = randomBytes(32).toString("base64");
 const hmac = randomBytes(32).toString("base64");
-const policy = { r2AccessKeyId: "r2-access-key-id", r2SecretAccessKey: "r2-very-secret-access-key",
-  maxUploadBytes: 1000, maxXlsxUncompressedBytes: 5000,
-  r2Endpoint: `https://${"b".repeat(32)}.r2.cloudflarestorage.com`, r2Bucket: "first-bucket" };
+const policy = { ...adminR2PlaintextFixture, maxUploadBytes: 1000,
+  maxXlsxUncompressedBytes: 5000, bucket: "first-bucket" };
 const commerce = { connectionKeysJson: JSON.stringify({ old: cryptoPrevious, current: cryptoCurrent }),
   activeKeyId: "current", commandHmacKey: hmac };
 const meta = { META_APP_SECRET: "0123456789abcdef0123456789abcdef", WHATSAPP_VERIFY_TOKEN: "secret-verify-token" };
@@ -32,8 +32,12 @@ function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.co
     authTag: Buffer.from(envelope.authTag).toString("base64") };
 }
 function failed(promise: Promise<unknown>, code: ApiPlatformConfigurationError["code"]) {
-  return assert.rejects(promise, (error: unknown) => error instanceof ApiPlatformConfigurationError &&
-    error.code === code && !error.message.includes(hmac));
+  return assert.rejects(promise, (error: unknown) => {
+    if (!(error instanceof ApiPlatformConfigurationError) || error.code !== code) return false;
+    const diagnostic = `${error.message} ${JSON.stringify(error)}`;
+    return [hmac, policy.accessKeyId, policy.secretAccessKey, commerce.connectionKeysJson,
+      meta.META_APP_SECRET, meta.WHATSAPP_VERIFY_TOKEN].every((secret) => !diagnostic.includes(secret));
+  });
 }
 
 // The launcher always supplies a fresh disposable PostgreSQL DATABASE_URL.
@@ -46,21 +50,47 @@ test("PostgreSQL: missing policy, current committed policy and cross-environment
     await failed(service.readMerchantKnowledgeUploadPolicy(), "MISSING");
     await db.platformConfiguration.create({ data: { environment: "test", key: "merchant.knowledge.r2", value: sealed("test", "merchant.knowledge.r2", 1, policy) } });
     assert.equal((await service.readMerchantKnowledgeUploadPolicy()).r2Bucket, "first-bucket");
-    assert.equal((await service.requireMerchantKnowledgeR2Configuration()).r2AccessKeyId, policy.r2AccessKeyId);
-    assert.equal(Object.hasOwn(await service.readMerchantKnowledgeUploadPolicy(), "r2SecretAccessKey"), false);
+    assert.equal((await service.requireMerchantKnowledgeR2Configuration()).r2AccessKeyId, policy.accessKeyId);
+    const projection = await service.readMerchantKnowledgeUploadPolicy();
+    assert.equal(Object.hasOwn(projection, "r2SecretAccessKey"), false);
+    assert.equal(Object.hasOwn(projection, "r2AccessKeyId"), false);
+    assert.equal(JSON.stringify(projection).includes(policy.secretAccessKey), false);
     await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
       data: { value: sealed("test", "merchant.knowledge.r2", 2,
-        { ...policy, r2Bucket: "replacement-bucket", maxUploadBytes: 450 }), version: { increment: 1 } } });
+        { ...policy, bucket: "replacement-bucket", maxUploadBytes: 450 }), version: { increment: 1 } } });
     assert.equal((await service.readMerchantKnowledgeUploadPolicy()).r2Bucket, "replacement-bucket");
     assert.equal((await service.readMerchantKnowledgeUploadPolicy()).maxUploadBytes, 450);
     await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
       data: { value: sealed("test", "merchant.knowledge.r2", 3,
-        { ...policy, r2Endpoint: "http://127.0.0.1" }), version: { increment: 1 } } });
+        { ...policy, endpoint: "http://127.0.0.1" }), version: { increment: 1 } } });
     await failed(service.readMerchantKnowledgeUploadPolicy(), "INVALID_VALUE");
     // The exact six-field registry payload is sealed. A plaintext row is never valid.
     await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
       data: { value: policy, version: 4 } });
     await failed(service.requireMerchantKnowledgeR2Configuration(), "INVALID_ENVELOPE");
+    // D001 still allows this legacy-only row; the API must NEVER query it.
+    await db.platformConfiguration.create({ data: { environment: "test", key: "merchantKnowledge.upload", value: {
+      maxUploadBytes: 500, maxXlsxUncompressedBytes: 1000,
+      r2Endpoint: policy.endpoint, r2Bucket: policy.bucket,
+    } } });
+    await db.platformConfiguration.delete({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } } });
+    await failed(service.readMerchantKnowledgeUploadPolicy(), "MISSING");
+    // Restore canonical row: disabled and malformed values must fail closed, with no fallback.
+    await db.platformConfiguration.create({ data: { environment: "test", key: "merchant.knowledge.r2",
+      value: { kind: "disabled", schemaVersion: 1 } } });
+    await failed(service.readMerchantKnowledgeUploadPolicy(), "DISABLED");
+    await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
+      data: { value: { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM" }, version: 2 } });
+    await failed(service.requireMerchantKnowledgeR2Configuration(), "INVALID_ENVELOPE");
+    await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
+      data: { value: sealed("test", "merchant.knowledge.r2", 3, policy), version: 3 } });
+    const noRoot = createApiPlatformConfigurationService({ database: db, environment: "test" });
+    await failed(noRoot.readMerchantKnowledgeUploadPolicy(), "UNSEAL_FAILED");
+    const wrongRoot = createApiPlatformConfigurationService({ database: db, environment: "test",
+      unsealKeyring: parseCredentialKeyring(JSON.stringify({ wrapping: randomBytes(32).toString("base64") })) });
+    await failed(wrongRoot.requireMerchantKnowledgeR2Configuration(), "UNSEAL_FAILED");
+    const success = await service.requireMerchantKnowledgeR2Configuration();
+    assert.equal(success.r2SecretAccessKey, policy.secretAccessKey);
   } finally { await db.$disconnect(); }
 });
 
