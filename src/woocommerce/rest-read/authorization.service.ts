@@ -5,6 +5,7 @@ import { canonicalizeWooSiteUrl, type WooConnectionMode } from "../installation/
 import { digestSecret } from "../../auth/woo-installation/credential.js";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import type { WooRestReadAuthorizationConfig } from "./config.js";
+import type { CommerceConnectionSecurity } from "../../platform-configuration/service.js";
 import { sealWooReadCredentials } from "./envelope.js";
 import { WooReadCredentialVerifier, WooReadVerificationError } from "./credential-verifier.js";
 import { preferredWooAdminLocale, signWooReturnLocale, verifyWooReturnLocale } from "./return-locale-proof.js";
@@ -42,18 +43,27 @@ export class WooReadAuthorizationError extends Error {
 export class WooReadAuthorizationService {
   constructor(
     private readonly database: WooReadAuthorizationDatabase,
-    private readonly config: WooRestReadAuthorizationConfig,
+    private readonly config: WooRestReadAuthorizationConfig | {
+      publicOrigin: string; resolveSecurity: () => Promise<CommerceConnectionSecurity>;
+    },
     private readonly mode: WooConnectionMode,
     private readonly verifier: Pick<WooReadCredentialVerifier, "verify">,
     private readonly now: () => Date = () => new Date(),
     private readonly tokenFactory: () => Buffer = () => randomBytes(32),
   ) {}
 
+  private async operationConfig(): Promise<WooRestReadAuthorizationConfig> {
+    if (!("resolveSecurity" in this.config)) return this.config;
+    const { keyring, activeKeyId } = await this.config.resolveSecurity();
+    return { publicOrigin: this.config.publicOrigin, keyring, activeKeyId };
+  }
+
   async start(principal: WooInstallationPrincipal, adminLocale?: string): Promise<{
     schemaVersion: 1;
     authorizationUrl: string;
     expiresAt: string;
   }> {
+    const config = await this.operationConfig();
     const site = canonicalizeWooSiteUrl(principal.canonicalSiteUrl, this.mode);
     const token = this.tokenFactory();
     if (token.length !== 32) throw new WooReadAuthorizationError(500, "internal_error");
@@ -70,11 +80,11 @@ export class WooReadAuthorizationService {
       select: { id: true, expiresAt: true },
     }).catch(() => { throw new WooReadAuthorizationError(409, "shop_unavailable"); });
 
-    const returnUrl = new URL(`${this.config.publicOrigin}${RETURN_PATH}`);
+    const returnUrl = new URL(`${config.publicOrigin}${RETURN_PATH}`);
     const requestedLocale = preferredWooAdminLocale(adminLocale);
     if (requestedLocale) {
       returnUrl.searchParams.set("display_locale", requestedLocale);
-      returnUrl.searchParams.set("display_proof", signWooReturnLocale(this.config, attempt.id, principal.shopId, requestedLocale));
+      returnUrl.searchParams.set("display_proof", signWooReturnLocale(config, attempt.id, principal.shopId, requestedLocale));
     }
     const url = new URL(site.canonicalSiteUrl);
     url.pathname = `${site.basePath}/wc-auth/v1/authorize`;
@@ -83,7 +93,7 @@ export class WooReadAuthorizationService {
       scope: "read",
       user_id: attempt.id,
       return_url: returnUrl.toString(),
-      callback_url: `${this.config.publicOrigin}${CALLBACK_PATH}/${token.toString("base64url")}`,
+      callback_url: `${config.publicOrigin}${CALLBACK_PATH}/${token.toString("base64url")}`,
     }).toString();
     return { schemaVersion: 1, authorizationUrl: url.toString(), expiresAt: attempt.expiresAt.toISOString() };
   }
@@ -106,7 +116,9 @@ export class WooReadAuthorizationService {
       },
     });
     if (!attempt || attempt.shopId !== attempt.installation.shopId) return "en";
-    const preferred = verifyWooReturnLocale(this.config, attemptId, attempt.shopId, requestedLocale, proof);
+    const preferred = requestedLocale && proof
+      ? verifyWooReturnLocale(await this.operationConfig(), attemptId, attempt.shopId, requestedLocale, proof)
+      : null;
     if (preferred) return preferred;
     const { storeLocale, defaultLanguageTag } = attempt.installation.shop;
     return resolveModaConfigurationLocale((storeLocale ?? defaultLanguageTag)?.replaceAll("_", "-"));
@@ -220,8 +232,9 @@ export class WooReadAuthorizationService {
       authorizationAttemptId: attempt.id,
       credentialVersionSnapshot: attempt.credentialVersionSnapshot,
     };
+    const config = await this.operationConfig();
     const envelope = sealWooReadCredentials(
-      { consumerKey: payload.consumer_key, consumerSecret: payload.consumer_secret }, context, this.config,
+      { consumerKey: payload.consumer_key, consumerSecret: payload.consumer_secret }, context, config,
     );
     try {
       await serializableRetry(async () => this.database.$transaction(async (transaction) => {

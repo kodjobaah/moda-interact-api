@@ -4,6 +4,7 @@ import { MODA_SUPPORTED_LANGUAGE_TAGS, resolveModaConfigurationLocale } from "@m
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { MERCHANT_KNOWLEDGE_PAGE_SIZE, MerchantKnowledgeReadError, type MerchantKnowledgeReadResponse } from "./contract.js";
 import { projectCatalogue, projectSource, type ActiveRevisionRow } from "./projection.js";
+import type { ApiPlatformConfigurationReader } from "../../platform-configuration/service.js";
 
 export type KnowledgeReadDatabase = Pick<PrismaClient, "$transaction">;
 type Transaction = Prisma.TransactionClient;
@@ -116,6 +117,7 @@ export class MerchantKnowledgeReadService {
   constructor(
     private readonly database: KnowledgeReadDatabase,
     private readonly uploadLimitEnvironment: string | undefined = undefined,
+    private readonly configuration?: Pick<ApiPlatformConfigurationReader, "readMerchantKnowledgeUploadPolicy">,
   ) {}
 
   async read(principal: WooInstallationPrincipal, afterPosition: number | null = null): Promise<MerchantKnowledgeReadResponse> {
@@ -123,6 +125,10 @@ export class MerchantKnowledgeReadService {
       throw new MerchantKnowledgeReadError(400, "invalid_request");
     }
     try {
+      // One fresh policy read, outside the merchant read transaction.
+      const maxUploadBytes = this.configuration
+        ? (await this.configuration.readMerchantKnowledgeUploadPolicy()).maxUploadBytes
+        : resolveUploadLimit(this.uploadLimitEnvironment);
       return await this.database.$transaction(async (transaction) => {
         const defaultLanguage = await assertWooPrincipal(transaction, principal);
         const [{ configuration, merchantEnabled }, allSourceCount] = await Promise.all([
@@ -186,7 +192,7 @@ export class MerchantKnowledgeReadService {
           planEntitled, merchantEnabled, effectiveEnabled: planEntitled && merchantEnabled,
           maxKnowledgeSources: configuration?.maxKnowledgeSources ?? 0,
           maxContentUnitsPerSource: configuration?.maxContentUnitsPerSource ?? 0,
-          maxUploadBytes: resolveUploadLimit(this.uploadLimitEnvironment),
+          maxUploadBytes,
           configuredCount: allSourceCount, planEligibleSourceCount,
           defaultLanguageTag: resolveModaConfigurationLocale(defaultLanguage),
           supportedLanguageTags: MODA_SUPPORTED_LANGUAGE_TAGS,

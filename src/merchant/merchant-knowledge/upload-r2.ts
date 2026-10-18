@@ -11,7 +11,7 @@ export interface UploadR2 {
   sign(input: { key: string; contentType: string; sha256: string; expiresIn: number }): Promise<string>;
   verify(input: { key: string; contentType: string; sha256: string; sizeBytes: number }): Promise<void>;
 }
-/** Configuration is resolved for upload operations only; missing R2 must not break read routes. */
+/** Legacy test fixture parser. Production composition never invokes this environment reader. */
 export function loadUploadR2Configuration(env: NodeJS.ProcessEnv = process.env): UploadR2Configuration {
   const bucket = env.MERCHANT_KNOWLEDGE_R2_BUCKET;
   const accessKeyId = env.MERCHANT_KNOWLEDGE_R2_ACCESS_KEY_ID;

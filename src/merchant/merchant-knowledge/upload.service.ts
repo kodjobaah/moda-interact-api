@@ -4,7 +4,8 @@ import { MerchantKnowledgeFeatureConfigurationSchema } from "@modainteract/moda-
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { conflict, denied, deterministicAssetId, integrity, invalid, KnowledgeUploadError,
   type UploadFinalizeRequest, type UploadIntentRequest, UPLOAD_TTL_SECONDS, unavailable, wooObjectKey } from "./upload-contract.js";
-import { createUploadR2, loadUploadR2Configuration, type UploadR2, type UploadR2Configuration } from "./upload-r2.js";
+import { createUploadR2, type UploadR2, type UploadR2Configuration } from "./upload-r2.js";
+import type { ApiPlatformConfigurationReader } from "../../platform-configuration/service.js";
 
 type Tx = Prisma.TransactionClient;
 const pairKey = (purpose: string, format: string) => `${purpose}\u0000${format}`;
@@ -82,21 +83,35 @@ export interface UploadServiceOptions {
   r2?: UploadR2;
   config?: UploadR2Configuration;
   environment?: string;
+  configuration?: Pick<ApiPlatformConfigurationReader, "requireMerchantKnowledgeR2Configuration">;
   now?: () => Date;
 }
 export class MerchantKnowledgeUploadService {
   constructor(private readonly database: Pick<PrismaClient, "$transaction">,
     private readonly options: UploadServiceOptions = {}) {}
-  private dependencies() {
-    const config = this.options.config ?? loadUploadR2Configuration();
-    const r2 = this.options.r2 ?? createUploadR2(config);
+  private async dependencies() {
+    // A single decrypted purpose-scoped snapshot is used by each upload operation.
+    // Injected fixtures remain available for isolated tests, not production composition.
+    let config: UploadR2Configuration;
+    try {
+      if (this.options.configuration) {
+        const snapshot = await this.options.configuration.requireMerchantKnowledgeR2Configuration();
+        config = { endpoint: snapshot.r2Endpoint, bucket: snapshot.r2Bucket,
+          accessKeyId: snapshot.r2AccessKeyId, secretAccessKey: snapshot.r2SecretAccessKey,
+          maxUploadBytes: snapshot.maxUploadBytes };
+      } else if (this.options.config) config = this.options.config;
+      else throw unavailable();
+    } catch { throw unavailable(); }
+    let r2: UploadR2;
+    try { r2 = this.options.r2 ?? createUploadR2(config); }
+    catch { throw unavailable(); }
     const environment = this.options.environment ?? process.env.NODE_ENV ?? "development";
     return { config, r2, environment };
   }
   private now() { return this.options.now?.() ?? nowDate(); }
 
   async intent(principal: WooInstallationPrincipal, request: UploadIntentRequest) {
-    const { config, r2, environment } = this.dependencies();
+    const { config, r2, environment } = await this.dependencies();
     if (request.sizeBytes > config.maxUploadBytes) throw new KnowledgeUploadError(413, "request_too_large");
     const assetId = deterministicAssetId(principal.shopId, request.idempotencyKey);
     const objectKey = wooObjectKey(environment, principal.shopId, assetId, request.dataFormatKey);
@@ -137,7 +152,7 @@ export class MerchantKnowledgeUploadService {
   }
 
   async finalize(principal: WooInstallationPrincipal, request: UploadFinalizeRequest) {
-    const { config, r2 } = this.dependencies();
+    const { config, r2 } = await this.dependencies();
     if (request.sizeBytes > config.maxUploadBytes) throw integrity();
     const preliminary = await this.database.$transaction(async (tx) => {
       await assertWoo(tx, principal);
