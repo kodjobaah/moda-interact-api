@@ -1,0 +1,155 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Human Send Commands
+  version: 1.0.0
+  description: >-
+    Installation-authenticated durable HUMAN intent for recovery conversations.
+    Acceptance only enqueues the canonical PostgreSQL command; the platform-neutral
+    Background poller owns moderation, Meta dispatch, receipts and follow-up credit.
+servers:
+  - url: /
+paths:
+  /v1/merchant/conversations/{conversationId}/messages:
+    post:
+      operationId: acceptWooHumanConversationMessage
+      summary: Durably accept a HUMAN reply or approved post-window recovery follow-up
+      security: [{InstallationBearer: [], InstallationId: []}]
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/HumanTextIntent'
+                - $ref: '#/components/schemas/HumanFollowUpIntent'
+      responses:
+        '202':
+          description: New durable command accepted; no provider send or credit consumed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Admission' }
+        '200':
+          description: Identical idempotency replay with original command identity and persisted state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Admission' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: human_messaging_suspended, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Stale revision, mode, window, template, recipient, follow-up or idempotency conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '413': { description: JSON exceeds 6144 bytes }
+        '500': { description: Bounded internal_error }
+  /v1/merchant/conversations/{conversationId}/send-commands/{commandId}:
+    get:
+      operationId: readWooHumanSendCommand
+      summary: Shop-scoped command state and content-specific moderation decision
+      security: [{InstallationBearer: [], InstallationId: []}]
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+        - name: commandId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+      responses:
+        '200':
+          description: No-store status projection; moderation is not a provider acknowledgement
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Status' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { description: Bounded internal_error }
+components:
+  securitySchemes:
+    InstallationBearer: { type: http, scheme: bearer }
+    InstallationId: { type: apiKey, in: header, name: x-moda-installation-id }
+  parameters:
+    ConversationId:
+      name: conversationId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+  responses:
+    BadRequest:
+      description: Invalid body, content type, path or query
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    Unauthorized:
+      description: Missing, revoked or rotated Woo installation
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+    NotFound:
+      description: Missing, standalone or foreign-shop conversation/command
+      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties: { error: { type: string } }
+    SharedCommand:
+      type: object
+      properties:
+        expectedControlRevision: { type: integer, minimum: 0, maximum: 2147483647 }
+        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
+    HumanTextIntent:
+      type: object
+      additionalProperties: false
+      required: [kind, expectedControlRevision, idempotencyKey, textBody]
+      properties:
+        kind: { type: string, const: HUMAN_TEXT }
+        expectedControlRevision: { type: integer, minimum: 0, maximum: 2147483647 }
+        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
+        textBody: { type: string, minLength: 1, maxLength: 4000 }
+    HumanFollowUpIntent:
+      type: object
+      additionalProperties: false
+      required: [kind, expectedControlRevision, idempotencyKey, templateName, templateLanguage, templateParameters]
+      properties:
+        kind: { type: string, const: RECOVERY_FOLLOW_UP_TEMPLATE }
+        expectedControlRevision: { type: integer, minimum: 0, maximum: 2147483647 }
+        idempotencyKey: { type: string, minLength: 1, maxLength: 128 }
+        templateName: { type: string, pattern: '^[a-z][a-z0-9_]{0,254}$' }
+        templateLanguage: { type: string, pattern: '^[a-z]{2,3}(_[A-Z]{2})?$' }
+        templateParameters:
+          oneOf:
+            - type: array
+              maxItems: 16
+              items: { type: string, maxLength: 256 }
+            - type: object
+              maxProperties: 0
+              additionalProperties: false
+    Admission:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, commandId, conversationId, state, controlRevision, kind]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        commandId: { type: string }
+        conversationId: { type: string }
+        state: { type: string, enum: [ACCEPTED, CLAIMED, DISPATCH_ADMITTED, SENT, FAILED, CANCELLED, UNKNOWN] }
+        kind: { type: string, enum: [HUMAN_TEXT, RECOVERY_FOLLOW_UP_TEMPLATE] }
+        controlRevision: { type: integer, minimum: 0 }
+    Status:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, commandId, conversationId, kind, state, createdAt, updatedAt, messageId, failureCode, moderationStatus]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        commandId: { type: string }
+        conversationId: { type: string }
+        kind: { type: string, enum: [HUMAN_TEXT, RECOVERY_FOLLOW_UP_TEMPLATE] }
+        state: { type: string, enum: [ACCEPTED, CLAIMED, DISPATCH_ADMITTED, SENT, FAILED, CANCELLED, UNKNOWN] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        messageId: { type: [string, 'null'] }
+        failureCode: { type: [string, 'null'] }
+        moderationStatus:
+          type: string
+          enum: [moderation_pending, moderation_allowed, moderation_blocked, moderation_review_required, moderation_retryable_error]
