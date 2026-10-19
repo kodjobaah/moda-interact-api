@@ -31,6 +31,9 @@ import { createMerchantFeaturePreferencesRoute } from "../merchant/feature-prefe
 import { MerchantConversationControlService } from "../merchant/conversations/control/service.js";
 import { createMerchantConversationControlRoute } from "../merchant/conversations/control/routes.js";
 import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
+import { MerchantConversationMessageAdmissionService } from "../merchant/conversations/messages/admission.service.js";
+import { MerchantConversationSendStatusService } from "../merchant/conversations/messages/status.service.js";
+import { createMerchantConversationMessageRoutes } from "../merchant/conversations/messages/routes.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -44,6 +47,11 @@ export function createMerchantRoutes(options: {
   const commerceEnvironment = commerceEnvironmentForApi(environment);
   const knowledgeRead = new MerchantKnowledgeReadService(prisma, undefined, options.platformConfiguration);
   return [
+    createMerchantConversationMessageRoutes({
+      admission: new MerchantConversationMessageAdmissionService(prisma),
+      status: new MerchantConversationSendStatusService(prisma),
+      authenticator, logger,
+    }),
     createMerchantConversationControlRoute({
       service: new MerchantConversationControlService(prisma), authenticator, logger,
     }),
