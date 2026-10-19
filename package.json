@@ -22,7 +22,8 @@
     "test:arch035-merchant-knowledge:postgres": "node scripts/test-arch035-merchant-knowledge-postgres.mjs",
     "test:arch035-features:postgres": "node scripts/test-arch035-feature-preferences-postgres.mjs",
     "test:arch035-knowledge-upload:postgres": "node scripts/test-arch035-knowledge-upload-postgres.mjs",
-    "test:arch043-platform-configuration:postgres": "node scripts/run-arch043-platform-configuration-postgres.mjs"
+    "test:arch043-platform-configuration:postgres": "node scripts/run-arch043-platform-configuration-postgres.mjs",
+    "test:arch040-conversation-control:postgres": "node scripts/test-arch040-woo-conversation-control-postgres.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",
