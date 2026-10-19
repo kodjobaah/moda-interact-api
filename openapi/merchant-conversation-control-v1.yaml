@@ -1,0 +1,93 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Conversation Ownership Control
+  version: 1.0.0
+  description: >-
+    WooCommerce installation-authenticated takeover and Resume AI for an existing
+    checkout-recovery conversation. Shopify uses its own session-authenticated
+    control route. A mode change neither opens the WhatsApp customer window nor
+    creates a message, recovery follow-up or billing debit.
+servers:
+  - url: /
+paths:
+  /v1/merchant/conversations/{conversationId}/control:
+    post:
+      operationId: changeWooMerchantConversationControl
+      summary: Take Over (HUMAN) or Resume AI (AI)
+      security:
+        - InstallationBearer: []
+          InstallationId: []
+      parameters:
+        - name: conversationId
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^[A-Za-z0-9_-]{1,191}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ControlCommand'
+      responses:
+        '200':
+          description: Committed transition or same-mode/current-revision no-op
+          headers:
+            Cache-Control:
+              schema: { type: string, const: no-store }
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ControlSnapshot'
+        '400': { description: Invalid path, query, content type or control command }
+        '401': { description: Installation authentication missing, revoked or rotated }
+        '403':
+          description: Shop HUMAN messaging suspended (Resume AI remains permitted)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '404': { description: Missing or foreign recovery-linked conversation }
+        '409':
+          description: Stale revision or database integrity conflict
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConflictResponse' }
+        '413': { description: JSON request body exceeds 512 bytes }
+        '500': { description: Unexpected internal failure; no private diagnostic data }
+components:
+  securitySchemes:
+    InstallationBearer: { type: http, scheme: bearer }
+    InstallationId: { type: apiKey, in: header, name: x-moda-installation-id }
+  schemas:
+    ControlCommand:
+      type: object
+      additionalProperties: false
+      required: [targetMode, expectedControlRevision]
+      properties:
+        targetMode: { type: string, enum: [AI, HUMAN] }
+        expectedControlRevision: { type: integer, minimum: 0, maximum: 2147483647 }
+    ControlSnapshot:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, conversationId, controlMode, controlRevision, controlChangedAt]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        conversationId: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        controlMode: { type: string, enum: [AI, HUMAN] }
+        controlRevision: { type: integer, minimum: 0 }
+        controlChangedAt: { type: [string, 'null'], format: date-time }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string }
+    ConflictResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string, enum: [stale_control_revision, conversation_control_conflict, conversation_control_integrity_invalid] }
+        controlMode: { type: string, enum: [AI, HUMAN] }
+        controlRevision: { type: integer, minimum: 0 }
