@@ -13,6 +13,7 @@ import { WooReadAuthorizationService } from "../woocommerce/rest-read/authorizat
 import { createWooRestReadAuthorizationRoutes } from "../woocommerce/rest-read/authorization.routes.js";
 import { createWooCheckoutActivityRoute } from "../woocommerce/activity/routes.js";
 import type { WooCheckoutPublisher } from "../woocommerce/activity/producer.js";
+import type { WooOrderPublisher } from "../woocommerce/activity/order-producer.js";
 import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
 
 /** The Woo routes each retain their distinct connect, signed-webhook and callback trust boundaries. */
@@ -23,6 +24,7 @@ export function createWooRoutes(options: {
   logger: StructuredLogger;
   platformConfiguration?: ApiPlatformConfigurationReader;
   checkoutPublisher?: WooCheckoutPublisher;
+  orderPublisher?: WooOrderPublisher;
 }): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; restRead?: ApiRouteHandler } {
   const { prisma, config, authenticator, logger } = options;
   const installation = createWooInstallationRoutes({
@@ -59,6 +61,7 @@ export function createWooRoutes(options: {
   const activity = createWooCheckoutActivityRoute({
     authenticator,
     publisher: options.checkoutPublisher ?? { async publish() { throw new Error("woo_checkout_redis_unavailable"); } },
+    ...(options.orderPublisher ? { orderPublisher: options.orderPublisher } : {}),
     logger,
   });
   return {

@@ -29,9 +29,9 @@ async function main(): Promise<void> {
     const billing = createBillingRoutes({
       prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling,
     });
-    const checkoutQueue = createWooCheckoutRedisProducer(process.env.REDIS_URL);
+    const activityQueues = createWooCheckoutRedisProducer(process.env.REDIS_URL);
     const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger, platformConfiguration,
-      checkoutPublisher: checkoutQueue.publisher });
+      checkoutPublisher: activityQueues.publisher, orderPublisher: activityQueues.orderPublisher });
     const handlers = composeApiRoutes({
       ...(woo.restRead ? { wooRestRead: woo.restRead } : {}),
       wooBillingWebhook: woo.billingWebhook,
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
       billing,
       wooInstallation: woo.installation,
     });
-    const runtime = createApiRuntime(config, database, logger, handlers, () => checkoutQueue.close());
+    const runtime = createApiRuntime(config, database, logger, handlers, () => activityQueues.close());
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch (error) {

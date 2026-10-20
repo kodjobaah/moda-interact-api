@@ -1,10 +1,10 @@
 import type { IncomingMessage } from "node:http";
 import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
 import { singleHeader } from "../../http/headers.js";
-import { MAX_WOO_ACTIVITY_BYTES, parseWooCheckoutEvent, WooActivityRequestError } from "./contract.js";
+import { MAX_WOO_ACTIVITY_BYTES, parseWooActivityEvent, WooActivityRequestError } from "./contract.js";
 
 /** Authenticate before reading any event bytes; disallow compressed/ambiguous content. */
-export async function readWooCheckoutRequest(request: IncomingMessage) {
+export async function readWooActivityRequest(request: IncomingMessage) {
   const type = singleHeader(request, "content-type");
   const encoding = singleHeader(request, "content-encoding");
   const length = singleHeader(request, "content-length");
@@ -20,7 +20,7 @@ export async function readWooCheckoutRequest(request: IncomingMessage) {
     (reason) => new WooActivityRequestError(reason === "oversized" ? 413 : 400,
       reason === "oversized" ? "request_too_large" : "invalid_request"));
   if (bytes.length === 0) throw new WooActivityRequestError(400, "invalid_request");
-  try { return parseWooCheckoutEvent(decodeStrictJsonBody(bytes)); }
+  try { return parseWooActivityEvent(decodeStrictJsonBody(bytes)); }
   catch (error) {
     if (error instanceof WooActivityRequestError) throw error;
     throw new WooActivityRequestError(400, "invalid_request");

@@ -24,9 +24,10 @@ try {
   stage = "running authenticated BullMQ integration tests";
   execFileSync("node", ["--import", "tsx", "--test", "--test-concurrency=1",
     "tests/integration/woocommerce/activity/redis-queue.test.ts"], {
-    stdio: "inherit", env: { ...process.env, WOO_ACTIVITY_TEST_REDIS_URL: `redis://127.0.0.1:${port}` },
+    stdio: "inherit", timeout: 120_000,
+    env: { ...process.env, WOO_ACTIVITY_TEST_REDIS_URL: `redis://127.0.0.1:${port}` },
   });
-  process.stdout.write("PASS ARCH-035-API-008 disposable Redis/BullMQ checkout capture\n");
+  process.stdout.write("PASS ARCH-035-API-008/019 disposable Redis/BullMQ checkout and order capture\n");
 } catch {
   process.stderr.write(`ARCH-035-API-008 Redis integration failed while ${stage}.\n`);
   process.exitCode = 1;
