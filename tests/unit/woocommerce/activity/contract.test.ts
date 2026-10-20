@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  parseWooCheckoutEvent, WooActivityRequestError, MAX_WOO_ACTIVITY_BYTES,
+  parseWooCheckoutEvent, parseWooActivityEvent, WooActivityRequestError, MAX_WOO_ACTIVITY_BYTES,
 } from "../../../../src/woocommerce/activity/contract.js";
 import { event } from "../../../fixtures/woocommerce/activity/checkout-event.js";
+import { orderPlaced, orderPaid, orderCancelled } from "../../../fixtures/woocommerce/activity/order-event.js";
 
 test("accepts canonical checkout fields and keeps optional contact absent", () => {
   assert.deepEqual(parseWooCheckoutEvent(event), event);
@@ -39,4 +40,36 @@ test("order cases are reserved and never mistaken for checkout events", () => {
       ...event, eventType, order: { orderId: "1", status: "processing" }, checkout: undefined,
     }), (error: unknown) => error instanceof WooActivityRequestError && error.status === 422);
   }
+});
+
+test("all three authoritative Woo order types retain correlation and event identity", () => {
+  for (const order of [orderPlaced, orderPaid, orderCancelled]) {
+    assert.deepEqual(parseWooActivityEvent(order), order);
+    assert.equal(parseWooActivityEvent(order).checkoutKey, "cart-001");
+  }
+  assert.deepEqual(parseWooActivityEvent(event), event);
+});
+
+test("rejects uncorrelated, foreign-shop, malformed and fabricated order evidence", () => {
+  const invalidOrders: unknown[] = [
+    { ...orderPlaced, shopId: "foreign-shop" },
+    { ...orderPlaced, order: { ...orderPlaced.order, shopId: "foreign-shop" } },
+    { ...orderPlaced, order: { ...orderPlaced.order, checkoutKey: "other-cart" } },
+    { ...orderPlaced, order: { orderId: "42", status: "processing" } },
+    { ...orderPlaced, checkoutKey: "" },
+    { ...orderPlaced, checkoutKey: "foreign/cart" },
+    { ...orderPlaced, order: { ...orderPlaced.order, checkoutKey: "" } },
+    { ...orderPlaced, order: { ...orderPlaced.order, orderId: "" } },
+    { ...orderPlaced, order: { ...orderPlaced.order, status: "" } },
+    { ...orderPlaced, order: { ...orderPlaced.order, status: "processing\nsecret" } },
+    { ...orderPlaced, order: { ...orderPlaced.order, status: "PENDING" } },
+    { ...orderPlaced, order: { ...orderPlaced.order, email: "shopper@example.test" } },
+    { ...orderPlaced, checkout: event.checkout },
+    { ...orderPlaced, eventId: "bad id" },
+    { ...orderPlaced, occurredAt: "2026-02-30T12:01:00.000Z" },
+    { ...orderPlaced, eventType: "ORDER_REFUNDED" },
+    { ...orderPlaced, eventType: "CHECKOUT_UPDATED" },
+  ];
+  for (const payload of invalidOrders) assert.throws(() => parseWooActivityEvent(payload), (error: unknown) =>
+    error instanceof WooActivityRequestError && error.status === 400);
 });

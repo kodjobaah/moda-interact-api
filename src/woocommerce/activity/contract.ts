@@ -1,6 +1,7 @@
 /** API-owned capture-only v1 contract; intentionally separate from Shopify recovery events. */
 export const WOO_ACTIVITY_PATH = "/v1/woocommerce/activity";
 export const WOO_CHECKOUT_QUEUE = "woo-checkout-capture-v1";
+export const WOO_ORDER_QUEUE = "woo-order-capture-v1";
 export const WOO_ACTIVITY_VERSION = "woo.activity.v1";
 export const MAX_WOO_ACTIVITY_BYTES = 65_536;
 
@@ -32,6 +33,29 @@ export interface WooCheckoutEvent {
   checkoutKey: string;
   occurredAt: string;
   checkout: WooCheckoutSnapshot;
+}
+export type WooOrderEventType = "ORDER_PLACED" | "ORDER_PAID" | "ORDER_CANCELLED";
+export interface WooOrderSnapshot {
+  orderId: string;
+  /** Must be the exact stable checkoutKey from the top-level envelope. */
+  checkoutKey: string;
+  /** Observed Woo order status, not proof of payment or a recovery transition. */
+  status: string;
+}
+export interface WooOrderEvent {
+  schemaVersion: typeof WOO_ACTIVITY_VERSION;
+  eventId: string;
+  eventType: WooOrderEventType;
+  checkoutKey: string;
+  occurredAt: string;
+  order: WooOrderSnapshot;
+}
+export type WooActivityEvent = WooCheckoutEvent | WooOrderEvent;
+
+export interface WooOrderJob extends WooOrderEvent {
+  /** Authenticated installation's Shop, never supplied by the client. */
+  shopId: string;
+  contentDigest: string;
 }
 export interface WooCheckoutJob extends WooCheckoutEvent {
   /** Authenticated installation's Shop, never supplied by the client. */
@@ -96,12 +120,24 @@ function parseContact(value: unknown): WooCheckoutContact {
   };
 }
 
-/** Strictly validate and project canonical field order for stable content digests. */
-export function parseWooCheckoutEvent(value: unknown): WooCheckoutEvent {
+/** Validate the common event identity once, then project a canonical field order. */
+function parseIdentity(value: unknown) {
   const input = object(value,
     ["schemaVersion", "eventId", "eventType", "checkoutKey", "occurredAt"],
     ["schemaVersion", "eventId", "eventType", "checkoutKey", "occurredAt", "checkout", "order"]);
   if (input.schemaVersion !== WOO_ACTIVITY_VERSION) throw invalid();
+  const eventId = text(input.eventId, 128);
+  const checkoutKey = text(input.checkoutKey, 128);
+  if (!OPAQUE_ID.test(eventId) || !OPAQUE_ID.test(checkoutKey)) throw invalid();
+  const occurredAt = text(input.occurredAt, 30);
+  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(occurredAt) ||
+      !Number.isFinite(Date.parse(occurredAt)) || new Date(occurredAt).toISOString() !== occurredAt) throw invalid();
+  return { input, eventId, checkoutKey, occurredAt };
+}
+
+/** Strict checkout parser retained for API-008 callers. */
+export function parseWooCheckoutEvent(value: unknown): WooCheckoutEvent {
+  const { input, eventId, checkoutKey, occurredAt } = parseIdentity(value);
   if (input.eventType !== "CHECKOUT_UPDATED") {
     if (["ORDER_PLACED", "ORDER_PAID", "ORDER_CANCELLED"].includes(String(input.eventType))) {
       // API-019 enables order events on this route; API-008 never enqueues them.
@@ -110,12 +146,6 @@ export function parseWooCheckoutEvent(value: unknown): WooCheckoutEvent {
     throw invalid();
   }
   if (!Object.hasOwn(input, "checkout") || Object.hasOwn(input, "order")) throw invalid();
-  const eventId = text(input.eventId, 128);
-  const checkoutKey = text(input.checkoutKey, 128);
-  if (!OPAQUE_ID.test(eventId) || !OPAQUE_ID.test(checkoutKey)) throw invalid();
-  const occurredAt = text(input.occurredAt, 30);
-  if (!/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(occurredAt) ||
-      !Number.isFinite(Date.parse(occurredAt)) || new Date(occurredAt).toISOString() !== occurredAt) throw invalid();
   const checkout = object(input.checkout, ["currency", "total"], ["currency", "total", "items", "contact"]);
   const currency = text(checkout.currency, 3, 3);
   if (!/^[A-Z]{3}$/.test(currency)) throw invalid();
@@ -134,4 +164,32 @@ export function parseWooCheckoutEvent(value: unknown): WooCheckoutEvent {
       ...(Object.hasOwn(checkout, "contact") ? { contact: parseContact(checkout.contact) } : {}),
     },
   };
+}
+
+/** A Woo order event is capture-only and may arrive before its checkout snapshot. */
+export function parseWooOrderEvent(value: unknown): WooOrderEvent {
+  const { input, eventId, checkoutKey, occurredAt } = parseIdentity(value);
+  if (input.eventType !== "ORDER_PLACED" && input.eventType !== "ORDER_PAID" &&
+      input.eventType !== "ORDER_CANCELLED") throw invalid();
+  if (!Object.hasOwn(input, "order") || Object.hasOwn(input, "checkout")) throw invalid();
+  const order = object(input.order, ["orderId", "checkoutKey", "status"], ["orderId", "checkoutKey", "status"]);
+  const orderId = text(order.orderId, 128);
+  const orderCheckoutKey = text(order.checkoutKey, 128);
+  const status = text(order.status, 64);
+  if (!OPAQUE_ID.test(orderId) || !OPAQUE_ID.test(orderCheckoutKey) || orderCheckoutKey !== checkoutKey ||
+      !/^[a-z][a-z0-9_-]{0,63}$/.test(status)) throw invalid();
+  return {
+    schemaVersion: WOO_ACTIVITY_VERSION, eventId, eventType: input.eventType,
+    checkoutKey, occurredAt, order: { orderId, checkoutKey: orderCheckoutKey, status },
+  };
+}
+
+/** One strict envelope for the existing authenticated activity route. */
+export function parseWooActivityEvent(value: unknown): WooActivityEvent {
+  const kind = value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>).eventType : undefined;
+  if (kind === "ORDER_PLACED" || kind === "ORDER_PAID" || kind === "ORDER_CANCELLED") {
+    return parseWooOrderEvent(value);
+  }
+  return parseWooCheckoutEvent(value);
 }

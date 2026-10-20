@@ -5,23 +5,25 @@ info:
   description: >-
     Capture-only WooCommerce activity, with no recovery creation, WhatsApp,
     charging, consent/marketing authorisation, or durable HTTP receipt ledger.
-    This release accepts CHECKOUT_UPDATED only. Order events are reserved for
-    ARCH-035-API-019 and currently receive 422 (not enqueued).
+    Checkout and placed/paid/cancelled order events are enqueued to separate
+    Woo-only queues. Capture is not payment proof or recovery processing.
 servers:
   - url: /
 paths:
   /v1/woocommerce/activity:
     post:
       operationId: publishWooCommerceActivity
-      summary: Enqueue one authenticated Woo checkout snapshot
+      summary: Enqueue one authenticated Woo checkout or order event
       description: >-
         Requires the active Woo installation ID and its bearer credential;
         shopId is resolved exclusively from the installed, active WooCommerce
         Shop and cannot appear in the request. 202 is returned only after
-        Redis/BullMQ has accepted a Woo-only checkout job. Retries of the same
-        source event must retain the same eventId; a later actual update needs
-        a fresh eventId. Job-ID deduplication lasts only while the job is
-        retained in Redis. There is no permanent replay ledger, and a 409 on
+        Redis/BullMQ has accepted a Woo-only checkout or order job. Orders
+        must carry the same shop-scoped checkoutKey at the envelope and order
+        levels; order-first delivery is valid and does not imply payment or
+        recovery-state changes. Retries of the same emitted event must retain
+        eventId; a later genuine transition uses a new eventId. Job-ID
+        deduplication lasts only while the job is retained in Redis. There is no permanent replay ledger, and a 409 on
         a conflicting replay is possible only while the job remains available.
       parameters:
         - in: header
@@ -37,7 +39,7 @@ paths:
             schema:
               oneOf:
                 - $ref: '#/components/schemas/CheckoutEvent'
-                - $ref: '#/components/schemas/ReservedOrderEvent'
+                - $ref: '#/components/schemas/OrderEvent'
             examples:
               checkout:
                 summary: Accepted checkout update
@@ -55,8 +57,8 @@ paths:
                         quantity: 1
                         unitPrice: '29.99'
                         total: '29.99'
-              reservedOrder:
-                summary: Documented for API-019, not accepted by API-008
+              orderPlaced:
+                summary: Accepted order placement with its original checkout key
                 value:
                   schemaVersion: woo.activity.v1
                   eventId: woo-order-123-placed
@@ -65,6 +67,7 @@ paths:
                   occurredAt: '2026-10-20T12:01:00.000Z'
                   order:
                     orderId: '123'
+                    checkoutKey: cart-123
                     status: processing
       responses:
         '202':
@@ -93,12 +96,6 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
               example: { error: request_too_large }
-        '422':
-          description: Order event family is reserved, not yet enabled
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-              example: { error: event_type_not_enabled }
         '503':
           description: Queue not configured or Redis/BullMQ failed; retry the same eventId
           content:
@@ -168,10 +165,10 @@ components:
         checkoutKey: { $ref: '#/components/schemas/EventIdentity/properties/checkoutKey' }
         occurredAt: { $ref: '#/components/schemas/EventIdentity/properties/occurredAt' }
         checkout: { $ref: '#/components/schemas/CheckoutSnapshot' }
-    ReservedOrderEvent:
+    OrderEvent:
       type: object
       additionalProperties: false
-      description: Reserved for API-019; not accepted by this API release
+      description: Authenticated Woo order lifecycle evidence, capture only
       required: [schemaVersion, eventId, eventType, checkoutKey, occurredAt, order]
       properties:
         schemaVersion: { type: string, enum: [woo.activity.v1] }
@@ -182,10 +179,23 @@ components:
         order:
           type: object
           additionalProperties: false
-          required: [orderId, status]
+          required: [orderId, checkoutKey, status]
           properties:
-            orderId: { type: string, minLength: 1, maxLength: 128 }
-            status: { type: string, minLength: 1, maxLength: 64 }
+            orderId:
+              type: string
+              minLength: 1
+              maxLength: 128
+              pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+            checkoutKey:
+              allOf:
+                - $ref: '#/components/schemas/EventIdentity/properties/checkoutKey'
+              description: Must exactly equal the envelope checkoutKey; no customer/contact matching
+            status:
+              type: string
+              minLength: 1
+              maxLength: 64
+              pattern: '^[a-z][a-z0-9_-]{0,63}$'
+              description: Observed Woo order status, never inferred as payment success
     Money:
       type: string
       maxLength: 13
