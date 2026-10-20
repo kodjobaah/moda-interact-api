@@ -15,7 +15,19 @@ The WooCommerce PHP plugin uses the authenticated Moda merchant endpoints, not d
 4. After a successful PUT only, privileged PHP brokers `POST /v1/merchant/merchant-knowledge/upload-finalize` with `assetId`, `purposeKey`, `name`, `languageTag`, `sizeBytes`, `sha256`, `contentType`, and optional *owned* `sourceId` for replacement. The API checks HEAD metadata and streams GET bytes to recompute SHA-256 and size before transactional source/revision changes. A repeated finalize returns the same revision, not a duplicate. R2 unavailability fails closed.
 5. The persisted revision is initially `PENDING`; the existing Background reconciliation handles ingestion when entitlement and merchant activation permit it. Returning an accepted revision is **not** a claim that it was queued or ingested. Metadata updates and reprocess use the authenticated source endpoints.
 
-The path is generated only on Moda's server: `merchant-knowledge/<deployment-env>/woocommerce/<validated-shop-id>/<asset-uuid>/source.csv|xlsx`. The Shop ID comes from the verified installation, never from Woo HTTP input. Shopify's existing `merchant-knowledge/<env>/<myshopify-domain>/...` keys are unchanged. Background's uploaded-asset acquisition selects `objectKey` from `MerchantKnowledgeUploadedAsset` and feeds it into its R2 `getObject`, with no Shopify-domain validator; it already supports this new namespace.
+For **new** WooCommerce upload intents, Moda generates the R2 key server-side:
+`merchant-knowledge/<deployment-env>/woocommerce/<verified-shop-id>/<canonical-shop-hostname>/<UTC-timestamp>-<asset-id>.csv|xlsx`.
+For example: `merchant-knowledge/development/woocommerce/shop_123/store.example.com/20261019T180524350Z-550e8400-e29b-41d4-a716-446655440000.csv`.
+The hostname is derived from the Shop row after validating the active installation and
+canonical URL; browser-provided filenames and URLs cannot choose the storage path.
+Shop ID remains the immutable tenant boundary; a changed domain only affects new
+intents. Timestamp and identity are generated **once** for an intent and its
+persisted `MerchantKnowledgeUploadedAsset.objectKey` is reused unchanged on retry,
+including intents written before this key layout was introduced.
+
+Previously uploaded objects retain their exact legacy R2 keys. No objects are
+moved and no database migration is required. Finalise and Background continue
+to read the persisted `objectKey`; Shopify's existing keys are unchanged.
 
 ## Deployment configuration (API service only)
 

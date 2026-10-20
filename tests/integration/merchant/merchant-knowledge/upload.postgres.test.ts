@@ -5,7 +5,7 @@ import test from "node:test";
 import { PrismaClient } from "@prisma/client";
 import { encryptCredential, parseCredentialKeyring } from "@modainteract/moda-interact-shared/security/credentials/node";
 import { MerchantKnowledgeUploadService } from "../../../../src/merchant/merchant-knowledge/upload.service.js";
-import { KnowledgeUploadError, parseFinalize, parseIntent } from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
+import { deterministicAssetId, KnowledgeUploadError, parseFinalize, parseIntent } from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
 import type { UploadR2 } from "../../../../src/merchant/merchant-knowledge/upload-r2.js";
 import { apiPlatformConfigurationAad } from "../../../../src/platform-configuration/contracts.js";
 import { createApiPlatformConfigurationReader } from "../../../../src/platform-configuration/composition.js";
@@ -80,7 +80,35 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
       sizeBytes: bytes.length, sha256: checksum });
     try {
       const first = await service.intent(principal, request);
-      assert.equal(first.assetId, (await service.intent(principal, request)).assetId);
+      const firstObjectKey = (await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey;
+      assert.equal(firstObjectKey,
+        `merchant-knowledge/test/woocommerce/${shop.id}/${marker}.upload.example.invalid/20261017T090000000Z-${first.assetId}.csv`);
+      // Regenerating the key during replay would break a signed upload and create an orphan object.
+      current = new Date("2026-10-17T09:00:05Z");
+      const repeated = await service.intent(principal, request);
+      assert.equal(first.assetId, repeated.assetId);
+      assert.equal((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey,
+        firstObjectKey);
+      assert.ok(repeated.uploadUrl.includes(firstObjectKey));
+      // A changed verified shop hostname does not rewrite an already-persisted key.
+      const movedDomain = `https://moved-${marker}.example.invalid`;
+      await db.shop.update({ where: { id: shop.id }, data: { domain: movedDomain } });
+      await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { canonicalSiteUrl: movedDomain } });
+      const migratedPrincipal = { ...principal, canonicalSiteUrl: movedDomain };
+      assert.ok((await service.intent(migratedPrincipal, request)).uploadUrl.includes(firstObjectKey));
+      await db.shop.update({ where: { id: shop.id }, data: { domain } });
+      await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { canonicalSiteUrl: domain } });
+      // Old PENDING_UPLOAD records from API-017 must keep working on replay.
+      const oldRequest = { ...request, idempotencyKey: randomUUID() };
+      const oldAssetId = deterministicAssetId(shop.id, oldRequest.idempotencyKey);
+      const originalAsset = await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } });
+      const oldObjectKey = `merchant-knowledge/test/woocommerce/${shop.id}/${oldAssetId}/source.csv`;
+      await db.merchantKnowledgeUploadedAsset.create({ data: { id: oldAssetId, shopId: shop.id,
+        dataFormatId: originalAsset.dataFormatId, status: "PENDING_UPLOAD", objectKey: oldObjectKey,
+        originalFileName: request.originalFileName, contentType: request.contentType,
+        sizeBytes: BigInt(request.sizeBytes), sha256: request.sha256,
+        uploadExpiresAt: new Date("2026-10-17T09:10:00Z") } });
+      assert.ok((await service.intent(principal, oldRequest)).uploadUrl.includes(oldObjectKey));
       await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
         data: { value: sealR2Configuration(2, 10), version: 2 } });
       await assert.rejects(() => service.intent(principal, { ...request, idempotencyKey: randomUUID() }),
@@ -89,8 +117,8 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
         data: { value: sealR2Configuration(3, 10000), version: 3 } });
       const refreshed = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
       assert.equal(refreshed.maxUploadBytes, 10000);
-      assert.match((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey,
-        new RegExp(`^merchant-knowledge/test/woocommerce/${shop.id}/`));
+      assert.equal((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey,
+        firstObjectKey);
       await assert.rejects(() => service.intent(principal, { ...request, sizeBytes: 3 }),
         (error: unknown) => error instanceof KnowledgeUploadError && error.status === 409);
       const finalize = parseFinalize({ assetId: first.assetId, name: "Products", purposeKey: "PRODUCT_INFORMATION",

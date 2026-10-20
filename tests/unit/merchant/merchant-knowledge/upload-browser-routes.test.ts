@@ -35,6 +35,11 @@ function setup(options: { fail?: boolean } = {}) {
         calls.push({ operation: "finalize", shopId: p.shopId });
         return { schemaVersion: 1, sourceId: "source-a", revisionId: "revision-a", generation: 1, status: "ACCEPTED" };
       },
+      async reprocess(p: typeof principal, sourceId: string) {
+        assert.equal(sourceId, "file_1");
+        calls.push({ operation: "reprocess", shopId: p.shopId });
+        return { schemaVersion: 1, sourceId: "file_1", revisionId: "revision_2", generation: 2, status: "ACCEPTED" };
+      },
     } as never,
     logger: { info(name: string, data: unknown) { logs.push({ name, data }); },
       warn(name: string, data: unknown) { logs.push({ name, data }); } } as never,
@@ -130,4 +135,19 @@ test("only authenticated metadata finalize is accepted; malformed or upstream er
   ]);
   assert.equal(JSON.stringify(state.logs).includes(capability), false);
   assert.equal(JSON.stringify(state.logs).includes("never-log"), false);
+});
+
+test("bodyless reprocess accepts harmless transport headers but rejects actual request bytes", async () => {
+  const state = setup();
+  await withRoutes(state.routes, async (base) => {
+    const path = `${base}/v1/merchant/merchant-knowledge/uploads/file_1/reprocess`;
+    const accepted = await fetch(path, { method: "POST", headers: headers() });
+    assert.equal(accepted.status, 200); noStore(accepted);
+    assert.deepEqual(await accepted.json(), { schemaVersion: 1, sourceId: "file_1",
+      revisionId: "revision_2", generation: 2, status: "ACCEPTED" });
+    const rejected = await fetch(path, { method: "POST", headers: headers(), body: "{}" });
+    assert.equal(rejected.status, 400); noStore(rejected);
+    assert.deepEqual(await rejected.json(), { error: "invalid_request" });
+  });
+  assert.deepEqual(state.calls, [{ operation: "reprocess", shopId: principal.shopId }]);
 });

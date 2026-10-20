@@ -9,14 +9,11 @@ import { KNOWLEDGE_UPLOAD_FINALIZE_PATH, KNOWLEDGE_UPLOAD_INTENTS_PATH,
   invalid, parseEdit, parseFinalize, parseIntent } from "./upload-contract.js";
 import { MerchantKnowledgeUploadService, normaliseUploadError } from "./upload.service.js";
 
-function requestBodyAbsent(request: IncomingMessage): boolean {
-  return !request.rawHeaders.some((value, index) => index % 2 === 0 &&
-    (value.toLowerCase() === "transfer-encoding" ||
-      (value.toLowerCase() === "content-length" && request.rawHeaders[index + 1] !== "0")));
-}
 async function strictBody(request: IncomingMessage, empty = false): Promise<unknown> {
   if (empty) {
-    if (!requestBodyAbsent(request) || singleHeader(request, "content-type").count > 0) throw invalid();
+    // A bodyless POST may still carry Content-Type or Transfer-Encoding.
+    // Validate the actual bytes instead of rejecting harmless transport headers.
+    await readBoundedBody(request, 0, () => invalid());
     return undefined;
   }
   const contentType = singleHeader(request, "content-type");

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { MerchantKnowledgeFeatureConfigurationSchema } from "@modainteract/moda-interact-shared/merchant-knowledge";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
-import { conflict, denied, deterministicAssetId, integrity, invalid, KnowledgeUploadError,
+import { conflict, denied, deterministicAssetId, integrity, invalid, isWooObjectKeyForAsset, KnowledgeUploadError,
   type UploadFinalizeRequest, type UploadIntentRequest, UPLOAD_TTL_SECONDS, unavailable, wooObjectKey } from "./upload-contract.js";
 import { createUploadR2, type UploadR2, type UploadR2Configuration } from "./upload-r2.js";
 import type { ApiPlatformConfigurationReader } from "../../platform-configuration/service.js";
@@ -11,7 +11,7 @@ type Tx = Prisma.TransactionClient;
 const pairKey = (purpose: string, format: string) => `${purpose}\u0000${format}`;
 const nowDate = () => new Date();
 
-async function assertWoo(tx: Tx, principal: WooInstallationPrincipal): Promise<void> {
+async function assertWoo(tx: Tx, principal: WooInstallationPrincipal): Promise<string> {
   const shops = await tx.$queryRaw<Array<{ id: string; domain: string; platform: string; shopifyShopId: string | null; status: string }>>(Prisma.sql`
     SELECT "id", "domain", "platform", "shopifyShopId", "status"
     FROM "commerce"."Shop" WHERE "id" = ${principal.shopId} FOR UPDATE
@@ -27,6 +27,7 @@ async function assertWoo(tx: Tx, principal: WooInstallationPrincipal): Promise<v
   if (!installation || installation.id !== principal.installationId || installation.shopId !== principal.shopId ||
       installation.canonicalSiteUrl !== principal.canonicalSiteUrl || installation.credentialVersion !== principal.credentialVersion ||
       installation.status !== "ACTIVE" || installation.revokedAt !== null) throw denied();
+  return shop.domain;
 }
 
 async function entitlement(tx: Tx, shopId: string) {
@@ -114,36 +115,41 @@ export class MerchantKnowledgeUploadService {
     const { config, r2, environment } = await this.dependencies();
     if (request.sizeBytes > config.maxUploadBytes) throw new KnowledgeUploadError(413, "request_too_large");
     const assetId = deterministicAssetId(principal.shopId, request.idempotencyKey);
-    const objectKey = wooObjectKey(environment, principal.shopId, assetId, request.dataFormatKey);
     const prepared = await this.database.$transaction(async (tx) => {
-      await assertWoo(tx, principal);
+      // The storage hostname is taken only from the validated Shop record.
+      const shopDomain = await assertWoo(tx, principal);
       const entitlementConfig = await entitlement(tx, principal.shopId);
       const pair = await allowedPair(tx, entitlementConfig, request.purposeKey, request.dataFormatKey);
       if (!pair.contentTypes.some((value) => value.toLowerCase() === request.contentType)) throw invalid();
       const existing = await tx.merchantKnowledgeUploadedAsset.findUnique({ where: { id: assetId } });
       if (existing) {
-        if (existing.shopId !== principal.shopId || existing.objectKey !== objectKey ||
+        // Retries must sign the EXACT persisted key, including legacy API-017
+        // keys and intents created before a site's canonical domain changed.
+        if (existing.shopId !== principal.shopId ||
+          !isWooObjectKeyForAsset(existing.objectKey, environment, principal.shopId, assetId, request.dataFormatKey) ||
           existing.status !== "PENDING_UPLOAD" || existing.dataFormatId !== pair.dataFormatId ||
           existing.originalFileName !== request.originalFileName || existing.contentType !== request.contentType ||
           existing.sizeBytes !== BigInt(request.sizeBytes) || existing.sha256 !== request.sha256) throw conflict();
         if (existing.uploadExpiresAt <= this.now()) throw new KnowledgeUploadError(409, "knowledge_upload_expired");
-        return { expiresAt: existing.uploadExpiresAt };
+        return { expiresAt: existing.uploadExpiresAt, objectKey: existing.objectKey };
       }
       const outstanding = await tx.merchantKnowledgeUploadedAsset.count({ where: {
         shopId: principal.shopId, status: "PENDING_UPLOAD", uploadExpiresAt: { gt: this.now() },
       } });
       if (outstanding >= Math.max(3, entitlementConfig.maxKnowledgeSources * 3)) throw denied();
-      const expiresAt = new Date(this.now().getTime() + UPLOAD_TTL_SECONDS * 1000);
+      const createdAt = this.now();
+      const expiresAt = new Date(createdAt.getTime() + UPLOAD_TTL_SECONDS * 1000);
+      const objectKey = wooObjectKey(environment, principal.shopId, shopDomain, assetId, request.dataFormatKey, createdAt);
       await tx.merchantKnowledgeUploadedAsset.create({ data: { id: assetId, shopId: principal.shopId,
         dataFormatId: pair.dataFormatId, status: "PENDING_UPLOAD", objectKey,
         originalFileName: request.originalFileName, contentType: request.contentType,
         sizeBytes: BigInt(request.sizeBytes), sha256: request.sha256, uploadExpiresAt: expiresAt } });
-      return { expiresAt };
+      return { expiresAt, objectKey };
     });
     // No external R2 operation inside the database transaction. Retrying uses the same immutable intent.
     const secondsLeft = Math.floor((prepared.expiresAt.getTime() - this.now().getTime()) / 1000);
     if (secondsLeft < 1) throw new KnowledgeUploadError(409, "knowledge_upload_expired");
-    const signed = await r2.sign({ key: objectKey, contentType: request.contentType,
+    const signed = await r2.sign({ key: prepared.objectKey, contentType: request.contentType,
       sha256: request.sha256, expiresIn: Math.min(UPLOAD_TTL_SECONDS, secondsLeft) });
     return { schemaVersion: 1 as const, assetId, uploadUrl: signed,
       expiresAt: prepared.expiresAt.toISOString(), maxUploadBytes: config.maxUploadBytes,

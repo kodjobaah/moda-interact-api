@@ -101,8 +101,46 @@ export function deterministicAssetId(shopId: string, key: string): string {
   const hex = createHash("sha256").update("moda-woo-knowledge-upload-v1\0").update(shopId).update("\0").update(key).digest("hex");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20, 32)}`;
 }
-export function wooObjectKey(environment: string, shopId: string, assetId: string, formatKey: UploadFormat): string {
+/**
+ * Storage-only hostname from the canonical URL of an authenticated Shop row.
+ * Never derive it from an upload request or a browser-supplied storage path.
+ */
+function storageHostname(canonicalSiteUrl: string): string {
+  let url: URL;
+  try { url = new URL(canonicalSiteUrl); }
+  catch { throw unavailable(); }
+  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+    throw unavailable();
+  const hostname = url.hostname.toLowerCase().replace(/\.$/, '');
+  // IPv6 is valid for local development, but ':' and brackets are not useful
+  // path characters in the R2 object browser. Tenant isolation uses shopId.
+  if (hostname.startsWith('[') && hostname.endsWith(']')) {
+    const segment = hostname.slice(1, -1).replace(/[:.]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+    if (!/^[a-f0-9-]+$/.test(segment)) throw unavailable();
+    return `ipv6-${segment}`;
+  }
+  if (hostname.length > 253 || !hostname.split('.').every((label) =>
+    /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) throw unavailable();
+  return hostname;
+}
+
+/** New keys are immutable once persisted; this helper is used for NEW intents only. */
+export function wooObjectKey(environment: string, shopId: string, canonicalSiteUrl: string,
+  assetId: string, formatKey: UploadFormat, createdAt: Date): string {
   if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(environment) || !/^[A-Za-z0-9_-]{1,128}$/.test(shopId) ||
-    !/^[a-f0-9-]{36}$/.test(assetId)) throw unavailable();
-  return `merchant-knowledge/${environment}/woocommerce/${shopId}/${assetId}/source.${formatKey.toLowerCase()}`;
+    !/^[a-f0-9-]{36}$/.test(assetId) || !(createdAt instanceof Date) || !Number.isFinite(createdAt.getTime()))
+    throw unavailable();
+  const timestamp = createdAt.toISOString().replace(/[-:.]/g, '');
+  return `merchant-knowledge/${environment}/woocommerce/${shopId}/${storageHostname(canonicalSiteUrl)}/${timestamp}-${assetId}.${formatKey.toLowerCase()}`;
+}
+
+/** Accept both the original API-017 layout and the new layout on intent replay. */
+export function isWooObjectKeyForAsset(key: string, environment: string, shopId: string,
+  assetId: string, formatKey: UploadFormat): boolean {
+  const prefix = `merchant-knowledge/${environment}/woocommerce/${shopId}/`;
+  if (typeof key !== 'string' || !key.startsWith(prefix)) return false;
+  const relative = key.slice(prefix.length);
+  if (relative === `${assetId}/source.${formatKey.toLowerCase()}`) return true;
+  const match = /^([a-z0-9][a-z0-9.-]{0,252})\/(\d{8}T\d{9}Z)-([a-f0-9-]{36})\.(csv|xlsx)$/.exec(relative);
+  return !!match && !match[1]!.includes('..') && match[3] === assetId && match[4] === formatKey.toLowerCase();
 }

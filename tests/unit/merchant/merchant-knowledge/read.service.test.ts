@@ -24,7 +24,7 @@ function fake(options: { mapping?: unknown; preference?: boolean; feature?: bool
   const calls: Array<{ name: string; args?: unknown }> = [];
   const track = (name: string, args?: unknown) => { calls.push({ name, args }); };
   const sources = options.rows ?? [row(1), row(2)];
-  const transaction = {
+  const delegates = {
     shop: { findUnique: async (args: unknown) => {
       track("shop", args);
       return { id: principal.shopId, domain: principal.canonicalSiteUrl, platform: options.platform ?? "WOOCOMMERCE",
@@ -72,11 +72,12 @@ function fake(options: { mapping?: unknown; preference?: boolean; feature?: bool
       },
     },
   };
-  const database = { $transaction: async (run: (tx: typeof transaction) => Promise<unknown>, opts: unknown) => {
-    track("transaction", opts);
-    return run(transaction);
+  // A regression to an interactive read transaction must fail even with fake delegates.
+  const database = { ...delegates, $transaction: () => {
+    track("transaction");
+    throw new Error("Merchant Knowledge GET must never open a database transaction");
   } };
-  return { service: new MerchantKnowledgeReadService(database as never, "1024"), calls };
+  return { service: new MerchantKnowledgeReadService(database as never, "1024"), calls, database };
 }
 
 test("entitled, preference-off read returns existing capacity, correct dormant states, and safe revision projections", async () => {
@@ -104,8 +105,9 @@ test("entitled, preference-off read returns existing capacity, correct dormant s
   assert.equal(result.sources[0]?.revision?.failureCode, null);
   assert.equal(result.catalogue.length, 2);
   assert.equal(result.supportedLanguageTags.length, 20);
-  assert.equal(calls.find((call) => call.name === "transaction")?.args &&
-    (calls.find((call) => call.name === "transaction")!.args as { isolationLevel: string }).isolationLevel, "RepeatableRead");
+  assert.equal(calls.some(({ name }) => name === "transaction"), false);
+  assert.ok(calls.some(({ name }) => name === "shop"));
+  assert.ok(calls.some(({ name }) => name === "installation"));
   assert.equal(JSON.stringify(result).includes("SECRET"), false);
   assert.equal(JSON.stringify(result).includes("object-key"), false);
 });
@@ -199,8 +201,11 @@ test("invalid query bounds and absent upload configuration do not enable writes"
   const data = fake();
   await assert.rejects(() => data.service.read(principal, -1), (error: unknown) =>
     error instanceof MerchantKnowledgeReadError && error.status === 400);
-  const service = new MerchantKnowledgeReadService({ $transaction: async (work: (tx: never) => Promise<unknown>) =>
-    work({} as never) } as never);
-  // Upload configuration is optional for a read; source projection is covered separately.
-  assert.equal(typeof service.read, "function");
+  // An omitted upload policy affects only upload size, not source/catalogue reads.
+  const service = new MerchantKnowledgeReadService(data.database as never);
+  const result = await service.read(principal);
+  assert.equal(result.maxUploadBytes, 0);
+  assert.equal(result.catalogue.length, 2);
+  assert.equal(result.sources.length, 2);
+  assert.equal(data.calls.some(({ name }) => name === "transaction"), false);
 });
