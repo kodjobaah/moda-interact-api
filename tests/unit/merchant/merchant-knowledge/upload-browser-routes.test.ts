@@ -16,7 +16,7 @@ const intent = { schemaVersion: 1, assetId: "asset-a", uploadUrl: capability,
   expiresAt: "2026-10-18T17:20:00.000Z", maxUploadBytes: 1024,
   requiredHeaders: { "Content-Type": "text/csv", "If-None-Match": "*", "x-amz-meta-sha256": "a".repeat(64) } };
 
-function setup(options: { fail?: boolean } = {}) {
+function setup(options: { fail?: boolean; reprocessFailure?: boolean } = {}) {
   const logs: Array<{ name: string; data: unknown }> = [];
   const calls: Array<{ operation: string; shopId: string }> = [];
   const routes = createMerchantKnowledgeUploadRoutes({
@@ -38,6 +38,8 @@ function setup(options: { fail?: boolean } = {}) {
       async reprocess(p: typeof principal, sourceId: string) {
         assert.equal(sourceId, "file_1");
         calls.push({ operation: "reprocess", shopId: p.shopId });
+        if (options.reprocessFailure) throw Object.assign(
+          new Error(`Prisma transaction failed; private=${capability}`), { code: "P2028" });
         return { schemaVersion: 1, sourceId: "file_1", revisionId: "revision_2", generation: 2, status: "ACCEPTED" };
       },
     } as never,
@@ -129,10 +131,14 @@ test("only authenticated metadata finalize is accepted; malformed or upstream er
   });
   assert.deepEqual(state.calls, [{ operation: "intent", shopId: principal.shopId },
     { operation: "finalize", shopId: principal.shopId }]);
-  assert.deepEqual(state.logs, [
-    { name: "merchant.knowledge.upload.failed", data: { reason: "knowledge_upload_unavailable" } },
-    { name: "merchant.knowledge.upload", data: { shopId: principal.shopId, operation: "finalize" } },
-  ]);
+  assert.equal(state.logs[0]?.name, "merchant.knowledge.upload.failed");
+  const failureDetails = state.logs[0]?.data as Record<string, unknown>;
+  assert.equal(failureDetails.operation, "intent");
+  assert.equal(failureDetails.reason, "knowledge_upload_unavailable");
+  assert.equal(failureDetails.cause, "unexpected");
+  assert.equal(typeof failureDetails.durationMs, "number");
+  assert.deepEqual(state.logs[1], { name: "merchant.knowledge.upload",
+    data: { shopId: principal.shopId, operation: "finalize" } });
   assert.equal(JSON.stringify(state.logs).includes(capability), false);
   assert.equal(JSON.stringify(state.logs).includes("never-log"), false);
 });
@@ -150,4 +156,25 @@ test("bodyless reprocess accepts harmless transport headers but rejects actual r
     assert.deepEqual(await rejected.json(), { error: "invalid_request" });
   });
   assert.deepEqual(state.calls, [{ operation: "reprocess", shopId: principal.shopId }]);
+});
+
+test("unexpected reprocess failure logs a bounded Prisma code without exposing exception details", async () => {
+  const state = setup({ reprocessFailure: true });
+  await withRoutes(state.routes, async (base) => {
+    const response = await fetch(`${base}/v1/merchant/merchant-knowledge/uploads/file_1/reprocess`, {
+      method: "POST", headers: headers(),
+    });
+    assert.equal(response.status, 503); noStore(response);
+    assert.deepEqual(await response.json(), { error: "knowledge_upload_unavailable" });
+  });
+  assert.equal(state.logs.length, 1);
+  assert.equal(state.logs[0]?.name, "merchant.knowledge.upload.failed");
+  const details = state.logs[0]?.data as Record<string, unknown>;
+  assert.equal(details.operation, "reprocess");
+  assert.equal(details.reason, "knowledge_upload_unavailable");
+  assert.equal(details.cause, "prisma");
+  assert.equal(details.prismaCode, "P2028");
+  assert.equal(typeof details.durationMs, "number");
+  assert.equal(JSON.stringify(state.logs).includes("X-Amz-Signature"), false);
+  assert.equal(JSON.stringify(state.logs).includes("private="), false);
 });

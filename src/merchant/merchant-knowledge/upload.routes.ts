@@ -45,6 +45,8 @@ export function createMerchantKnowledgeUploadRoutes(options: {
         KNOWLEDGE_UPLOAD_ROUTE.exec(url.pathname);
       if (!action) return false;
       if (typeof action !== "string" && !((method === "PATCH" && !action[2]) || (method === "POST" && action[2]))) return false;
+      const operation = typeof action === "string" ? action : action[2] ? "reprocess" : "edit";
+      const startedAt = Date.now();
       try {
         const principal = await authenticator.authenticate(request);
         if (url.search) throw invalid();
@@ -53,14 +55,22 @@ export function createMerchantKnowledgeUploadRoutes(options: {
           action[2] ? await (async () => { await strictBody(request, true); return service.reprocess(principal, action[1]!); })() :
             await service.edit(principal, action[1]!, parseEdit(await strictBody(request)));
         // Object key, body bytes, SHA-256, signed host and URL are never logged.
-        logger.info("merchant.knowledge.upload", { shopId: principal.shopId,
-          operation: action === "intent" ? "intent" : action === "finalize" ? "finalize" : action[2] ? "reprocess" : "edit" });
+        logger.info("merchant.knowledge.upload", { shopId: principal.shopId, operation });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) sendNoStoreJson(response, 401, { error: "unauthorized" });
         else {
           const failure = normaliseUploadError(error);
-          if (failure.status !== 400 && failure.status !== 413) logger.warn("merchant.knowledge.upload.failed", { reason: failure.code });
+          if (failure.status !== 400 && failure.status !== 413) {
+            // Only bounded error categories/codes are logged; Prisma messages can contain SQL and parameters.
+            const possibleCode = error && typeof error === "object" && "code" in error ? error.code : undefined;
+            const prismaCode = typeof possibleCode === "string" && /^P[0-9]{4}$/.test(possibleCode)
+              ? possibleCode : undefined;
+            const cause = error instanceof KnowledgeUploadError ? "domain" : prismaCode ? "prisma" :
+              error instanceof TypeError ? "type_error" : "unexpected";
+            logger.warn("merchant.knowledge.upload.failed", { operation, reason: failure.code, cause,
+              ...(prismaCode ? { prismaCode } : {}), durationMs: Date.now() - startedAt });
+          }
           sendNoStoreJson(response, failure.status, { error: failure.code });
         }
       }
