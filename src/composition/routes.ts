@@ -4,6 +4,7 @@ import type { ApiRouteHandler } from "../http/route-handler.js";
 export function composeApiRoutes(input: {
   wooRestRead?: ApiRouteHandler;
   wooBillingWebhook: ApiRouteHandler;
+  wooActivity?: ApiRouteHandler;
   merchant: readonly ApiRouteHandler[];
   billing: readonly ApiRouteHandler[];
   wooInstallation: ApiRouteHandler;
@@ -11,6 +12,7 @@ export function composeApiRoutes(input: {
   return [
     ...(input.wooRestRead ? [input.wooRestRead] : []),
     input.wooBillingWebhook,
+    ...(input.wooActivity ? [input.wooActivity] : []),
     ...input.merchant,
     ...input.billing,
     input.wooInstallation,

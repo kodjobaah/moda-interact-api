@@ -79,3 +79,34 @@ container and drops it after completion:
 ```sh
 npm run test:integration
 ```
+
+### ARCH-035 Woo checkout activity capture (API-008)
+
+`POST /v1/woocommerce/activity` accepts **only** `woo.activity.v1` `CHECKOUT_UPDATED`
+from an active Woo installation (existing `X-Moda-Installation-Id` and `Authorization:
+Bearer ...` headers). The Shop identity is resolved by the existing installation
+credential authenticator, never read from event JSON. See
+`openapi/woocommerce-activity-v1.yaml` and
+`tests/fixtures/woocommerce/activity/checkout.json` for the authoritative bounded
+snapshot, contact and line-item fields. Order cases are documented but disabled
+until API-019; they are **not** published by this task.
+
+Configure the API with the same `REDIS_URL` used by the worker infrastructure.
+The producer is lazy and optional: without working Redis, only this capture route
+returns `503 queue_unavailable`; unrelated merchant/API routes continue serving.
+Successful `202` requires a BullMQ write to the separate
+`woo-checkout-capture-v1` queue. The job payload contains the authenticated
+`shopId`, validated checkout envelope and SHA-256 content digest; the BullMQ
+job ID is SHA-256 of the authenticated Shop and stable event ID. Identical
+retained replays are accepted; conflicting retained replays return `409` where
+observable. Completed jobs may expire after one day, so this is **not** a
+permanent event receipt, replay archive or business-state record.
+
+No Woo job goes to a Shopify queue or any CheckoutRecovery, messaging or billing
+handler. The API-008 producer must be deployed together with the future
+Woo-specific BACKGROUND-001 consumer before the WOOCOMMERCE-007 publisher is
+enabled. Redis URL wiring in deployment is owned by Gateway, not this API patch.
+
+Focused verification: `npm run test:arch035-woo-activity:unit`,
+`npm run test:arch035-woo-activity:redis` (disposable Docker Redis), `npm run
+typecheck`, `npm run lint`, `npm run build`.

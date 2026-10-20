@@ -7,6 +7,7 @@ import { createWooRoutes } from "./composition/woocommerce.js";
 import { createDatabase } from "./database.js";
 import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
+import { createWooCheckoutRedisProducer } from "./woocommerce/activity/redis-producer.js";
 import { createApiPlatformConfigurationReader } from "./platform-configuration/composition.js";
 
 const logger = createLogger({
@@ -28,15 +29,18 @@ async function main(): Promise<void> {
     const billing = createBillingRoutes({
       prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling,
     });
-    const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger, platformConfiguration });
+    const checkoutQueue = createWooCheckoutRedisProducer(process.env.REDIS_URL);
+    const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger, platformConfiguration,
+      checkoutPublisher: checkoutQueue.publisher });
     const handlers = composeApiRoutes({
       ...(woo.restRead ? { wooRestRead: woo.restRead } : {}),
       wooBillingWebhook: woo.billingWebhook,
+      wooActivity: woo.activity,
       merchant,
       billing,
       wooInstallation: woo.installation,
     });
-    const runtime = createApiRuntime(config, database, logger, handlers);
+    const runtime = createApiRuntime(config, database, logger, handlers, () => checkoutQueue.close());
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch (error) {

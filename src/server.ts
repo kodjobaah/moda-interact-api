@@ -108,6 +108,7 @@ export function createApiRuntime(
   database: ReadinessDatabase,
   logger: StructuredLogger,
   routes: readonly ApiRouteHandler[] = [],
+  closeAdditionalResources?: () => Promise<void>,
 ): ApiRuntime {
   const server = createHttpServer({
     database,
@@ -145,12 +146,18 @@ export function createApiRuntime(
           });
         }
 
+        let resourceError = false;
+        if (closeAdditionalResources) {
+          try { await closeAdditionalResources(); }
+          catch { logger.error("api.shutdown.additional_resource_failed"); resourceError = true; }
+        }
         try {
           await database.disconnect();
         } catch {
           logger.error("api.shutdown.database_disconnect_failed");
           throw new Error("database disconnect failed");
         }
+        if (resourceError) throw new Error("additional resource disconnect failed");
 
         if (closeError) {
           logger.error("api.shutdown.server_close_failed");

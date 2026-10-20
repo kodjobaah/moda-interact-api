@@ -15,7 +15,7 @@
     "lint": "eslint . --max-warnings=0",
     "pretest": "npm run prisma:generate",
     "test": "tsx --test \"tests/unit/**/*.test.ts\"",
-    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs && node scripts/test-arch036-discount-offers-postgres.mjs && node scripts/test-arch041-cross-domain-postgres.mjs && node scripts/test-arch035-merchant-knowledge-postgres.mjs && node scripts/test-arch035-feature-preferences-postgres.mjs && node scripts/test-arch035-knowledge-upload-postgres.mjs && node scripts/run-arch043-platform-configuration-postgres.mjs",
+    "test:integration": "node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs && node scripts/test-arch036-discount-offers-postgres.mjs && node scripts/test-arch041-cross-domain-postgres.mjs && node scripts/test-arch035-merchant-knowledge-postgres.mjs && node scripts/test-arch035-feature-preferences-postgres.mjs && node scripts/test-arch035-knowledge-upload-postgres.mjs && node scripts/run-arch043-platform-configuration-postgres.mjs && npm run test:arch035-woo-activity:redis",
     "prisma:generate": "prisma generate --schema database/prisma/schema.prisma",
     "test:arch026-woo-rest-read:postgres": "node scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
     "test:arch036-discount-offers:postgres": "node scripts/test-arch036-discount-offers-postgres.mjs",
@@ -24,13 +24,17 @@
     "test:arch035-knowledge-upload:postgres": "node scripts/test-arch035-knowledge-upload-postgres.mjs",
     "test:arch043-platform-configuration:postgres": "node scripts/run-arch043-platform-configuration-postgres.mjs",
     "test:arch040-conversation-control:postgres": "node scripts/test-arch040-woo-conversation-control-postgres.mjs",
-    "test:arch040-human-send:postgres": "node scripts/test-arch040-woo-human-send-postgres.mjs"
+    "test:arch040-human-send:postgres": "node scripts/test-arch040-woo-human-send-postgres.mjs",
+    "test:arch035-woo-activity:unit": "tsx --test \"tests/unit/woocommerce/activity/*.test.ts\"",
+    "test:arch035-woo-activity:redis": "node scripts/test-arch035-woo-activity-redis.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",
     "@aws-sdk/s3-request-presigner": "^3.1144.0",
     "@modainteract/moda-interact-shared": "2.4.1",
-    "@prisma/client": "6.19.3"
+    "@prisma/client": "6.19.3",
+    "bullmq": "^6.2.0",
+    "ioredis": "^6.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
