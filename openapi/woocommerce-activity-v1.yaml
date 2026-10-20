@@ -1,0 +1,231 @@
+openapi: 3.0.3
+info:
+  title: Moda Interact WooCommerce activity capture
+  version: woo.activity.v1
+  description: >-
+    Capture-only WooCommerce activity, with no recovery creation, WhatsApp,
+    charging, consent/marketing authorisation, or durable HTTP receipt ledger.
+    This release accepts CHECKOUT_UPDATED only. Order events are reserved for
+    ARCH-035-API-019 and currently receive 422 (not enqueued).
+servers:
+  - url: /
+paths:
+  /v1/woocommerce/activity:
+    post:
+      operationId: publishWooCommerceActivity
+      summary: Enqueue one authenticated Woo checkout snapshot
+      description: >-
+        Requires the active Woo installation ID and its bearer credential;
+        shopId is resolved exclusively from the installed, active WooCommerce
+        Shop and cannot appear in the request. 202 is returned only after
+        Redis/BullMQ has accepted a Woo-only checkout job. Retries of the same
+        source event must retain the same eventId; a later actual update needs
+        a fresh eventId. Job-ID deduplication lasts only while the job is
+        retained in Redis. There is no permanent replay ledger, and a 409 on
+        a conflicting replay is possible only while the job remains available.
+      parameters:
+        - in: header
+          name: X-Moda-Installation-Id
+          required: true
+          schema: { type: string, minLength: 1, maxLength: 128 }
+      security:
+        - WooInstallationBearer: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/CheckoutEvent'
+                - $ref: '#/components/schemas/ReservedOrderEvent'
+            examples:
+              checkout:
+                summary: Accepted checkout update
+                value:
+                  schemaVersion: woo.activity.v1
+                  eventId: woo-checkout-123-v2
+                  eventType: CHECKOUT_UPDATED
+                  checkoutKey: cart-123
+                  occurredAt: '2026-10-20T12:00:00.000Z'
+                  checkout:
+                    currency: GBP
+                    total: '29.99'
+                    items:
+                      - productId: '101'
+                        quantity: 1
+                        unitPrice: '29.99'
+                        total: '29.99'
+              reservedOrder:
+                summary: Documented for API-019, not accepted by API-008
+                value:
+                  schemaVersion: woo.activity.v1
+                  eventId: woo-order-123-placed
+                  eventType: ORDER_PLACED
+                  checkoutKey: cart-123
+                  occurredAt: '2026-10-20T12:01:00.000Z'
+                  order:
+                    orderId: '123'
+                    status: processing
+      responses:
+        '202':
+          description: The job was accepted into BullMQ (or an identical job is retained)
+          headers:
+            Cache-Control: { schema: { type: string, enum: [no-store] } }
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, enum: [accepted] }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Conflicting eventId while a different job is still retained
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: event_replay_conflict }
+        '413':
+          description: More than 65,536 request bytes
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: request_too_large }
+        '422':
+          description: Order event family is reserved, not yet enabled
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: event_type_not_enabled }
+        '503':
+          description: Queue not configured or Redis/BullMQ failed; retry the same eventId
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+              example: { error: queue_unavailable }
+components:
+  securitySchemes:
+    WooInstallationBearer:
+      type: http
+      scheme: bearer
+      description: Active Woo installation secret; never expose to browser code
+  responses:
+    InvalidRequest:
+      description: Unsupported, malformed, untrusted or oversized input fields
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: invalid_request }
+    Unauthorized:
+      description: Missing, rotated, revoked or non-Woo installation credential
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: unauthorized }
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error: { type: string }
+    EventIdentity:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, eventId, eventType, checkoutKey, occurredAt]
+      properties:
+        schemaVersion: { type: string, enum: [woo.activity.v1] }
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          description: Stable opaque emitted-event ID, never a shopper identifier
+        eventType:
+          type: string
+          enum: [CHECKOUT_UPDATED, ORDER_PLACED, ORDER_PAID, ORDER_CANCELLED]
+        checkoutKey:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          description: Stable Shop-scoped checkout identity carried forward into order metadata
+        occurredAt:
+          type: string
+          format: date-time
+          pattern: '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$'
+          description: Canonical UTC timestamp with three millisecond digits
+    CheckoutEvent:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, eventId, eventType, checkoutKey, occurredAt, checkout]
+      properties:
+        schemaVersion: { type: string, enum: [woo.activity.v1] }
+        eventId: { $ref: '#/components/schemas/EventIdentity/properties/eventId' }
+        eventType: { type: string, enum: [CHECKOUT_UPDATED] }
+        checkoutKey: { $ref: '#/components/schemas/EventIdentity/properties/checkoutKey' }
+        occurredAt: { $ref: '#/components/schemas/EventIdentity/properties/occurredAt' }
+        checkout: { $ref: '#/components/schemas/CheckoutSnapshot' }
+    ReservedOrderEvent:
+      type: object
+      additionalProperties: false
+      description: Reserved for API-019; not accepted by this API release
+      required: [schemaVersion, eventId, eventType, checkoutKey, occurredAt, order]
+      properties:
+        schemaVersion: { type: string, enum: [woo.activity.v1] }
+        eventId: { $ref: '#/components/schemas/EventIdentity/properties/eventId' }
+        eventType: { type: string, enum: [ORDER_PLACED, ORDER_PAID, ORDER_CANCELLED] }
+        checkoutKey: { $ref: '#/components/schemas/EventIdentity/properties/checkoutKey' }
+        occurredAt: { $ref: '#/components/schemas/EventIdentity/properties/occurredAt' }
+        order:
+          type: object
+          additionalProperties: false
+          required: [orderId, status]
+          properties:
+            orderId: { type: string, minLength: 1, maxLength: 128 }
+            status: { type: string, minLength: 1, maxLength: 64 }
+    Money:
+      type: string
+      maxLength: 13
+      pattern: '^(0|[1-9][0-9]{0,9})(\.[0-9]{1,2})?$'
+      description: Non-negative decimal money value, never a floating-point number
+    CheckoutSnapshot:
+      type: object
+      additionalProperties: false
+      required: [currency, total]
+      properties:
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        total: { $ref: '#/components/schemas/Money' }
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/CheckoutItem' }
+        contact:
+          $ref: '#/components/schemas/CheckoutContact'
+    CheckoutItem:
+      type: object
+      additionalProperties: false
+      required: [quantity]
+      properties:
+        quantity: { type: integer, minimum: 1, maximum: 100000 }
+        productId: { type: string, minLength: 1, maxLength: 128 }
+        variationId: { type: string, minLength: 1, maxLength: 128 }
+        sku: { type: string, minLength: 1, maxLength: 128 }
+        title: { type: string, minLength: 1, maxLength: 200 }
+        unitPrice: { $ref: '#/components/schemas/Money' }
+        total: { $ref: '#/components/schemas/Money' }
+    CheckoutContact:
+      type: object
+      additionalProperties: false
+      description: Optional point-in-time contact, not consent or outreach permission evidence
+      properties:
+        email: { type: string, format: email, minLength: 1, maxLength: 254 }
+        phone:
+          type: string
+          minLength: 5
+          maxLength: 32
+          pattern: '^\+?[0-9 ()-]{5,32}$'
+        firstName: { type: string, minLength: 1, maxLength: 100 }
+        lastName: { type: string, minLength: 1, maxLength: 100 }

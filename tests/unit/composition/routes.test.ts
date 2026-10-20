@@ -55,9 +55,10 @@ test("registers callbacks, webhook, merchant, billing and finally installation",
   const merchant = [route("merchant-1", [], calls), route("merchant-2", [], calls)];
   const billing = [route("billing-1", [], calls), route("billing-2", [], calls)];
   const install = route("installation", [], calls);
+  const activity = route("woo-activity", [], calls);
   assert.deepEqual(composeApiRoutes({
-    wooRestRead: rest, wooBillingWebhook: webhook, merchant, billing, wooInstallation: install,
-  }), [rest, webhook, ...merchant, ...billing, install]);
+    wooRestRead: rest, wooBillingWebhook: webhook, wooActivity: activity, merchant, billing, wooInstallation: install,
+  }), [rest, webhook, activity, ...merchant, ...billing, install]);
   assert.deepEqual(composeApiRoutes({
     wooBillingWebhook: webhook, merchant, billing, wooInstallation: install,
   }), [webhook, ...merchant, ...billing, install]);

@@ -1,0 +1,8 @@
+{
+  "schemaVersion": "woo.activity.v1",
+  "eventId": "order-1-placed",
+  "eventType": "ORDER_PLACED",
+  "checkoutKey": "cart-001",
+  "occurredAt": "2026-10-20T12:01:00.000Z",
+  "order": { "orderId": "1", "status": "processing" }
+}
