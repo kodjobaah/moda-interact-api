@@ -6,6 +6,8 @@ import { conflict, denied, deterministicAssetId, integrity, invalid, isWooObject
   type UploadFinalizeRequest, type UploadIntentRequest, UPLOAD_TTL_SECONDS, unavailable, wooObjectKey } from "./upload-contract.js";
 import { createUploadR2, type UploadR2, type UploadR2Configuration } from "./upload-r2.js";
 import type { ApiPlatformConfigurationReader } from "../../platform-configuration/service.js";
+import { assertWooPrincipal } from "./read.service.js";
+import { MerchantKnowledgeReadError } from "./contract.js";
 
 type Tx = Prisma.TransactionClient;
 const pairKey = (purpose: string, format: string) => `${purpose}\u0000${format}`;
@@ -88,7 +90,7 @@ export interface UploadServiceOptions {
   now?: () => Date;
 }
 export class MerchantKnowledgeUploadService {
-  constructor(private readonly database: Pick<PrismaClient, "$transaction">,
+  constructor(private readonly database: PrismaClient,
     private readonly options: UploadServiceOptions = {}) {}
   private async dependencies() {
     // A single decrypted purpose-scoped snapshot is used by each upload operation.
@@ -255,20 +257,33 @@ export class MerchantKnowledgeUploadService {
   }
 
   async reprocess(principal: WooInstallationPrincipal, sourceId: string) {
+    // Authentication, entitlement, catalogue and asset reads do not need a transaction.
+    try { await assertWooPrincipal(this.database, principal); }
+    catch (error) {
+      if (error instanceof MerchantKnowledgeReadError) throw denied();
+      throw error;
+    }
+    const configuration = await entitlement(this.database, principal.shopId);
+    const source = await eligibleSource(this.database, principal.shopId, sourceId, configuration);
+    await allowedPair(this.database, configuration, source.purpose.key, source.dataFormat.key);
+    const previous = await this.database.merchantKnowledgeSourceRevision.findUnique({
+      where: { sourceId_generation: { sourceId, generation: source.currentGeneration } },
+      select: { uploadedAsset: { select: { id: true, shopId: true, status: true, dataFormatId: true } } },
+    });
+    const asset = previous?.uploadedAsset;
+    if (!asset || asset.shopId !== principal.shopId || asset.status !== "AVAILABLE" ||
+        asset.dataFormatId !== source.dataFormatId) throw denied();
+    const generation = source.currentGeneration + 1;
+    if (!Number.isSafeInteger(generation) || generation > 2147483647) throw conflict();
+
     return this.database.$transaction(async (tx) => {
-      await assertWoo(tx, principal);
-      const configuration = await entitlement(tx, principal.shopId);
-      const source = await eligibleSource(tx, principal.shopId, sourceId, configuration);
-      await allowedPair(tx, configuration, source.purpose.key, source.dataFormat.key);
-      const previous = await tx.merchantKnowledgeSourceRevision.findUnique({
-        where: { sourceId_generation: { sourceId, generation: source.currentGeneration } },
-        select: { uploadedAsset: { select: { id: true, shopId: true, status: true, dataFormatId: true } } },
-      });
-      const asset = previous?.uploadedAsset;
-      if (!asset || asset.shopId !== principal.shopId || asset.status !== "AVAILABLE" || asset.dataFormatId !== source.dataFormatId) throw denied();
-      const generation = source.currentGeneration + 1;
-      if (generation > 2147483647) throw conflict();
-      await tx.merchantKnowledgeSource.update({ where: { id: sourceId }, data: { currentGeneration: generation } });
+      // Only the generation change and its revision insertion require atomicity.
+      // The expected generation prevents concurrent writes from using a stale read.
+      const updated = await tx.merchantKnowledgeSource.updateMany({ where: {
+        id: sourceId, shopId: principal.shopId, currentGeneration: source.currentGeneration,
+        purposeId: source.purposeId, dataFormatId: source.dataFormatId,
+      }, data: { currentGeneration: generation } });
+      if (updated.count !== 1) throw conflict();
       const revision = await tx.merchantKnowledgeSourceRevision.create({ data: { sourceId, generation,
         reason: "REPROCESS", status: "PENDING", uploadedAssetId: asset.id, requestedAt: this.now(),
       }, select: { id: true } });

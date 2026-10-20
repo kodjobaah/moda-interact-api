@@ -140,6 +140,17 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
       await service.edit(principal, created.sourceId, { name: "Revised products", languageTag: "en" });
       const reprocessed = await service.reprocess(principal, created.sourceId);
       assert.equal(reprocessed.generation, 3);
+      // A failed revision insert must roll back the conditional generation advance.
+      const conflictingRevision = await db.merchantKnowledgeSourceRevision.create({ data: {
+        sourceId: created.sourceId, generation: 4, reason: "REPROCESS",
+        uploadedAssetId: first.assetId, status: "PENDING", requestedAt: current,
+      } });
+      await assert.rejects(() => service.reprocess(principal, created.sourceId),
+        (error: unknown) => error instanceof Error && "code" in error && error.code === "P2002");
+      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({
+        where: { id: created.sourceId }, select: { currentGeneration: true },
+      })).currentGeneration, 3);
+      await db.merchantKnowledgeSourceRevision.delete({ where: { id: conflictingRevision.id } });
       assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({ where: { id: created.sourceId } })).name, "Revised products");
       // Merchant preference off is not a reason to reject configuration or claim ingestion.
       const preferences = await db.shopFeaturePreference.findMany({ where: { shopId: shop.id } });
