@@ -17,7 +17,7 @@ export class WooUnauthenticatedError extends Error {
 export class WooInstallationAuthenticator {
   constructor(private readonly database: WooAuthenticationDatabase) {}
 
-  async authenticate(request: IncomingMessage): Promise<WooInstallationPrincipal> {
+  async authenticate(request: IncomingMessage, options: { allowSuspendedShop?: boolean } = {}): Promise<WooInstallationPrincipal> {
     const installationId = readExactlyOneHeader(request, "x-moda-installation-id");
     const authorization = readExactlyOneHeader(request, "authorization");
     if (!installationId || !/^[A-Za-z0-9_-]{1,128}$/.test(installationId)) {
@@ -47,7 +47,7 @@ export class WooInstallationAuthenticator {
       !installation ||
       installation.status !== "ACTIVE" ||
       installation.revokedAt !== null ||
-      installation.shop.status !== "ACTIVE" ||
+      (installation.shop.status !== "ACTIVE" && !(options.allowSuspendedShop && installation.shop.status === "SUSPENDED")) ||
       installation.shop.platform !== "WOOCOMMERCE" ||
       installation.shop.shopifyShopId !== null ||
       !digestMatches

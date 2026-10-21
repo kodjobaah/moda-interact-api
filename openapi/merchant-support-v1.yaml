@@ -1,0 +1,166 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact WooCommerce Merchant Support API
+  version: 1.0.0
+  description: >-
+    Existing Support thread exposed only to authenticated WooCommerce installations.
+    WordPress REST is responsible for browser merchant-admin authorisation;
+    installation bearer credentials must never be sent to browser JavaScript.
+servers:
+  - url: /
+paths:
+  /v1/merchant/support/messages:
+    get:
+      operationId: listWooSupportMessages
+      security: &wooAuth
+        - InstallationBearer: []
+          InstallationId: []
+      summary: Shop-scoped chronological Support history, including SYSTEM notices
+      parameters:
+        - { name: page, in: query, schema: { type: integer, minimum: 1, maximum: 999999, default: 1 } }
+        - { name: pageSize, in: query, schema: { type: integer, enum: [10, 25, 50], default: 25 } }
+      responses:
+        '200':
+          description: Bounded page; Shop SUSPENDED is allowed for read only
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SupportPage' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '500': { $ref: '#/components/responses/InternalError' }
+    post:
+      operationId: composeWooSupportMessage
+      security: *wooAuth
+      summary: Commit a merchant-authored message idempotently
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ComposeCommand' }
+      responses:
+        '201':
+          description: New message durably committed, translation pending if necessary
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComposeReceipt' }
+        '200':
+          description: Identical action ID and body replay (same receipt)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ComposeReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Unavailable' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/TooLarge' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /v1/merchant/support/messages/{messageId}/read:
+    post:
+      operationId: markWooSupportRead
+      security: *wooAuth
+      summary: Monotonic read timestamp for Shop-owned ADMINISTRATIVE or SYSTEM messages
+      description: >-
+        Requires an empty request body. Foreign, unknown, MERCHANT, PROCESSING
+        and FAILED messages all produce the same not_found response.
+      parameters:
+        - name: messageId
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+      responses:
+        '200':
+          description: Original durable read timestamp, even when called repeatedly
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    InstallationBearer: { type: http, scheme: bearer }
+    InstallationId: { type: apiKey, in: header, name: x-moda-installation-id }
+  schemas:
+    ComposeCommand:
+      type: object
+      additionalProperties: false
+      required: [body, actionId]
+      description: JSON body <=32768 UTF-8 bytes; only these two fields accepted.
+      properties:
+        body:
+          type: string
+          description: AuthoredSupportBodySchema enforces 1–500 Unicode graphemes.
+          x-unicode-grapheme-min: 1
+          x-unicode-grapheme-max: 500
+        actionId: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+    ComposeReceipt:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion,messageId,translationId]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        messageId: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        translationId: { type: [string, 'null'], pattern: '^[A-Za-z0-9_-]{1,191}$' }
+    ReadReceipt:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion,messageId,readAt]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        messageId: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        readAt: { type: string, format: date-time }
+    SupportPage:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion,page,pageSize,total,totalPages,unread,items]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        page: { type: integer, minimum: 1, maximum: 999999 }
+        pageSize: { type: integer, enum: [10,25,50] }
+        total: { type: integer, minimum: 0 }
+        totalPages: { type: integer, minimum: 1 }
+        unread: { type: integer, minimum: 0 }
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/SupportMessage' }
+    SupportMessage:
+      type: object
+      additionalProperties: false
+      required: [id,kind,state,originalBody,displayBody,isTranslated,sourceLanguageTag,
+        displayLanguageTag,systemCode,systemVersion,createdAt,readAt]
+      properties:
+        id: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        kind: { type: string, enum: [MERCHANT,ADMINISTRATIVE,SYSTEM] }
+        state: { type: string, enum: [PROCESSING,AVAILABLE,FAILED] }
+        originalBody: { type: string }
+        displayBody: { type: [string, 'null'] }
+        isTranslated: { type: boolean }
+        sourceLanguageTag: { type: string }
+        displayLanguageTag: { type: [string, 'null'] }
+        systemCode: { type: [string, 'null'], maxLength: 128 }
+        systemVersion: { type: [string, 'null'], maxLength: 64 }
+        createdAt: { type: string, format: date-time }
+        readAt: { type: [string, 'null'], format: date-time }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request,request_too_large,unauthorized,support_unavailable,
+            idempotency_conflict,not_found,internal_error]
+  responses:
+    BadRequest:
+      description: Invalid or unexpected path, query, JSON, headers or field values
+      content: &errorContent
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized: { description: Invalid/rotated/revoked/uninstalled Woo installation, content: *errorContent }
+    Unavailable: { description: Suspended Shop cannot compose, content: *errorContent }
+    Conflict: { description: Identical actionId used with a different body, content: *errorContent }
+    NotFound: { description: Unknown or unauthorized message, content: *errorContent }
+    TooLarge: { description: JSON >32768 bytes, content: *errorContent }
+    InternalError: { description: Unexpected database/provider error; details withheld, content: *errorContent }
