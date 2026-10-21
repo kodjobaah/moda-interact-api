@@ -2,6 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../../auth/woo-installation/principal.js";
 import { SendHttpError, type ModerationStatus, type SendStatusResponse } from "./contract.js";
 import { ownedRecoveryConversation, requireCurrentWooShop } from "./admission.service.js";
+import { publicModerationDecision, publicModerationReason } from "../moderation/read-projection.js";
 
 const moderation: Record<string, ModerationStatus> = {
   PENDING: "moderation_pending", CHECKING: "moderation_pending",
@@ -35,8 +36,8 @@ export class MerchantConversationSendStatusService {
       if (!cmd) throw new SendHttpError(404,"not_found");
       // SQL computes the digest from the *persisted* command. The template
       // renderer is DATABASE-005's authoritative v1 contract.
-      const assessments = await tx.$queryRaw<Array<{ decision: string }>>(Prisma.sql`
-        SELECT "decision"::text AS "decision"
+      const assessments = await tx.$queryRaw<Array<{ decision: string; reasonCode: string | null }>>(Prisma.sql`
+        SELECT "decision"::text AS "decision", "reasonCode"
         FROM "whatsapp"."ConversationModerationAssessment"
         WHERE "merchantSendCommandId"=${cmd.id} AND "shopId"=${principal.shopId}
           AND "conversationId"=${conversationId}
@@ -52,6 +53,7 @@ export class MerchantConversationSendStatusService {
         ORDER BY "createdAt" DESC, "id" DESC LIMIT 1
       `);
       const lastDecision = assessments[0]?.decision ?? "PENDING";
+      const reasonCode = publicModerationReason(publicModerationDecision(lastDecision), assessments[0]?.reasonCode ?? null);
       const moderationStatus = moderation[lastDecision];
       if (!moderationStatus) throw new Error("Invalid persisted moderation state");
       const safeFailure = cmd.failureCode && safeReasons.has(cmd.failureCode) ? cmd.failureCode : null;
@@ -62,7 +64,7 @@ export class MerchantConversationSendStatusService {
         schemaVersion: 1, commandId: cmd.id, conversationId: cmd.conversationId,
         kind: cmd.kind, state: cmd.state,
         createdAt: cmd.createdAt.toISOString(), updatedAt: cmd.updatedAt.toISOString(),
-        messageId: cmd.outboundMessageId, failureCode, moderationStatus,
+        messageId: cmd.outboundMessageId, failureCode, moderationStatus, moderationReasonCode: reasonCode,
       };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }

@@ -34,7 +34,8 @@ export type SendResponse = Readonly<{ schemaVersion: 1; commandId: string; conve
   kind: HumanSendKind; state: SendState; controlRevision: number }>;
 export type SendStatusResponse = Readonly<{ schemaVersion: 1; commandId: string; conversationId: string;
   kind: HumanSendKind; state: SendState; createdAt: string; updatedAt: string;
-  messageId: string | null; failureCode: string | null; moderationStatus: ModerationStatus }>;
+  messageId: string | null; failureCode: string | null; moderationStatus: ModerationStatus;
+  moderationReasonCode: string | null }>;
 export type SendErrorCode = "invalid_request" | "request_too_large" | "not_found" |
   "human_messaging_suspended" | "idempotency_conflict" | "stale_control_revision" |
   "not_human_controlled" | "follow_up_unavailable" | "template_not_allowed" |
@@ -106,7 +107,7 @@ export function isSendResponse(value: unknown): value is SendResponse {
 export function isSendStatusResponse(value: unknown): value is SendStatusResponse {
   if (!value || typeof value !== "object") return false;
   const v = value as Record<string, unknown>;
-  return Object.keys(v).sort().join(",") === "commandId,conversationId,createdAt,failureCode,kind,messageId,moderationStatus,schemaVersion,state,updatedAt" &&
+  return Object.keys(v).sort().join(",") === "commandId,conversationId,createdAt,failureCode,kind,messageId,moderationReasonCode,moderationStatus,schemaVersion,state,updatedAt" &&
     v.schemaVersion === 1 && typeof v.commandId === "string" && validIdentifier(v.commandId) &&
     typeof v.conversationId === "string" && validIdentifier(v.conversationId) &&
     (v.kind === "HUMAN_TEXT" || v.kind === "RECOVERY_FOLLOW_UP_TEMPLATE") &&
@@ -115,5 +116,7 @@ export function isSendStatusResponse(value: unknown): value is SendStatusRespons
     typeof v.updatedAt === "string" && !Number.isNaN(Date.parse(v.updatedAt)) &&
     (v.messageId === null || (typeof v.messageId === "string" && validIdentifier(v.messageId))) &&
     (v.failureCode === null || typeof v.failureCode === "string") &&
+    (v.moderationReasonCode === null || (typeof v.moderationReasonCode === "string" &&
+      ["moderation_blocked", "moderation_review_required", "moderation_empty_input", "moderation_unavailable"].includes(v.moderationReasonCode))) &&
     ["moderation_pending", "moderation_allowed", "moderation_blocked", "moderation_review_required", "moderation_retryable_error"].includes(v.moderationStatus as string);
 }

@@ -12,8 +12,13 @@ const recovery = {
   id: "rec_1", shopId: principal.shopId, customerId: "customer_1", status: "COMPLETED",
   totalPrice: { toString: () => "89.99" }, currency: "GBP", detectedAt: at,
   messageSentAt: null, engagedAt: null, completedAt: at, expiredAt: null,
+  lineItems: [{ title: "Shirt", variantTitle: "Blue", quantity: 2, price: "19.9500" }],
+  outreachAttempts: [ { sequence: 1, sentAt: new Date("2026-10-09T12:00:00.000Z"),
+    status: "WAITING_FOR_RESPONSE", initiatedBy: "AUTOMATION", initiationKey: null, outboundMessageId: "m_1" },
+    { sequence: 2, sentAt: null, status: "PENDING", initiatedBy: null, initiationKey: null, outboundMessageId: null } ],
   customer: { shopId: principal.shopId, firstName: "Ada", lastName: "Lovelace", email: "ada@example.test" },
-  conversation: { id: "conv_1", shopId: principal.shopId, checkoutRecoveryId: "rec_1" },
+  conversation: { id: "conv_1", shopId: principal.shopId, customerId: "customer_1", checkoutRecoveryId: "rec_1",
+    controlMode: "HUMAN", controlRevision: 3 },
 };
 
 function database(override: {
@@ -31,6 +36,8 @@ function database(override: {
       id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl,
       status: "ACTIVE", revokedAt: null, credentialVersion: 3,
     } : override.installation },
+    shopHumanMessagingRestriction: { findUnique: async () => null },
+    conversationMessage: { findFirst: async () => null },
     checkoutRecovery: { findFirst: async (arg: unknown) => {
       calls.push(arg);
       return override.recovery === undefined ? recovery : override.recovery;
@@ -51,6 +58,15 @@ test("summary reads existing recovery only through same-shop predicate and repea
   assert.deepEqual(result?.customer, { firstName: "Ada", lastName: "Lovelace", email: "ada@example.test" });
   assert.deepEqual(result?.value, { amount: "89.99", currency: "GBP", incomplete: false });
   assert.equal(result?.milestones.completedAt, at.toISOString());
+  assert.equal(result?.conversation?.controlRevision, 3);
+  assert.equal(result?.conversation?.controlMode, "HUMAN");
+  assert.equal(result?.conversation?.lastInboundAt, null);
+  assert.deepEqual(result?.conversation?.followUp, { sequence2Used: false, initiatedBy: null });
+  assert.equal(result?.humanMessagingAllowed, true);
+  assert.equal(result?.basket.recoveryTotal.amount, "89.99");
+  assert.equal(result?.basket.items[0]?.unitPrice?.amount, "19.9500");
+  assert.equal(result?.basket.items[0]?.lineTotal, null);
+  assert.equal(result?.basket.items[0]?.imageUrl, null);
   assert.deepEqual(calls[0], { isolationLevel: "RepeatableRead" });
   assert.deepEqual((calls[1] as { where: unknown }).where, { id: "rec_1", shopId: "shop_1" });
 });
@@ -75,4 +91,8 @@ test("stale installation, foreign customer and foreign conversation fail closed"
     ...recovery.conversation, shopId: "other",
   } } });
   await assert.rejects(foreignConversation.service.summary(principal, "rec_1"), RecoveryDetailIntegrityError);
+  const foreignConversationCustomer = database({ recovery: { ...recovery, conversation: {
+    ...recovery.conversation, shopId: null, customerId: "foreign_customer",
+  } } });
+  await assert.rejects(foreignConversationCustomer.service.summary(principal, "rec_1"), RecoveryDetailIntegrityError);
 });

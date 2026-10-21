@@ -57,6 +57,7 @@ function mockTx(rows: ReturnType<typeof makeRows>) {
     return execute(rows, query.where, key).length;
   };
   return {
+    $queryRaw: async () => [],
     conversationMessage: { findMany: find, count },
     checkoutRecovery: { findMany: find, count },
   } as never;
@@ -66,6 +67,8 @@ test("50-item chronological pages have stable cursors across identical timestamp
   const tx = mockTx(makeRows(105));
   const first = await readMessagePage(tx, "shop", "rec", "conv", { direction: "first", boundary: null });
   assert.equal(first.items.length, 50);
+  assert.equal(first.items[0]?.moderationStatus, "PENDING");
+  assert.equal(first.items[0]?.moderationReasonCode, null);
   assert.equal(first.previousCursor, null);
   assert.ok(first.nextCursor);
   const next = await readMessagePage(tx, "shop", "rec", "conv",

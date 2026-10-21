@@ -19,6 +19,28 @@ export interface RecoveryValue {
   currency: string | null;
   incomplete: boolean;
 }
+export interface RecoveryMoney { amount: string | null; currency: string | null }
+export interface RecoveryBasketItem {
+  title: string | null;
+  variantTitle: string | null;
+  quantity: number | null;
+  unitPrice: RecoveryMoney | null;
+  lineTotal: RecoveryMoney | null;
+  imageUrl: string | null;
+}
+export interface RecoveryBasket {
+  items: RecoveryBasketItem[];
+  recoveryTotal: RecoveryMoney;
+  unavailableReason: "missing_snapshot" | "invalid_snapshot" | "oversized_snapshot" | "partial_snapshot" | null;
+}
+export interface RecoveryConversationDetail {
+  id: string;
+  controlMode: "AI" | "HUMAN";
+  controlRevision: number;
+  lastInboundAt: string | null;
+  windowExpiresAt: string | null;
+  followUp: { sequence2Used: boolean; initiatedBy: "HUMAN" | "AGENT" | "AUTOMATION" | null };
+}
 export interface RecoveryDetailSummary {
   schemaVersion: 1;
   timeZone: string;
@@ -27,6 +49,10 @@ export interface RecoveryDetailSummary {
   customer: { firstName: string | null; lastName: string | null; email: string | null } | null;
   value: RecoveryValue;
   hasConversation: boolean;
+  basket: RecoveryBasket;
+  conversation: RecoveryConversationDetail | null;
+  humanMessagingAllowed: boolean;
+  humanMessagingStatus: "ACTIVE" | "SUSPENDED";
   milestones: {
     detectedAt: string;
     messageSentAt: string | null;
@@ -45,6 +71,8 @@ export interface RecoveryDetailMessage {
     text: string | null;
     transcriptionStatus: MessageTranscriptionStatus | null;
   };
+  moderationStatus: "PENDING" | "ALLOW" | "BLOCK" | "REVIEW_REQUIRED" | "RETRYABLE_ERROR";
+  moderationReasonCode: string | null;
   delivery: {
     status: MessageStatus | null;
     sentAt: string | null;

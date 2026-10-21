@@ -10,6 +10,11 @@ const summary = {
   value: { amount: "89.99", currency: "GBP", incomplete: false },
   customer: { firstName: "Ada", lastName: "Lovelace", email: "ada@example.test" },
   hasConversation: true,
+  humanMessagingAllowed: true, humanMessagingStatus: "ACTIVE",
+  basket: { items: [], recoveryTotal: { amount: "89.99", currency: "GBP" }, unavailableReason: null },
+  conversation: { id: "conv_1", controlMode: "HUMAN", controlRevision: 2,
+    lastInboundAt: null, windowExpiresAt: null,
+    followUp: { sequence2Used: false, initiatedBy: null } },
   milestones: { detectedAt: "2026-10-09T15:44:00.000Z", messageSentAt: null,
     engagedAt: null, completedAt: null, expiredAt: null },
 };

@@ -44,8 +44,9 @@ try {
   phase = "running HUMAN send, moderation and configured follow-up tests";
   exec("node",["--import","tsx","--test","--test-concurrency=1",
     "tests/integration/merchant/conversations/messages.service.postgres.test.ts",
-    "tests/integration/merchant/conversations/messages.follow-up-policy.postgres.test.ts"],{env,stdio:"inherit"});
-  process.stdout.write("PASS ARCH-040-API-004/API-005 disposable PostgreSQL admission suites\n");
+    "tests/integration/merchant/conversations/messages.follow-up-policy.postgres.test.ts",
+    "tests/integration/merchant/recoveries/detail/enriched-detail.postgres.test.ts"],{env,stdio:"inherit"});
+  process.stdout.write("PASS ARCH-040-API-002/004/005 disposable PostgreSQL read and admission suites\n");
 } catch {
   process.stderr.write(`ARCH-040-API-004/API-005 PostgreSQL failed while ${phase}.\n`);
   process.exitCode = 1;

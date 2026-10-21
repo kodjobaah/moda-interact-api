@@ -39,10 +39,65 @@ components:
         amount: { type: [string, 'null'], pattern: '^-?\d+(\.\d+)?$' }
         currency: { type: [string, 'null'], pattern: '^[A-Z]{3}$' }
         incomplete: { type: boolean }
+    SnapshotMoney:
+      type: object
+      additionalProperties: false
+      required: [amount, currency]
+      properties:
+        amount: { type: [string, 'null'], pattern: '^-?\d+(\.\d+)?$' }
+        currency: { type: [string, 'null'], pattern: '^[A-Z]{3}$' }
+    BasketItem:
+      type: object
+      additionalProperties: false
+      required: [title, variantTitle, quantity, unitPrice, lineTotal, imageUrl]
+      properties:
+        title: { type: [string, 'null'], maxLength: 255 }
+        variantTitle: { type: [string, 'null'], maxLength: 255 }
+        quantity: { type: [integer, 'null'], minimum: 1, maximum: 1000000 }
+        unitPrice:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/SnapshotMoney'
+        lineTotal:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/SnapshotMoney'
+        imageUrl: { type: [string, 'null'], format: uri, maxLength: 1024 }
+    Basket:
+      type: object
+      additionalProperties: false
+      required: [items, recoveryTotal, unavailableReason]
+      description: >-
+        Snapshot only. The persisted checkout v1 writer stores a unit price but no
+        discounted line total or image URL; unavailable values remain null.
+      properties:
+        items: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/BasketItem' } }
+        recoveryTotal: { $ref: '#/components/schemas/SnapshotMoney' }
+        unavailableReason:
+          type: [string, 'null']
+          enum: [missing_snapshot, invalid_snapshot, oversized_snapshot, partial_snapshot, null]
+    ConversationDetail:
+      type: object
+      additionalProperties: false
+      required: [id, controlMode, controlRevision, lastInboundAt, windowExpiresAt, followUp]
+      description: Read-only presentation; write eligibility is independently checked at admission.
+      properties:
+        id: { type: string }
+        controlMode: { type: string, enum: [AI, HUMAN] }
+        controlRevision: { type: integer, minimum: 0 }
+        lastInboundAt: { type: [string, 'null'], format: date-time }
+        windowExpiresAt: { type: [string, 'null'], format: date-time }
+        followUp:
+          type: object
+          additionalProperties: false
+          required: [sequence2Used, initiatedBy]
+          properties:
+            sequence2Used: { type: boolean }
+            initiatedBy: { type: [string, 'null'], enum: [HUMAN, AGENT, AUTOMATION, null] }
     DetailSummary:
       type: object
       additionalProperties: false
-      required: [schemaVersion, timeZone, id, status, value, customer, hasConversation, milestones]
+      required: [schemaVersion, timeZone, id, status, value, customer, hasConversation, basket, conversation, humanMessagingAllowed, humanMessagingStatus, milestones]
       properties:
         schemaVersion: { type: integer, const: 1 }
         timeZone: { type: string }
@@ -50,6 +105,13 @@ components:
         status: { type: string, enum: [DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED] }
         value: { $ref: '#/components/schemas/Money' }
         hasConversation: { type: boolean }
+        basket: { $ref: '#/components/schemas/Basket' }
+        conversation:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/ConversationDetail'
+        humanMessagingAllowed: { type: boolean }
+        humanMessagingStatus: { type: string, enum: [ACTIVE, SUSPENDED] }
         customer:
           oneOf:
             - type: 'null'
@@ -73,12 +135,18 @@ components:
     Message:
       type: object
       additionalProperties: false
-      required: [id, createdAt, direction, sender, content, delivery]
+      required: [id, createdAt, direction, sender, content, delivery, moderationStatus, moderationReasonCode]
       properties:
         id: { type: string }
         createdAt: { type: string, format: date-time }
         direction: { type: [string, 'null'] }
         sender: { type: [string, 'null'] }
+        moderationStatus:
+          type: string
+          enum: [PENDING, ALLOW, BLOCK, REVIEW_REQUIRED, RETRYABLE_ERROR]
+        moderationReasonCode:
+          type: [string, 'null']
+          enum: [moderation_blocked, moderation_review_required, moderation_empty_input, moderation_unavailable, null]
         content:
           type: object
           additionalProperties: false
@@ -146,7 +214,7 @@ paths:
   /v1/merchant/recoveries/{recoveryId}:
     get:
       operationId: readMerchantRecoveryDetail
-      description: Read summary/milestones of one shop-owned recovery; no message transcript included.
+      description: Read recovery summary, saved basket and conversation-control presentation; no message transcript included.
       parameters:
         - $ref: '#/components/parameters/recoveryId'
       responses:
