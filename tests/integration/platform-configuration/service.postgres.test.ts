@@ -24,7 +24,7 @@ const commerce = { connectionKeysJson: JSON.stringify({ old: cryptoPrevious, cur
   activeKeyId: "current", commandHmacKey: hmac };
 const meta = { META_APP_SECRET: "0123456789abcdef0123456789abcdef", WHATSAPP_VERIFY_TOKEN: "secret-verify-token" };
 
-function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta", version: number, payload: unknown) {
+function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta" | "woocommerce.billing", version: number, payload: unknown) {
   const envelope = encryptCredential({ keyring: root, activeKeyId: "wrapping", plaintext: JSON.stringify(payload),
     aad: apiPlatformConfigurationAad(environment, key, version) });
   return { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM", wrappingKeyId: envelope.keyId,
@@ -136,5 +136,31 @@ test("PostgreSQL: uniqueness on environment and key is enforced", { skip: !url }
     await assert.rejects(db.platformConfiguration.create({
       data: { environment: "test", key: "merchant.knowledge.r2", value: sealed("test", "merchant.knowledge.r2", 1, policy) },
     }));
+  } finally { await db.$disconnect(); }
+});
+
+
+test("PostgreSQL: Woo billing atomic sealed pair, CAS rotation, environment isolation and revocation", { skip: !url }, async () => {
+  const db = new PrismaClient({ datasources: { db: { url: requireDatabaseUrl() } } });
+  const key = "woocommerce.billing";
+  const pair = { apiKey: "woocom-billing-key", apiSecret: "woocom-billing-secret" };
+  const rotated = { apiKey: "rotated-woocom-key", apiSecret: "rotated-woocom-secret" };
+  const service = createApiPlatformConfigurationService({ database: db, environment: "test", unsealKeyring: root });
+  const production = createApiPlatformConfigurationService({ database: db, environment: "production", unsealKeyring: root });
+  try {
+    await failed(service.requireWooBillingCredentials(), "MISSING");
+    await db.platformConfiguration.create({ data: { environment: "test", key, version: 1,
+      value: sealed("test", key, 1, pair) } });
+    assert.deepEqual(await service.requireWooBillingCredentials(), pair);
+    await failed(production.requireWooBillingCredentials(), "MISSING");
+    await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key } },
+      data: { value: sealed("test", key, 2, rotated), version: { increment: 1 } } });
+    assert.deepEqual(await service.requireWooBillingCredentials(), rotated);
+    await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key } },
+      data: { value: sealed("test", key, 2, pair), version: { increment: 1 } } });
+    await failed(service.requireWooBillingCredentials(), "UNSEAL_FAILED");
+    await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key } },
+      data: { value: { kind: "disabled", schemaVersion: 1 }, version: { increment: 1 } } });
+    await failed(service.requireWooBillingCredentials(), "DISABLED");
   } finally { await db.$disconnect(); }
 });

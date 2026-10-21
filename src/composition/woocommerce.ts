@@ -36,7 +36,10 @@ export function createWooRoutes(options: {
     logger,
   });
   const billingWebhook = createWooBillingWebhookRoute({
-    ...(config.wooBilling ? { apiSecret: config.wooBilling.apiSecret } : {}),
+    ...(config.wooBilling ? { resolveApiSecret: async () => {
+      if (!options.platformConfiguration) throw new Error("billing_configuration_unavailable");
+      return (await options.platformConfiguration.requireWooBillingCredentials()).apiSecret;
+    } } : {}),
     receiptService: new WooBillingWebhookReceiptService(prisma.wooCommerceBillingWebhookReceipt),
     logger,
   });

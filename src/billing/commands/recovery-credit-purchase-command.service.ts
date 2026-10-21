@@ -26,15 +26,17 @@ export type RecoveryCreditPurchaseCommandResponse = {
   confirmationUrl: string;
 };
 
+import { RecoveryCreditPurchaseCommandError } from "./recovery-credit-command-error.js";
 export { RecoveryCreditPurchaseCommandError } from "./recovery-credit-command-error.js";
 
 type BillingDatabase = Pick<PrismaClient, "$transaction">;
 type ProviderClient = Pick<WooBillingClient, "createCharge">;
+type ProviderSource = ProviderClient | (() => Promise<ProviderClient>);
 
 export class RecoveryCreditPurchaseCommandService {
   constructor(
     database: BillingDatabase,
-    private readonly provider: ProviderClient,
+    private readonly provider: ProviderSource,
     providerEnvironment: WooBillingConfig["environment"],
   ) {
     this.intentPersistence = new RecoveryCreditIntentPersistence(database);
@@ -49,6 +51,13 @@ export class RecoveryCreditPurchaseCommandService {
     requestKey: string,
     merchantPricingUsageEventId: string,
   ): Promise<RecoveryCreditPurchaseCommandResponse> {
+    let provider: ProviderClient;
+    try {
+      provider = typeof this.provider === "function" ? await this.provider() : this.provider;
+    } catch {
+      // No purchase or provider-operation row may be created without credentials.
+      throw new RecoveryCreditPurchaseCommandError(503, "billing_provider_unavailable");
+    }
     const intent = await this.intentPersistence.persistIntent(principal, requestKey, merchantPricingUsageEventId);
     if (intent.replay) return replayOperation(intent.operation);
 
@@ -61,7 +70,7 @@ export class RecoveryCreditPurchaseCommandService {
         return_url: createWooReturnUrl(intent.canonicalSiteUrl, operation.id),
       };
       evidence = this.outcomePersistence.validateChargeResponse(
-        await this.provider.createCharge(body),
+        await provider.createCharge(body),
       );
     } catch (error) {
       const outcome = await this.outcomePersistence.failProviderOperation(operation, error);

@@ -30,7 +30,11 @@ export type MetaWebhookSecrets = Readonly<{
   whatsappVerifyToken: string;
 }>;
 
+export type WooBillingCredentials = Readonly<{ apiKey: string; apiSecret: string }>;
+
 export interface ApiPlatformConfigurationReader {
+  /** Fetch the current, complete sealed provider pair; no cache or environment fallback. */
+  requireWooBillingCredentials(): Promise<WooBillingCredentials>;
   readMerchantKnowledgeUploadPolicy(): Promise<MerchantKnowledgeUploadPolicy>;
   /** Purpose-scoped server-only access to both R2 credentials and policy. */
   requireMerchantKnowledgeR2Configuration(): Promise<MerchantKnowledgeR2Configuration>;
@@ -50,7 +54,7 @@ export interface ApiPlatformConfigurationDependencies {
 export function createApiPlatformConfigurationService(
   deps: ApiPlatformConfigurationDependencies,
 ): ApiPlatformConfigurationReader {
-  async function readSecret(key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta"): Promise<unknown> {
+  async function readSecret(key: ApiConfigurationKey): Promise<unknown> {
     const row = await readApiPlatformConfiguration(deps.database, deps.environment, key);
     if (isDisabledPlatformSecret(row.value)) configurationError(key, "DISABLED");
     const envelope = decodePlatformSecretEnvelope(key, row.value);
@@ -69,6 +73,16 @@ export function createApiPlatformConfigurationService(
   }
 
   return Object.freeze({
+    async requireWooBillingCredentials(): Promise<WooBillingCredentials> {
+      const key: ApiConfigurationKey = "woocommerce.billing";
+      const value = await readSecret(key);
+      if (!isClosedObject(value, ["apiKey", "apiSecret"]) ||
+          !requiredSecret(value.apiKey, 1, 4096) ||
+          !requiredSecret(value.apiSecret, 1, 4096)) {
+        configurationError(key, "INVALID_VALUE");
+      }
+      return Object.freeze({ apiKey: value.apiKey as string, apiSecret: value.apiSecret as string });
+    },
     async readMerchantKnowledgeUploadPolicy(): Promise<MerchantKnowledgeUploadPolicy> {
       const value = await readSecret("merchant.knowledge.r2");
       const { maxUploadBytes, maxXlsxUncompressedBytes, r2Endpoint, r2Bucket } =

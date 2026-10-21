@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import test from "node:test";
 import type { PrismaClient } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
@@ -112,10 +113,28 @@ test("real domain composition registers every authenticated route and retains tr
     const connection = await fetch(`${origin}/v1/woocommerce/installations/connect`, { method: "POST" });
     assert.equal(connection.status, 400);
     // Signed webhooks use raw request validation, not the merchant bearer.
-    const webhook = await fetch(`${origin}/v1/billing/webhooks/woocommerce`, {
+    // Reject an unsigned request before attempting any protected credential read.
+    const unsignedWebhook = await fetch(`${origin}/v1/billing/webhooks/woocommerce`, {
       method: "POST", headers: { "content-type": "application/json" }, body: "{}",
     });
-    assert.equal(webhook.status, 503); // Provider secret deliberately not configured.
+    assert.equal(unsignedWebhook.status, 401);
+    assert.deepEqual(await unsignedWebhook.json(), { error: "invalid_webhook_signature" });
+
+    // With a signature header present, an unavailable provider credential
+    // must fail closed rather than accept a receipt or return an auth response.
+    const signature = createHmac("sha256", "unconfigured-fixture-secret")
+      .update("{}")
+      .digest("base64");
+    const unavailableWebhook = await fetch(`${origin}/v1/billing/webhooks/woocommerce`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-wc-webhook-signature": signature,
+      },
+      body: "{}",
+    });
+    assert.equal(unavailableWebhook.status, 503);
+    assert.deepEqual(await unavailableWebhook.json(), { error: "webhook_acceptance_unavailable" });
     const returned = await fetch(`${origin}/v1/woocommerce/read-authorizations/return`);
     assert.equal(returned.status, 200);
     assert.match(returned.headers.get("content-type") ?? "", /text\/html/);

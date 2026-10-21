@@ -8,11 +8,13 @@ import { RecurringIntentPersistence, type MaterializedPlanResolver } from "./rec
 import { RecurringOutcomePersistence, type RecurringCommandResponse } from "./recurring-outcome.js";
 
 // Preserve existing public imports for API routes and other consumers.
+import { RecurringBillingCommandError } from "./recurring-command-error.js";
 export { RecurringBillingCommandError } from "./recurring-command-error.js";
 export type { RecurringCommandResponse } from "./recurring-outcome.js";
 
 type BillingDatabase = Pick<PrismaClient, "$transaction">;
 type ProviderClient = Pick<WooBillingClient, "createSubscription" | "switchSubscription" | "cancelSubscription">;
+type ProviderSource = ProviderClient | (() => Promise<ProviderClient>);
 
 export class RecurringSubscriptionCommandService {
   private readonly intentPersistence: RecurringIntentPersistence;
@@ -20,7 +22,7 @@ export class RecurringSubscriptionCommandService {
 
   constructor(
     database: BillingDatabase,
-    private readonly provider: ProviderClient,
+    private readonly provider: ProviderSource,
     providerEnvironment: WooBillingConfig["environment"],
     planResolver: MaterializedPlanResolver = new InitialWooFreeActivationService(),
   ) {
@@ -54,12 +56,19 @@ export class RecurringSubscriptionCommandService {
     requestKey: string,
     merchantPricingPlanId?: string,
   ): Promise<RecurringCommandResponse> {
+    let provider: ProviderClient;
+    try {
+      provider = typeof this.provider === "function" ? await this.provider() : this.provider;
+    } catch {
+      // Failure occurs before an intent is persisted or any provider request is made.
+      throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
+    }
     const intent = await this.intentPersistence.persistIntent(principal, kind, requestKey, merchantPricingPlanId);
     if (intent.replay) return this.outcomePersistence.replayOperation(intent.operation);
 
     if (kind === "CANCEL") {
       try {
-        await this.provider.cancelSubscription(intent.operation.providerReference!);
+        await provider.cancelSubscription(intent.operation.providerReference!);
       } catch (error) {
         return this.outcomePersistence.failProviderOperation(intent.operation.id, error);
       }
@@ -76,8 +85,8 @@ export class RecurringSubscriptionCommandService {
         return_url: createWooReturnUrl(intent.canonicalSiteUrl, intent.operation.id),
       };
       const response = kind === "SUBSCRIPTION_CREATE"
-        ? await this.provider.createSubscription(body)
-        : await this.provider.switchSubscription(intent.operation.providerReference!, body);
+        ? await provider.createSubscription(body)
+        : await provider.switchSubscription(intent.operation.providerReference!, body);
       evidence = this.outcomePersistence.validateSubscriptionEvidence(response, kind, intent.operation.providerReference);
     } catch (error) {
       return this.outcomePersistence.failProviderOperation(intent.operation.id, error);

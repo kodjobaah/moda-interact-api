@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
-const runnerScripts = [
+const directRunners = [
   "scripts/test-woocommerce-installation-postgres.mjs",
   "scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
   "scripts/test-arch041-billing-postgres.mjs",
@@ -15,6 +15,13 @@ const runnerScripts = [
   "scripts/test-arch035-feature-preferences-postgres.mjs",
   "scripts/test-arch035-knowledge-upload-postgres.mjs",
   "scripts/run-arch043-platform-configuration-postgres.mjs",
+] as const;
+
+// These disposable runners are included transitively through npm scripts.
+const delegatedRunners = [
+  { npmScript: "test:arch040-conversation-control:postgres", runner: "scripts/test-arch040-woo-conversation-control-postgres.mjs" },
+  { npmScript: "test:arch040-human-send:postgres", runner: "scripts/test-arch040-woo-human-send-postgres.mjs" },
+  { npmScript: "test:arch035-woo-activity:redis", runner: "scripts/test-arch035-woo-activity-redis.mjs" },
 ] as const;
 
 async function integrationTests(directory: string): Promise<string[]> {
@@ -29,17 +36,26 @@ async function integrationTests(directory: string): Promise<string[]> {
   return files;
 }
 
-test("every PostgreSQL integration suite has a default migration/schema harness", async () => {
+test("every integration suite is registered once in the default disposable runner chain", async () => {
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
     scripts: Record<string, string>;
   };
   const chain = packageJson.scripts["test:integration"] ?? "";
   const registrations: string[] = [];
-  for (const script of runnerScripts) {
-    assert.ok(chain.includes(`node ${script}`), `${script} missing from test:integration`);
-    const body = await readFile(join(root, script), "utf8");
+  const register = async (runner: string) => {
+    const body = await readFile(join(root, runner), "utf8");
     const matches = body.matchAll(/tests\/integration\/[A-Za-z0-9_./-]+\.test\.ts/g);
     registrations.push(...Array.from(matches, ([path]) => path));
+  };
+  for (const runner of directRunners) {
+    assert.ok(chain.includes(`node ${runner}`), `${runner} missing from test:integration`);
+    await register(runner);
+  }
+  for (const { npmScript, runner } of delegatedRunners) {
+    assert.ok(chain.includes(`npm run ${npmScript}`), `${npmScript} missing from test:integration`);
+    assert.ok((packageJson.scripts[npmScript] ?? "").includes(`node ${runner}`),
+      `${npmScript} must invoke ${runner}`);
+    await register(runner);
   }
   const expected = (await integrationTests(join(root, "tests/integration"))).sort();
   assert.ok(expected.length > 0, "no integration test files discovered");

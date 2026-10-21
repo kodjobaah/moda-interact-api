@@ -17,7 +17,7 @@ const hmac = randomBytes(32).toString("base64");
 const keyValues = { connectionKeysJson: JSON.stringify({ previous, current }), activeKeyId: "current", commandHmacKey: hmac };
 const validPolicy = adminR2PlaintextFixture;
 
-function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta", version: number, payload: unknown) {
+function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta" | "woocommerce.billing", version: number, payload: unknown) {
   const envelope = encryptCredential({ keyring: root, activeKeyId: "root-v1", plaintext: JSON.stringify(payload),
     aad: apiPlatformConfigurationAad(environment, key, version) });
   return { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM", wrappingKeyId: envelope.keyId,
@@ -136,7 +136,7 @@ test("Meta secret purpose: strict fields, AAD purpose binding and no generic sec
   await fails(service.requireMetaWebhookSecrets(), "DISABLED");
   assert.deepEqual(Object.keys(service).sort(), [
     "readMerchantKnowledgeUploadPolicy", "requireMerchantKnowledgeR2Configuration",
-    "requireCommerceConnectionSecurity", "requireMetaWebhookSecrets",
+    "requireCommerceConnectionSecurity", "requireMetaWebhookSecrets", "requireWooBillingCredentials",
   ].sort());
 });
 

@@ -31,7 +31,7 @@ interface StoredReceipt {
 
 async function withWebhookApi(
   callback: (baseUrl: string, receipts: StoredReceipt[], logLines: string[]) => Promise<void>,
-  options: { apiSecret?: string; failInsert?: boolean } = {},
+  options: { resolveApiSecret?: () => Promise<string>; failInsert?: boolean } = {},
 ): Promise<void> {
   const receipts: StoredReceipt[] = [];
   const logLines: string[] = [];
@@ -72,7 +72,7 @@ async function withWebhookApi(
     sink: (line) => logLines.push(JSON.stringify(line)),
   });
   const route = createWooBillingWebhookRoute({
-    ...(options.apiSecret === undefined ? { apiSecret: secret } : { apiSecret: options.apiSecret }),
+    resolveApiSecret: options.resolveApiSecret ?? (async () => secret),
     receiptService: new WooBillingWebhookReceiptService(delegate as never),
     logger,
   });
@@ -275,5 +275,38 @@ test("fails closed when the accepted API-004 secret is not configured", async ()
     const result = await post(baseUrl, rawBody, validHeaders(rawBody));
     assert.equal(result.status, 503);
     assert.equal(receipts.length, 0);
-  }, { apiSecret: "" });
+  }, { resolveApiSecret: async () => "" });
+});
+
+test("signed webhooks read current database secret on each delivery and fail closed after revocation", async () => {
+  const bodyOne = Buffer.from(basePayload);
+  const bodyTwo = Buffer.from(basePayload.replace("contract-1", "contract-2"));
+  const rotatedSecret = "woo-rotated-private-secret";
+  let current = secret;
+  let revoked = false;
+  let lookups = 0;
+  await withWebhookApi(async (baseUrl, receipts, logs) => {
+    const accepted = await post(baseUrl, bodyOne, validHeaders(bodyOne));
+    assert.equal(accepted.status, 204);
+    current = rotatedSecret;
+    const oldSignature = await post(baseUrl, bodyTwo, validHeaders(bodyTwo));
+    assert.equal(oldSignature.status, 401);
+    const newSignature = await post(baseUrl, bodyTwo, [
+      ["Content-Type", "application/json"], ["X-WC-Webhook-Topic", topic],
+      ["X-WC-Webhook-Signature", createHmac("sha256", rotatedSecret).update(bodyTwo).digest("base64")],
+    ]);
+    assert.equal(newSignature.status, 204);
+    revoked = true;
+    const unavailable = await post(baseUrl, bodyTwo, validHeaders(bodyTwo));
+    assert.equal(unavailable.status, 503);
+    assert.match(unavailable.body, /webhook_acceptance_unavailable/);
+    assert.equal(receipts.length, 2);
+    assert.equal(lookups, 4, "one fresh credential read per verified webhook request");
+    assert.equal(JSON.stringify(logs).includes(rotatedSecret), false);
+    assert.equal(JSON.stringify(logs).includes("sensitive db cause"), false);
+  }, { resolveApiSecret: async () => {
+    lookups++;
+    if (revoked) throw new Error("sensitive db cause");
+    return current;
+  } });
 });

@@ -1,5 +1,5 @@
 import { loadWooRestReadPublicOrigin, type WooRestReadAuthorizationConfig } from "./woocommerce/rest-read/config.js";
-import { loadWooBillingConfig, type WooBillingConfig } from "./woocommerce/billing/woo-billing-config.js";
+import { loadWooBillingConfig, type WooBillingTarget } from "./woocommerce/billing/woo-billing-config.js";
 
 export interface RuntimeConfig {
   databaseUrl: string;
@@ -8,7 +8,7 @@ export interface RuntimeConfig {
   environment: string;
   readinessTimeoutMs: number;
   woocommerceConnectionMode: "public" | "local-development";
-  wooBilling: WooBillingConfig | null;
+  wooBilling: WooBillingTarget | null;
   /** Startup reads only the public routing origin; never Commerce key material. */
   wooRestReadPublicOrigin?: string | null;
   /** Test fixture compatibility only; never populated by loadRuntimeConfig. */

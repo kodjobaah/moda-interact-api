@@ -52,6 +52,8 @@ export function createApiPlatformConfigurationReader(input: {
     }
   }
   return Object.freeze({
+    requireWooBillingCredentials: () => observedRead(
+      "woocommerce.billing", "require_billing_credentials", () => service().requireWooBillingCredentials()),
     readMerchantKnowledgeUploadPolicy: () => observedRead(
       "merchant.knowledge.r2", "read_upload_policy", () => service().readMerchantKnowledgeUploadPolicy()),
     requireMerchantKnowledgeR2Configuration: () => observedRead(

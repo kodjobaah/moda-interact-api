@@ -12,6 +12,7 @@ import { RecurringSubscriptionCommandService } from "../billing/commands/recurri
 import { RecoveryCreditPurchaseCommandService } from "../billing/commands/recovery-credit-purchase-command.service.js";
 import { createBillingCommandRoutes } from "../billing/commands/routes.js";
 import { WooBillingClient } from "../woocommerce/billing/woo-billing-client.js";
+import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
 
 /** Read and command routes use the same installed principal but retain independent request validation. */
 export function createBillingRoutes(options: {
@@ -19,9 +20,15 @@ export function createBillingRoutes(options: {
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
   wooBilling: RuntimeConfig["wooBilling"];
+  platformConfiguration?: Pick<ApiPlatformConfigurationReader, "requireWooBillingCredentials">;
 }): readonly ApiRouteHandler[] {
   const { prisma, authenticator, logger, wooBilling } = options;
-  const wooBillingClient = wooBilling ? new WooBillingClient(wooBilling) : undefined;
+  const resolveWooBillingClient = wooBilling ? async () => {
+    if (!options.platformConfiguration) throw new Error("billing_configuration_unavailable");
+    // Fetch one atomic credential pair on each command; no provider call inside a DB transaction.
+    const credentials = await options.platformConfiguration.requireWooBillingCredentials();
+    return new WooBillingClient({ ...wooBilling, ...credentials });
+  } : undefined;
   return [
     createWooPurchaseHistoryRoute({
       authenticator, service: new WooPurchaseHistoryReadService(prisma), logger,
@@ -33,12 +40,12 @@ export function createBillingRoutes(options: {
       logger,
     }),
     createBillingCommandRoutes({
-      ...(wooBillingClient && wooBilling ? {
+      ...(resolveWooBillingClient && wooBilling ? {
         recurringSubscriptionCommandService: new RecurringSubscriptionCommandService(
-          prisma, wooBillingClient, wooBilling.environment,
+          prisma, resolveWooBillingClient, wooBilling.environment,
         ),
         recoveryCreditPurchaseCommandService: new RecoveryCreditPurchaseCommandService(
-          prisma, wooBillingClient, wooBilling.environment,
+          prisma, resolveWooBillingClient, wooBilling.environment,
         ),
       } : {}),
       authenticator,
