@@ -101,7 +101,7 @@ export function decodePlatformSecretEnvelope(key: ApiConfigurationKey, value: un
 
 /** Frozen byte-identical AAD. This is NOT the AAD of persisted Woo grants. */
 export function apiPlatformConfigurationAad(
-  environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta", version: number,
+  environment: string, key: ApiConfigurationKey, version: number,
 ): string {
   assertApiDeploymentEnvironment(environment, key);
   if (!Number.isSafeInteger(version) || version < 1 || version > 2147483647) {

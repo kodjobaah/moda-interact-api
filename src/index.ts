@@ -27,7 +27,7 @@ async function main(): Promise<void> {
       prisma: database.prisma, authenticator, logger, environment: config.environment, platformConfiguration,
     });
     const billing = createBillingRoutes({
-      prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling,
+      prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling, platformConfiguration,
     });
     const activityQueues = createWooCheckoutRedisProducer(process.env.REDIS_URL);
     const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger, platformConfiguration,

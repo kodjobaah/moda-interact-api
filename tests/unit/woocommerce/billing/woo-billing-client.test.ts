@@ -3,20 +3,22 @@ import test from "node:test";
 import { WooBillingClient, WooBillingProviderError } from "../../../../src/woocommerce/billing/woo-billing-client.js";
 import { loadWooBillingConfig } from "../../../../src/woocommerce/billing/woo-billing-config.js";
 
-const sandbox = loadWooBillingConfig({
-  WOO_BILLING_ENVIRONMENT: "sandbox",
-  WOO_BILLING_API_KEY: "test-key",
-  WOO_BILLING_API_SECRET: "test-secret",
-})!;
+const sandbox = {
+  ...loadWooBillingConfig({ WOO_BILLING_ENVIRONMENT: "sandbox" })!,
+  apiKey: "test-key",
+  apiSecret: "test-secret",
+};
 
-test("Woo billing config selects only fixed HTTPS sandbox and production hosts", () => {
+test("Woo billing endpoint selection is deployment-only; legacy env credentials are ignored", () => {
   assert.equal(loadWooBillingConfig({}), null);
+  assert.equal(loadWooBillingConfig({ WOO_BILLING_API_KEY: "old", WOO_BILLING_API_SECRET: "old" }), null);
   assert.equal(sandbox.baseUrl, "https://sandbox.woocommerce.com/wp-json/wccom/billing/1.0/");
-  assert.equal(loadWooBillingConfig({
-    WOO_BILLING_ENVIRONMENT: "production", WOO_BILLING_API_KEY: "key", WOO_BILLING_API_SECRET: "secret",
-  })?.baseUrl, "https://woocommerce.com/wp-json/wccom/billing/1.0/");
+  const prod = loadWooBillingConfig({
+    WOO_BILLING_ENVIRONMENT: "production", WOO_BILLING_API_KEY: "ignored", WOO_BILLING_API_SECRET: "ignored",
+  });
+  assert.equal(prod?.baseUrl, "https://woocommerce.com/wp-json/wccom/billing/1.0/");
+  assert.deepEqual(Object.keys(prod!).sort(), ["baseUrl", "environment"]);
   assert.throws(() => loadWooBillingConfig({ WOO_BILLING_ENVIRONMENT: "https://evil.invalid" }), /must be sandbox or production/);
-  assert.throws(() => loadWooBillingConfig({ WOO_BILLING_ENVIRONMENT: "sandbox", WOO_BILLING_API_KEY: "key" }), /required together/);
 });
 
 test("provider client sends Basic auth, JSON and disables redirects", async () => {

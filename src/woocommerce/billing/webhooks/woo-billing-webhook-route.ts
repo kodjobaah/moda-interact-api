@@ -10,13 +10,14 @@ export const WOO_BILLING_WEBHOOK_ROUTE_PATH = "/v1/billing/webhooks/woocommerce"
 export const MAX_WOO_BILLING_WEBHOOK_BODY_BYTES = 262144;
 
 interface WooBillingWebhookRouteOptions {
-  apiSecret?: string;
+  /** Each signed delivery uses a fresh, purpose-scoped secret snapshot. */
+  resolveApiSecret?: () => Promise<string>;
   receiptService: WooBillingWebhookReceiptService;
   logger: StructuredLogger;
 }
 
 export function createWooBillingWebhookRoute({
-  apiSecret,
+  resolveApiSecret,
   receiptService,
   logger,
 }: WooBillingWebhookRouteOptions): ApiRouteHandler {
@@ -32,11 +33,19 @@ export function createWooBillingWebhookRoute({
         assertContentType(request);
         assertContentEncoding(request);
         const signatures = rawHeaderValues(request, "x-wc-webhook-signature");
-        if (signatures.length !== 1 || !signatures[0]?.trim() || !apiSecret) {
-          throw new WooBillingWebhookError(apiSecret ? 401 : 503, apiSecret ? "invalid_webhook_signature" : "webhook_acceptance_unavailable");
+        if (signatures.length !== 1 || !signatures[0]?.trim()) {
+          throw new WooBillingWebhookError(401, "invalid_webhook_signature");
         }
+        let signingSecret: string | undefined;
+        try {
+          signingSecret = await resolveApiSecret?.();
+        } catch {
+          // A revoked, corrupt or unavailable sealed credential must not accept receipts.
+          throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable");
+        }
+        if (!signingSecret) throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable");
 
-        if (!verifyWooWebhookSignature(rawBody, signatures[0], apiSecret)) {
+        if (!verifyWooWebhookSignature(rawBody, signatures[0], signingSecret)) {
           throw new WooBillingWebhookError(401, "invalid_webhook_signature");
         }
 

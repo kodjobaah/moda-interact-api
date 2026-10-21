@@ -1,28 +1,26 @@
-export interface WooBillingConfig {
+export interface WooBillingTarget {
   environment: "sandbox" | "production";
-  apiKey: string;
-  apiSecret: string;
   baseUrl: "https://sandbox.woocommerce.com/wp-json/wccom/billing/1.0/" | "https://woocommerce.com/wp-json/wccom/billing/1.0/";
 }
 
+export interface WooBillingConfig extends WooBillingTarget {
+  apiKey: string;
+  apiSecret: string;
+}
+
+/** Provider endpoint selection is deployment-owned; both credentials are database-owned. */
 export function loadWooBillingConfig(
   environment: Readonly<Record<string, string | undefined>>,
-): WooBillingConfig | null {
+): WooBillingTarget | null {
   const selectedEnvironment = environment.WOO_BILLING_ENVIRONMENT?.trim();
-  const apiKey = environment.WOO_BILLING_API_KEY?.trim();
-  const apiSecret = environment.WOO_BILLING_API_SECRET?.trim();
-  const supplied = [selectedEnvironment, apiKey, apiSecret].some(Boolean);
-  if (!supplied) return null;
+  if (!selectedEnvironment) return null;
   if (selectedEnvironment !== "sandbox" && selectedEnvironment !== "production") {
     throw new Error("WOO_BILLING_ENVIRONMENT must be sandbox or production");
   }
-  if (!apiKey || !apiSecret) throw new Error("WOO_BILLING_API_KEY and WOO_BILLING_API_SECRET are required together");
-  return {
+  return Object.freeze({
     environment: selectedEnvironment,
-    apiKey,
-    apiSecret,
     baseUrl: selectedEnvironment === "sandbox"
       ? "https://sandbox.woocommerce.com/wp-json/wccom/billing/1.0/"
       : "https://woocommerce.com/wp-json/wccom/billing/1.0/",
-  };
+  });
 }

@@ -43,15 +43,15 @@ try {
   phase = "deploying real migrations";
   run("npx", ["--no-install", "prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"],
     { env, stdio: "inherit" });
-  phase = "running all four PostgreSQL service tests";
+  phase = "running all five PostgreSQL service tests";
   const testOutput = run("node", ["--import", "tsx", "--test", "--test-reporter=tap",
     "tests/integration/platform-configuration/service.postgres.test.ts"], { env });
   // Node's structured TAP totals reject zero/partial/skipped runs (an exit code of 0 alone cannot).
   const has = (name, count) => new RegExp(`^# ${name}\\s+${count}\\s*$`, "m").test(testOutput);
-  if (!has("tests", 4) || !has("pass", 4) || !has("fail", 0) || !has("skipped", 0)) {
+  if (!has("tests", 5) || !has("pass", 5) || !has("fail", 0) || !has("skipped", 0)) {
     throw new Error("incomplete PostgreSQL test run");
   }
-  process.stdout.write("ARCH-043-API-001 disposable PostgreSQL service tests PASS (4/4)\n");
+  process.stdout.write("ARCH-043-API-001 disposable PostgreSQL service tests PASS (5/5)\n");
 } catch {
   // Do not emit the child exception; its arguments can include generated credentials.
   process.stderr.write(`ARCH-043-API-001 failed during ${phase}.\n`);

@@ -34,7 +34,7 @@ function fixture() {
     } } } as never,
     logger: logger as never,
   });
-  function seal(key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta", payload: unknown) {
+  function seal(key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta" | "woocommerce.billing", payload: unknown) {
     const envelope = encryptCredential({ keyring: root, activeKeyId: "root", plaintext: JSON.stringify(payload),
       aad: apiPlatformConfigurationAad("test", key, 1) });
     rows.set(`test:${key}`, { environment: "test", key, version: 1, value: {
@@ -117,4 +117,27 @@ test("invalid envelopes and revoked webhook credentials fail closed and emit onl
   await assert.rejects(state.reader.requireMetaWebhookSecrets(), { code: "DISABLED" });
   assert.deepEqual(state.events.map((entry) => entry.data.reasonCode), ["INVALID_ENVELOPE", "DISABLED"]);
   assert.equal(JSON.stringify(state.events).includes("sensitive bad payload"), false);
+});
+
+
+test("Woo billing reader logs only purpose and bounded outcome, not the sealed pair", async () => {
+  const state = fixture();
+  const key = "woocommerce.billing";
+  const credentials = { apiKey: "billing-provider-api-key", apiSecret: "billing-provider-secret" };
+  state.seal(key, credentials);
+  assert.deepEqual(await state.reader.requireWooBillingCredentials(), credentials);
+  assert.deepEqual(state.events, [{
+    level: "info", event: "api.platform_configuration.read", data: {
+      key, operation: "require_billing_credentials", outcome: "success",
+    },
+  }]);
+  const text = JSON.stringify(state.events);
+  assert.equal(text.includes(credentials.apiKey), false);
+  assert.equal(text.includes(credentials.apiSecret), false);
+  assert.equal(text.includes(state.rootMaterial), false);
+  state.setDatabaseFailure(true);
+  await assert.rejects(state.reader.requireWooBillingCredentials(), { code: "DATABASE_UNAVAILABLE" });
+  assert.deepEqual(state.events[1]?.data, {
+    key, operation: "require_billing_credentials", outcome: "failed", reasonCode: "DATABASE_UNAVAILABLE",
+  });
 });

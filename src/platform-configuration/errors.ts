@@ -2,7 +2,8 @@
 export type ApiConfigurationKey =
   | "merchant.knowledge.r2"
   | "commerce.connectionKeys"
-  | "messaging.meta";
+  | "messaging.meta"
+  | "woocommerce.billing";
 
 export type ApiConfigurationErrorCode =
   | "INVALID_ENVIRONMENT"
