@@ -44,9 +44,10 @@ export const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export function windowOpen(at: Date | null, now: Date): boolean {
   return at !== null && at.getTime() <= now.getTime() && now.getTime() < at.getTime() + CUSTOMER_SERVICE_WINDOW_MS;
 }
-/** When no customer has replied, the initial outbound starts the minimum
- * waiting period for an explicit merchant post-window follow-up. */
-export function merchantFollowUpWindowClosed(initialSentAt: Date, inbound: Date | null, now: Date): boolean {
-  const later = Math.max(initialSentAt.getTime(), inbound?.getTime() ?? 0);
-  return Number.isFinite(later) && now.getTime() >= later + CUSTOMER_SERVICE_WINDOW_MS;
+/** The persisted initial-attempt due time reflects the configured follow-up
+ * policy at outreach. Never derive a second delay from the initial send or a
+ * customer reply. A null due time means disabled or not scheduled. */
+export function configuredFollowUpDue(followUpDueAt: Date | null, now: Date): boolean {
+  return followUpDueAt !== null && Number.isFinite(followUpDueAt.getTime()) &&
+    followUpDueAt.getTime() <= now.getTime();
 }
