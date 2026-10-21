@@ -3,7 +3,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../../auth/woo-installation/principal.js";
 import { WooUnauthenticatedError } from "../../../auth/woo-installation/authenticator.js";
 import { humanPayloadDigest, SendHttpError, type HumanSendInput, type SendResponse } from "./contract.js";
-import { latestVerifiedCustomerInbound, merchantFollowUpWindowClosed,
+import { configuredFollowUpDue, latestVerifiedCustomerInbound,
   requireRecoveryExecution, windowOpen } from "./eligibility.js";
 
 interface ShopRow { id: string; domain: string; status: string; platform: string;
@@ -107,8 +107,9 @@ export class MerchantConversationMessageAdmissionService {
 
         const now = this.now();
         if (!Number.isFinite(now.getTime())) throw new SendHttpError(500,"internal_error");
-        const attempts = await tx.$queryRaw<Array<{ id: string; recipient: string; sentAt: Date | null }>>`
-          SELECT "id","recipient","sentAt" FROM "commerce"."RecoveryOutreachAttempt"
+        const attempts = await tx.$queryRaw<Array<{ id: string; recipient: string;
+          sentAt: Date | null; followUpDueAt: Date | null }>>`
+          SELECT "id","recipient","sentAt","followUpDueAt" FROM "commerce"."RecoveryOutreachAttempt"
           WHERE "checkoutRecoveryId"=${conversation.checkoutRecoveryId} AND "sequence"=1 FOR UPDATE`;
         const initial = attempts[0];
         if (!initial?.sentAt) throw new SendHttpError(409,"follow_up_unavailable");
@@ -125,8 +126,11 @@ export class MerchantConversationMessageAdmissionService {
         if (input.kind === "HUMAN_TEXT") {
           if (!windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
         } else {
-          if (!merchantFollowUpWindowClosed(initial.sentAt, lastInbound, now))
-            throw new SendHttpError(409,"service_window_closed");
+          if (windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
+          // Reuse Background's persisted effective policy decision. An unsent,
+          // disabled or not-yet-due initial follow-up cannot claim sequence two.
+          if (!configuredFollowUpDue(initial.followUpDueAt, now))
+            throw new SendHttpError(409,"follow_up_unavailable");
           // An exact, shop-owned, approved variant is the server allowlist.
           // Reject ambiguous provider-account variants rather than guessing.
           const approved = await tx.whatsAppTemplateVariant.findMany({ where: {

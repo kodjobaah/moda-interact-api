@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { parseHumanSendInput, humanPayloadDigest, SendHttpError } from "../../../../../src/merchant/conversations/messages/contract.js";
 import { decodeNonDuplicateJson } from "../../../../../src/merchant/conversations/messages/request.js";
-import { merchantFollowUpWindowClosed, windowOpen } from "../../../../../src/merchant/conversations/messages/eligibility.js";
+import { configuredFollowUpDue, windowOpen } from "../../../../../src/merchant/conversations/messages/eligibility.js";
 
 const text = { kind: "HUMAN_TEXT", expectedControlRevision: 3,
   idempotencyKey: "client-001", textBody: "Hello, how can I help?" };
@@ -54,15 +54,31 @@ test("wire text and template parameters preserve the accepted C0/DEL boundary", 
     }
   }
 });
-test("customer window and post-window boundaries are exact", () => {
-  const initial = new Date("2026-10-10T00:00:00.000Z");
+test("verified customer window is [inbound, inbound + 24h), with exact expiry", () => {
   const response = new Date("2026-10-10T01:00:00.000Z");
   const before = new Date("2026-10-11T00:59:59.999Z");
   const boundary = new Date("2026-10-11T01:00:00.000Z");
   assert.equal(windowOpen(null, before), false);
   assert.equal(windowOpen(response, before), true);
   assert.equal(windowOpen(response, boundary), false);
-  assert.equal(merchantFollowUpWindowClosed(initial, response, before), false);
-  assert.equal(merchantFollowUpWindowClosed(initial, response, boundary), true);
-  assert.equal(merchantFollowUpWindowClosed(initial, null, new Date("2026-10-11T00:00:00Z")), true);
+  assert.equal(windowOpen(response, new Date(boundary.getTime() + 1)), false);
+  assert.equal(windowOpen(new Date(boundary.getTime() + 1), boundary), false);
+});
+
+test("configured follow-up due uses only the persisted due timestamp", () => {
+  const now = new Date("2026-10-20T12:00:00.000Z");
+  const initialSentAt = new Date(now.getTime() - 30 * 60_000);
+  const shortDelayDue = new Date(initialSentAt.getTime() + 10 * 60_000);
+  const longDelayDue = new Date(now.getTime() + 36 * 3600_000);
+  // A merchant's configured 10-minute follow-up is due before S + 24 hours.
+  assert.equal(configuredFollowUpDue(shortDelayDue, now), true);
+  // A longer configured delay cannot be bypassed by elapsed 24 hours.
+  assert.equal(configuredFollowUpDue(longDelayDue, now), false);
+  assert.equal(configuredFollowUpDue(null, now), false);
+  assert.equal(configuredFollowUpDue(new Date(now.getTime() + 1), now), false);
+  assert.equal(configuredFollowUpDue(now, now), true);
+  assert.equal(configuredFollowUpDue(new Date(Number.NaN), now), false);
+  // Window closure remains a separate condition from due-time readiness.
+  assert.equal(windowOpen(new Date(now.getTime() - 23 * 3600_000), now), true);
+  assert.equal(windowOpen(new Date(now.getTime() - 24 * 3600_000), now), false);
 });

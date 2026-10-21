@@ -41,12 +41,13 @@ try {
   exec("npx",["--no-install","prisma","generate","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
   phase = "deploying accepted database migrations";
   exec("npx",["--no-install","prisma","migrate","deploy","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
-  phase = "running human send command and moderation tests";
+  phase = "running HUMAN send, moderation and configured follow-up tests";
   exec("node",["--import","tsx","--test","--test-concurrency=1",
-    "tests/integration/merchant/conversations/messages.service.postgres.test.ts"],{env,stdio:"inherit"});
-  process.stdout.write("PASS ARCH-040-API-004 disposable PostgreSQL admission suite\n");
+    "tests/integration/merchant/conversations/messages.service.postgres.test.ts",
+    "tests/integration/merchant/conversations/messages.follow-up-policy.postgres.test.ts"],{env,stdio:"inherit"});
+  process.stdout.write("PASS ARCH-040-API-004/API-005 disposable PostgreSQL admission suites\n");
 } catch {
-  process.stderr.write(`ARCH-040-API-004 PostgreSQL failed while ${phase}.\n`);
+  process.stderr.write(`ARCH-040-API-004/API-005 PostgreSQL failed while ${phase}.\n`);
   process.exitCode = 1;
 } finally {
   if (started) { try { docker(["rm","--force",container]); }
