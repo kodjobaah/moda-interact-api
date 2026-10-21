@@ -91,3 +91,15 @@ test("wrong secret, revoked installation and incompatible Shop share one failure
     );
   }
 });
+test("Support-only suspended reads still reject revoked or uninstalled credentials", async () => {
+  const headers=request(["X-Moda-Installation-Id","install_123","Authorization",credentialHeader]);
+  const suspended={...activeInstallation,shop:{...activeInstallation.shop,status:"SUSPENDED"}};
+  const {authenticator}=makeAuthenticator(suspended);
+  await assert.rejects(authenticator.authenticate(headers),WooUnauthenticatedError);
+  assert.equal((await authenticator.authenticate(headers,{allowSuspendedShop:true})).shopId,"shop_authoritative");
+  for(const row of [{...suspended,status:"REVOKED"},{...suspended,revokedAt:new Date()},
+    {...suspended,shop:{...suspended.shop,status:"UNINSTALLED"}},
+    {...suspended,credentialDigest:digestSecret(Buffer.alloc(32,99))}]){
+    await assert.rejects(makeAuthenticator(row).authenticator.authenticate(headers,{allowSuspendedShop:true}),WooUnauthenticatedError);
+  }
+});

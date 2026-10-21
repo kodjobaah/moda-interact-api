@@ -9,6 +9,7 @@ import { loadRuntimeConfig } from "./runtime-config.js";
 import { createApiRuntime, registerShutdownHandlers } from "./server.js";
 import { createWooCheckoutRedisProducer } from "./woocommerce/activity/redis-producer.js";
 import { createApiPlatformConfigurationReader } from "./platform-configuration/composition.js";
+import { MerchantSupportTranslationDispatcher } from "./merchant/support/translation-queue.js";
 
 const logger = createLogger({
   serviceName: "moda-interact-api",
@@ -23,8 +24,10 @@ async function main(): Promise<void> {
     const platformConfiguration = createApiPlatformConfigurationReader({
       prisma: database.prisma, environment: config.environment, logger,
     });
+    const supportTranslations = new MerchantSupportTranslationDispatcher(process.env.REDIS_URL);
     const merchant = createMerchantRoutes({
       prisma: database.prisma, authenticator, logger, environment: config.environment, platformConfiguration,
+      supportTranslationDispatch: supportTranslations,
     });
     const billing = createBillingRoutes({
       prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling, platformConfiguration,
@@ -40,7 +43,9 @@ async function main(): Promise<void> {
       billing,
       wooInstallation: woo.installation,
     });
-    const runtime = createApiRuntime(config, database, logger, handlers, () => activityQueues.close());
+    const runtime = createApiRuntime(config, database, logger, handlers, async () => {
+      await Promise.all([activityQueues.close(),supportTranslations.close()]);
+    });
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch (error) {

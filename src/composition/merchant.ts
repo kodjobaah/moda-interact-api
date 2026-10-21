@@ -34,6 +34,9 @@ import type { ApiPlatformConfigurationReader } from "../platform-configuration/s
 import { MerchantConversationMessageAdmissionService } from "../merchant/conversations/messages/admission.service.js";
 import { MerchantConversationSendStatusService } from "../merchant/conversations/messages/status.service.js";
 import { createMerchantConversationMessageRoutes } from "../merchant/conversations/messages/routes.js";
+import { MerchantSupportReadService } from "../merchant/support/read.service.js";
+import { MerchantSupportCommandService, type SupportTranslationDispatch } from "../merchant/support/commands.service.js";
+import { createMerchantSupportRoutes } from "../merchant/support/routes.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -42,11 +45,18 @@ export function createMerchantRoutes(options: {
   logger: StructuredLogger;
   environment: string;
   platformConfiguration?: ApiPlatformConfigurationReader;
+  supportTranslationDispatch?: SupportTranslationDispatch;
 }): readonly ApiRouteHandler[] {
   const { prisma, authenticator, logger, environment } = options;
   const commerceEnvironment = commerceEnvironmentForApi(environment);
   const knowledgeRead = new MerchantKnowledgeReadService(prisma, undefined, options.platformConfiguration);
   return [
+    createMerchantSupportRoutes({
+      read: new MerchantSupportReadService(prisma),
+      commands: new MerchantSupportCommandService(prisma,
+        options.supportTranslationDispatch ?? { async enqueue() { throw new Error("queue_unconfigured"); } },logger),
+      authenticator,logger,
+    }),
     createMerchantConversationMessageRoutes({
       admission: new MerchantConversationMessageAdmissionService(prisma),
       status: new MerchantConversationSendStatusService(prisma),

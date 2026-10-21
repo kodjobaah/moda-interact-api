@@ -26,7 +26,9 @@
     "test:arch040-conversation-control:postgres": "node scripts/test-arch040-woo-conversation-control-postgres.mjs",
     "test:arch040-human-send:postgres": "node scripts/test-arch040-woo-human-send-postgres.mjs",
     "test:arch035-woo-activity:unit": "tsx --test \"tests/unit/woocommerce/activity/*.test.ts\"",
-    "test:arch035-woo-activity:redis": "node scripts/test-arch035-woo-activity-redis.mjs"
+    "test:arch035-woo-activity:redis": "node scripts/test-arch035-woo-activity-redis.mjs",
+    "test:arch035-woo-support:unit": "tsx --test \"tests/unit/merchant/support/*.test.ts\" \"tests/unit/auth/woo-installation/authenticator.test.ts\"",
+    "test:arch035-woo-support:postgres": "node scripts/test-arch035-woo-support-postgres.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",
