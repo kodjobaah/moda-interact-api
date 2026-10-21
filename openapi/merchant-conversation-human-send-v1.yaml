@@ -139,7 +139,7 @@ components:
     Status:
       type: object
       additionalProperties: false
-      required: [schemaVersion, commandId, conversationId, kind, state, createdAt, updatedAt, messageId, failureCode, moderationStatus]
+      required: [schemaVersion, commandId, conversationId, kind, state, createdAt, updatedAt, messageId, failureCode, moderationStatus, moderationReasonCode]
       properties:
         schemaVersion: { type: integer, const: 1 }
         commandId: { type: string }
@@ -153,3 +153,6 @@ components:
         moderationStatus:
           type: string
           enum: [moderation_pending, moderation_allowed, moderation_blocked, moderation_review_required, moderation_retryable_error]
+        moderationReasonCode:
+          type: [string, 'null']
+          enum: [moderation_blocked, moderation_review_required, moderation_empty_input, moderation_unavailable, null]

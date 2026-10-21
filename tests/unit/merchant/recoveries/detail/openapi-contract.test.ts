@@ -28,7 +28,15 @@ test("API-013 OpenAPI exposes only bounded installation-authenticated Recovery D
   }
   assert.equal(spec.components.schemas.MessagePage?.properties.items?.maxItems, 50);
   assert.equal(spec.components.schemas.RelatedPage?.properties.items?.maxItems, 5);
-  for (const key of ["DetailSummary", "MessagePage", "RelatedPage", "Message", "Related", "Money"]) {
+  assert.equal(spec.components.schemas.Basket?.properties.items?.maxItems, 50);
+  const detailProps = spec.components.schemas.DetailSummary?.properties;
+  for (const field of ["basket", "conversation", "humanMessagingAllowed", "humanMessagingStatus"]) {
+    assert.ok(detailProps && field in detailProps, field);
+  }
+  const moderation = spec.components.schemas.Message?.properties;
+  assert.ok(moderation && "moderationStatus" in moderation);
+  assert.ok(moderation && "moderationReasonCode" in moderation);
+  for (const key of ["DetailSummary", "MessagePage", "RelatedPage", "Message", "Related", "Money", "Basket", "BasketItem", "SnapshotMoney", "ConversationDetail"]) {
     assert.equal(spec.components.schemas[key]?.additionalProperties, false);
   }
   const json = JSON.stringify(spec);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseHumanSendInput, humanPayloadDigest, SendHttpError } from "../../../../../src/merchant/conversations/messages/contract.js";
+import { parseHumanSendInput, humanPayloadDigest, SendHttpError, isSendStatusResponse } from "../../../../../src/merchant/conversations/messages/contract.js";
 import { decodeNonDuplicateJson } from "../../../../../src/merchant/conversations/messages/request.js";
 import { configuredFollowUpDue, windowOpen } from "../../../../../src/merchant/conversations/messages/eligibility.js";
 
@@ -81,4 +81,13 @@ test("configured follow-up due uses only the persisted due timestamp", () => {
   // Window closure remains a separate condition from due-time readiness.
   assert.equal(windowOpen(new Date(now.getTime() - 23 * 3600_000), now), true);
   assert.equal(windowOpen(new Date(now.getTime() - 24 * 3600_000), now), false);
+});
+
+test("HUMAN command status includes bounded safe moderation reason", () => {
+  const status = { schemaVersion: 1, commandId: "cmd", conversationId: "convo", kind: "HUMAN_TEXT",
+    state: "CANCELLED", createdAt: "2026-10-20T12:00:00.000Z", updatedAt: "2026-10-20T12:01:00.000Z",
+    messageId: null, failureCode: null, moderationStatus: "moderation_blocked", moderationReasonCode: "moderation_blocked" };
+  assert.equal(isSendStatusResponse(status), true);
+  assert.equal(isSendStatusResponse({ ...status, moderationReasonCode: "moderation_violence_graphic" }), false);
+  assert.equal(isSendStatusResponse({ ...status, moderationReasonCode: "sketchy", internal: "notes" }), false);
 });

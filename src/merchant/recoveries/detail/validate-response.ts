@@ -26,6 +26,37 @@ const isEnum = (set: Record<string, string>, value: unknown) =>
 const isEnumOrNull = (set: Record<string, string>, value: unknown) =>
   value === null || isEnum(set, value);
 
+const SAFE_MODERATION_REASON = new Set([
+  "moderation_blocked", "moderation_review_required", "moderation_empty_input", "moderation_unavailable",
+]);
+function isPlainMoney(value: unknown): boolean {
+  return isObject(value) && hasKeys(value, ["amount", "currency"]) &&
+    (value.amount === null || (typeof value.amount === "string" && DECIMAL.test(value.amount))) &&
+    (value.currency === null || (typeof value.currency === "string" && /^[A-Z]{3}$/.test(value.currency)));
+}
+function isBasket(value: unknown): boolean {
+  return isObject(value) && hasKeys(value, ["items", "recoveryTotal", "unavailableReason"]) &&
+    isPlainMoney(value.recoveryTotal) &&
+    (value.unavailableReason === null || ["missing_snapshot", "invalid_snapshot", "oversized_snapshot", "partial_snapshot"].includes(value.unavailableReason as string)) &&
+    Array.isArray(value.items) && value.items.length <= 50 && value.items.every((item: unknown) =>
+      isObject(item) && hasKeys(item, ["title", "variantTitle", "quantity", "unitPrice", "lineTotal", "imageUrl"]) &&
+      isStringOrNull(item.title, 255) && isStringOrNull(item.variantTitle, 255) &&
+      (item.quantity === null || (Number.isSafeInteger(item.quantity) && (item.quantity as number) > 0 && (item.quantity as number) <= 1_000_000)) &&
+      (item.unitPrice === null || isPlainMoney(item.unitPrice)) &&
+      (item.lineTotal === null || isPlainMoney(item.lineTotal)) &&
+      (item.imageUrl === null || (typeof item.imageUrl === "string" && item.imageUrl.length <= 1024 &&
+        /^https:\/\/[^\s/?#]+(?:[/?#][^\s]*)?$/.test(item.imageUrl))));
+}
+function isConversation(value: unknown): boolean {
+  if (value === null) return true;
+  if (!isObject(value) || !hasKeys(value, ["id", "controlMode", "controlRevision", "lastInboundAt", "windowExpiresAt", "followUp"]) ||
+    !ID.test(String(value.id)) || !["AI", "HUMAN"].includes(value.controlMode as string) ||
+    !Number.isSafeInteger(value.controlRevision) || (value.controlRevision as number) < 0 ||
+    !isDateOrNull(value.lastInboundAt) || !isDateOrNull(value.windowExpiresAt) ||
+    !isObject(value.followUp) || !hasKeys(value.followUp, ["sequence2Used", "initiatedBy"])) return false;
+  return typeof value.followUp.sequence2Used === "boolean" &&
+    (value.followUp.initiatedBy === null || ["HUMAN", "AGENT", "AUTOMATION"].includes(value.followUp.initiatedBy as string));
+}
 function isValue(value: unknown): boolean {
   if (!isObject(value) || !hasKeys(value, ["amount", "currency", "incomplete"]) ||
     typeof value.incomplete !== "boolean") return false;
@@ -35,11 +66,15 @@ function isValue(value: unknown): boolean {
 }
 
 export function isDetailSummary(value: unknown): value is RecoveryDetailSummary {
-  if (!isObject(value) || !hasKeys(value, ["schemaVersion", "timeZone", "id", "status", "value", "customer", "hasConversation", "milestones"]) ||
+  if (!isObject(value) || !hasKeys(value, ["schemaVersion", "timeZone", "id", "status", "value", "customer", "hasConversation", "basket", "conversation", "humanMessagingAllowed", "humanMessagingStatus", "milestones"]) ||
     value.schemaVersion !== 1 || !ID.test(String(value.id)) ||
     !isEnum(CheckoutRecoveryStatus, value.status) || !isValue(value.value) ||
     typeof value.timeZone !== "string" || value.timeZone.length > 128 ||
-    typeof value.hasConversation !== "boolean") return false;
+    typeof value.hasConversation !== "boolean" || !isBasket(value.basket) ||
+    !isConversation(value.conversation) || value.hasConversation !== (value.conversation !== null) ||
+    typeof value.humanMessagingAllowed !== "boolean" ||
+    !["ACTIVE", "SUSPENDED"].includes(value.humanMessagingStatus as string) ||
+    value.humanMessagingAllowed !== (value.humanMessagingStatus === "ACTIVE")) return false;
   const customer = value.customer;
   if (customer !== null && (!isObject(customer) ||
     !hasKeys(customer, ["firstName", "lastName", "email"]) ||
@@ -62,10 +97,13 @@ function isPage<T>(value: unknown, limit: number, validateItem: (item: unknown) 
 }
 
 function isMessage(value: unknown): value is RecoveryDetailMessage {
-  if (!isObject(value) || !hasKeys(value, ["id", "createdAt", "direction", "sender", "content", "delivery"]) ||
+  if (!isObject(value) || !hasKeys(value, ["id", "createdAt", "direction", "sender", "content", "delivery", "moderationStatus", "moderationReasonCode"]) ||
     !ID.test(String(value.id)) || !isDate(value.createdAt) ||
     !isEnumOrNull(MessageDirection, value.direction) ||
-    !isEnumOrNull(MessageSenderType, value.sender) || !isObject(value.content) ||
+    !isEnumOrNull(MessageSenderType, value.sender) ||
+    !["PENDING", "ALLOW", "BLOCK", "REVIEW_REQUIRED", "RETRYABLE_ERROR"].includes(value.moderationStatus as string) ||
+    (value.moderationReasonCode !== null && !SAFE_MODERATION_REASON.has(value.moderationReasonCode as string)) ||
+    !isObject(value.content) ||
     !hasKeys(value.content, ["type", "text", "transcriptionStatus"]) ||
     !isEnum(MessageContentType, value.content.type) ||
     !isStringOrNull(value.content.text, 32000) ||

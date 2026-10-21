@@ -12,7 +12,7 @@ const accepted = { schemaVersion: 1, commandId: "cmd-1", conversationId: "conv-1
   state: "ACCEPTED", controlRevision: 1 };
 const status = { schemaVersion: 1, commandId: "cmd-1", conversationId: "conv-1", kind: "HUMAN_TEXT", state: "SENT",
   createdAt: "2026-10-18T00:00:00Z", updatedAt: "2026-10-18T00:01:00Z", messageId: "msg-1",
-  failureCode: null, moderationStatus: "moderation_allowed" };
+  failureCode: null, moderationStatus: "moderation_allowed", moderationReasonCode: null };
 function request(method = "POST", body = textBody, path = "/v1/merchant/conversations/conv-1/messages", headers?: string[]): IncomingMessage {
   const req = Readable.from([Buffer.from(body)]) as IncomingMessage;
   req.url = path; req.method = method; req.rawHeaders = headers ?? ["content-type", "application/json"];

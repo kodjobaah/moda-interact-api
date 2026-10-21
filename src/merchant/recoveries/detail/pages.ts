@@ -13,6 +13,7 @@ import {
   type RecoveryRelatedItem,
 } from "./contracts.js";
 import { encodeDetailCursor, type DetailNavigation } from "./cursor.js";
+import { messageModeration, readMessageModeration, type MessageModeration } from "./moderation.js";
 
 const messageSelect = {
   id: true,
@@ -52,7 +53,7 @@ function olderRecovery(at: Date, id: string): Prisma.CheckoutRecoveryWhereInput 
   return { OR: [{ detectedAt: { lt: at } }, { detectedAt: at, id: { lt: id } }] };
 }
 
-function messageDto(row: MessageRow): RecoveryDetailMessage {
+function messageDto(row: MessageRow, moderation: MessageModeration): RecoveryDetailMessage {
   const direction = knownEnum(MessageDirection, row.direction);
   const contentType = knownEnum(MessageContentType, row.contentType) ?? MessageContentType.UNSUPPORTED;
   const transcription = contentType === MessageContentType.AUDIO
@@ -65,6 +66,7 @@ function messageDto(row: MessageRow): RecoveryDetailMessage {
     createdAt: row.createdAt.toISOString(),
     direction,
     sender: row.senderType,
+    ...moderation,
     content: {
       type: contentType,
       text: readable ? row.content : null,
@@ -105,13 +107,15 @@ export async function readMessagePage(
   if (rows.length === 0) return { schemaVersion: 1, items: [], previousCursor: null, nextCursor: null };
   const first = rows[0]!;
   const last = rows[rows.length - 1]!;
-  const [before, after] = await Promise.all([
+  const [moderation, before, after] = await Promise.all([
+    // Exact returned page only, never a full moderation-history export.
+    readMessageModeration(tx, shopId, conversationId, rows.map((row) => row.id)),
     tx.conversationMessage.count({ where: { conversationId, ...beforeMessage(first.createdAt, first.id) } }),
     tx.conversationMessage.count({ where: { conversationId, ...afterMessage(last.createdAt, last.id) } }),
   ]);
   return {
     schemaVersion: 1,
-    items: rows.map(messageDto),
+    items: rows.map((row) => messageDto(row, messageModeration(row.id, moderation))),
     previousCursor: before > 0 ? encodeDetailCursor(shopId, recoveryId, "messages", "previous", {
       at: first.createdAt, id: first.id,
     }) : null,

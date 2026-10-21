@@ -16,5 +16,6 @@ test("API-004 OpenAPI paths require Woo installation and preserve accepted-vs-se
   assert.ok("202" in (post.responses as Record<string,unknown>));
   assert.ok("200" in (post.responses as Record<string,unknown>));
   assert.match(source, /moderation_pending/);
+  assert.match(source, /moderationReasonCode/);
   assert.doesNotMatch(source, /moderationApproved:/);
 });
