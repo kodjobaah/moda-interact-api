@@ -11,10 +11,19 @@ export interface UsageHistoryQuery {
   page: number;
   pageSize: UsagePageSize;
   periodCursor: string | null;
+  /** v1 remains the default for deployed strict WooCommerce consumers. */
+  responseVersion?: 1 | 2;
 }
 
-export interface UsageHistoryResponse {
-  schemaVersion: 1;
+export type UsageChargeSource =
+  | "LIFETIME_FREE_CREDITS"
+  | "INCLUDED_PLAN_ALLOWANCE"
+  | "PURCHASED_TOP_UP"
+  | "PROMOTIONAL_CREDITS"
+  | "NOT_APPLICABLE"
+  | "UNATTRIBUTED";
+
+interface UsageHistoryBase {
   state: "ready" | "unavailable";
   usageView: UsageView;
   periodPage: {
@@ -22,13 +31,7 @@ export interface UsageHistoryResponse {
     previousCursor: string | null;
     nextCursor: string | null;
   };
-  usageEvents: Array<{
-    id: string;
-    metric: string;
-    quantity: number;
-    occurredAt: string;
-    sourceRecovery: { recoveryId: string; customerName: string | null } | null;
-  }>;
+  usageEvents: UsageHistoryEvent[];
   usagePagination: {
     page: number;
     pageSize: UsagePageSize;
@@ -39,6 +42,21 @@ export interface UsageHistoryResponse {
     periodEnd: string | null;
   };
 }
+
+export interface UsageHistoryEvent {
+  id: string;
+  metric: string;
+  quantity: number;
+  occurredAt: string;
+  sourceRecovery: { recoveryId: string; customerName: string | null } | null;
+}
+
+export type UsageHistoryResponse =
+  | (UsageHistoryBase & { schemaVersion: 1 })
+  | (Omit<UsageHistoryBase, "usageEvents"> & {
+      schemaVersion: 2;
+      usageEvents: Array<UsageHistoryEvent & { chargedAgainst: UsageChargeSource }>;
+    });
 
 export class UsageHistoryRequestError extends Error {
   constructor(readonly code: "invalid_request" | "invalid_cursor" | "invalid_period") {
@@ -56,7 +74,7 @@ export class UsageHistoryIntegrityError extends Error {
 
 const PERIOD_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CURSOR = /^[A-Za-z0-9_-]{1,1024}$/;
-const PARAMETERS = new Set(["view", "periodId", "kind", "page", "pageSize", "periodCursor"]);
+const PARAMETERS = new Set(["view", "periodId", "kind", "page", "pageSize", "periodCursor", "responseVersion"]);
 
 export function validUsagePeriodId(value: unknown): value is string {
   return typeof value === "string" && PERIOD_ID.test(value);
@@ -74,15 +92,18 @@ export function parseUsageHistoryQuery(params: URLSearchParams): UsageHistoryQue
   const pageSize = params.get("pageSize") ?? "10";
   const periodId = params.get("periodId");
   const periodCursor = params.get("periodCursor");
+  const responseVersion = params.get("responseVersion");
   if ((view !== "current" && view !== "past") || (kind !== "ALL" && kind !== "RECOVERY_CONVERSATION") ||
       !/^(?:[1-9]|[1-9]\d{1,2}|1000)$/.test(page) || Number(page) > 1000 ||
       !["10", "25", "50", "100"].includes(pageSize) ||
       (periodId !== null && !validUsagePeriodId(periodId)) ||
-      (periodCursor !== null && !CURSOR.test(periodCursor))) {
+      (periodCursor !== null && !CURSOR.test(periodCursor)) ||
+      (responseVersion !== null && responseVersion !== "1" && responseVersion !== "2")) {
     throw new UsageHistoryRequestError("invalid_request");
   }
   return {
     view, kind, page: Number(page), pageSize: Number(pageSize) as UsagePageSize,
     periodId, periodCursor,
+    ...(responseVersion !== null ? { responseVersion: Number(responseVersion) as 1 | 2 } : {}),
   };
 }

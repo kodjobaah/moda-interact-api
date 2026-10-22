@@ -71,6 +71,14 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
       correctionOfUsageEventId: freeDebit.id, sourceType: "FREE_CORRECTION",
       occurredAt: new Date("2026-09-11T10:00:00.000Z"),
     }) });
+    const freeCounter = await db.shopEntitlementCounter.create({ data: {
+      shopId: shop.id, counter: "LIFETIME_FREE_RECOVERY_CREDITS",
+      grantedQuantity: 5, committedQuantity: 2,
+    } });
+    await db.usageReservation.create({ data: {
+      shopId: shop.id, counterId: freeCounter.id, sourceKey: `free-${suffix}`,
+      quantity: 2, status: "COMMITTED", committedUsageEventId: freeDebit.id,
+    } });
     await db.usageEvent.create({ data: event(shop.id, "3", {
       sourceType: "PROMOTIONAL_RECOVERY_CREDITS", sourceId: foreignRecovery.id,
       occurredAt: new Date("2026-09-12T10:00:00.000Z"),
@@ -87,6 +95,16 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     assert.equal(freeHistory.usageEvents.find((x) => x.id === freeDebit.id)?.sourceRecovery?.customerName, "Same Shop");
     assert.equal(freeHistory.usageEvents.find((x) => x.quantity === 3)?.sourceRecovery, null);
     assert.deepEqual((await service.read(principal, { ...query, view: "past" })).usageEvents, []);
+    const attributedFree = await service.read(principal, { ...query, responseVersion: 2 });
+    assert.equal(attributedFree.schemaVersion, 2);
+    if (attributedFree.schemaVersion !== 2) throw new Error("expected v2 response");
+    assert.equal(attributedFree.usageEvents.find((row) => row.id === freeDebit.id)?.chargedAgainst,
+      "LIFETIME_FREE_CREDITS");
+    assert.equal(attributedFree.usageEvents.find((row) => row.quantity === -1)?.chargedAgainst,
+      "LIFETIME_FREE_CREDITS");
+    // A plausible sourceType without a committed reservation is not proof.
+    assert.equal(attributedFree.usageEvents.find((row) => row.quantity === 3)?.chargedAgainst,
+      "UNATTRIBUTED");
 
     const currentStart = new Date("2026-10-01T00:00:00.000Z");
     const currentEnd = new Date("2026-10-31T00:00:00.000Z");
@@ -106,6 +124,15 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
       billingPeriodId: currentPeriod.id, correctionOfUsageEventId: paidDebit.id,
       sourceType: "PAID_CORRECTION", occurredAt: new Date("2026-10-03T08:00:00.000Z"),
     }) });
+    const paidCounter = await db.billingPeriodEntitlementCounter.create({ data: {
+      shopId: shop.id, billingPeriodId: currentPeriod.id, counter: "INCLUDED_RECOVERY_CREDITS",
+      grantedQuantity: 10, committedQuantity: 2,
+    } });
+    await db.usageReservation.create({ data: {
+      shopId: shop.id, billingPeriodEntitlementCounterId: paidCounter.id,
+      sourceKey: `paid-${suffix}`, quantity: 2, status: "COMMITTED",
+      committedUsageEventId: paidDebit.id,
+    } });
     await db.usageEvent.create({ data: event(shop.id, "2", {
       sourceType: "PURCHASED_RECOVERY_CREDITS", occurredAt: new Date("2026-10-15T08:00:00.000Z"),
     }) });
@@ -123,6 +150,15 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     assert.equal(paid.usagePagination.billId, currentPeriod.id);
     assert.equal(paid.usagePagination.totalQuantity, 4);
     assert.equal(paid.usagePagination.total, 4);
+    const attributedPaid = await service.read(principal, { ...query, responseVersion: 2 });
+    assert.equal(attributedPaid.schemaVersion, 2);
+    if (attributedPaid.schemaVersion !== 2) throw new Error("expected v2 response");
+    assert.equal(attributedPaid.usageEvents.find((row) => row.id === paidDebit.id)?.chargedAgainst,
+      "INCLUDED_PLAN_ALLOWANCE");
+    assert.equal(attributedPaid.usageEvents.find((row) => row.quantity === -1)?.chargedAgainst,
+      "INCLUDED_PLAN_ALLOWANCE");
+    assert.equal(attributedPaid.usageEvents.find((row) => row.quantity === 2 && row.id !== paidDebit.id)?.chargedAgainst,
+      "UNATTRIBUTED");
     assert.ok(paid.usageEvents.every((row, i) => i === 0 ||
       row.occurredAt <= paid.usageEvents[i - 1]!.occurredAt));
     assert.equal((await service.read(principal, { ...query, pageSize: 25, page: 2 })).usageEvents.length, 0);
@@ -176,6 +212,9 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     assert.equal((await service.read(rotatedPrincipal, { ...query, view: "past", periodId: pastPeriods[0]!.id })).usageView, "past");
     assert.equal((await service.read(rotatedPrincipal, query)).usagePagination.totalQuantity, 106);
   } finally {
+    await db.usageReservation.deleteMany({ where: { shopId: { in: shops } } });
+    await db.billingPeriodEntitlementCounter.deleteMany({ where: { shopId: { in: shops } } });
+    await db.shopEntitlementCounter.deleteMany({ where: { shopId: { in: shops } } });
     await db.usageEvent.deleteMany({ where: { shopId: { in: shops } } });
     await db.billingPeriod.deleteMany({ where: { shopId: { in: shops } } });
     await db.subscription.deleteMany({ where: { shopId: { in: shops } } });

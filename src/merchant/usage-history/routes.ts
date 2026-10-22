@@ -25,31 +25,49 @@ export function createMerchantUsageHistoryRoute(input: {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (request.method !== "GET" || url.pathname !== USAGE_HISTORY_PATH) return false;
       const started = now();
+      let shopId: string | null = null;
       try {
         const principal = await authenticator.authenticate(request);
+        shopId = principal.shopId;
         if ((request.url?.length ?? 0) > 2048 || hasBody(request)) {
           throw new UsageHistoryRequestError("invalid_request");
         }
         const query = parseUsageHistoryQuery(url.searchParams);
         const result = await service.read(principal, query);
         if (!isUsageHistoryResponse(result)) throw new UsageHistoryIntegrityError();
+        if (result.schemaVersion === 2) {
+          const unattributed = result.usageEvents.filter((event) => event.chargedAgainst === "UNATTRIBUTED");
+          if (unattributed.length > 0) {
+            // Missing/contradictory allocation evidence is not silently classified
+            // as a paid or Free charge. Emit one bounded, safe diagnostic per page.
+            logger.warn("merchant.usage_history.attribution.unattributed", {
+              shopId: principal.shopId, view: query.view, page: query.page,
+              count: unattributed.length, eventIds: unattributed.slice(0, 10).map((event) => event.id),
+            });
+          }
+        }
         logger.info("merchant.usage_history.read", {
           shopId: principal.shopId, view: query.view, kind: query.kind,
           page: query.page, pageSize: query.pageSize, returned: result.usageEvents.length,
-          state: result.state, durationMs: Math.max(0, now() - started),
+          responseVersion: result.schemaVersion, state: result.state, durationMs: Math.max(0, now() - started),
         });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
+        // Keep credentials, URL/query strings and customer data out of the log.
+        // The shared logger safely serialises bounded Error metadata and isolates
+        // logging sink failures from the HTTP response.
+        const context = { ...(shopId ? { shopId } : {}), durationMs: Math.max(0, now() - started) };
         if (error instanceof WooUnauthenticatedError) {
+          logger.warn("merchant.usage_history.denied", { ...context, reason: "unauthorized" });
           sendNoStoreJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof UsageHistoryRequestError) {
-          logger.warn("merchant.usage_history.denied", { reason: error.code });
+          logger.warn("merchant.usage_history.denied", { ...context, reason: error.code });
           sendNoStoreJson(response, error.code === "invalid_request" ? 400 : 409, { error: error.code });
         } else if (error instanceof UsageHistoryIntegrityError) {
-          logger.warn("merchant.usage_history.failed", { reason: "integrity" });
+          logger.error("merchant.usage_history.failed", { ...context, reason: "integrity", error });
           sendNoStoreJson(response, 409, { error: "usage_history_integrity_invalid" });
         } else {
-          logger.error("merchant.usage_history.failed", { reason: "internal" });
+          logger.error("merchant.usage_history.failed", { ...context, reason: "internal", error });
           sendNoStoreJson(response, 500, { error: "internal_error" });
         }
       }

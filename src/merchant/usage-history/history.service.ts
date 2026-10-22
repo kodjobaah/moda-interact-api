@@ -6,6 +6,7 @@ import {
 } from "./contract.js";
 import { readPeriodPage, periodSelect, type PeriodRow } from "./periods.js";
 import { readUsageRecoverySources } from "./sources.js";
+import { readUsageChargeSources } from "./attribution.js";
 
 const lifetimeSourceTypes = [
   "FREE_RECOVERY_RESERVATION", "PURCHASED_RECOVERY_CREDITS", "PROMOTIONAL_RECOVERY_CREDITS",
@@ -14,6 +15,7 @@ const pooledSourceTypes = ["PURCHASED_RECOVERY_CREDITS", "PROMOTIONAL_RECOVERY_C
 
 const usageSelect = {
   id: true, metric: true, quantity: true, sourceId: true, occurredAt: true,
+  billingPeriodId: true, correctionOfUsageEventId: true,
 } as const satisfies Prisma.UsageEventSelect;
 
 function quantity(value: Prisma.Decimal | null): number {
@@ -145,8 +147,11 @@ export class MerchantUsageHistoryService {
       const empty = { page: query.page, pageSize: query.pageSize, total: 0, totalQuantity: 0,
         billId: null, periodStart: null, periodEnd: null };
       if (!available) {
-        return { schemaVersion: 1, state: query.view === "current" ? "unavailable" : "ready",
+        const common = { state: query.view === "current" ? "unavailable" as const : "ready" as const,
           usageView: query.view, periodPage, usageEvents: [], usagePagination: empty };
+        return query.responseVersion === 2
+          ? { schemaVersion: 2, ...common }
+          : { schemaVersion: 1, ...common };
       }
       const where = usageWhere(principal.shopId, query, selected, freeLifetime);
       const [events, total, aggregated] = await Promise.all([
@@ -159,8 +164,10 @@ export class MerchantUsageHistoryService {
       if (!Number.isSafeInteger(total) || total < 0) throw new UsageHistoryIntegrityError();
       const sources = await readUsageRecoverySources(tx, principal.shopId,
         events.flatMap((event) => event.sourceId ? [event.sourceId] : []));
-      return {
-        schemaVersion: 1, state: "ready", usageView: query.view, periodPage,
+      const chargedAgainst = query.responseVersion === 2
+        ? await readUsageChargeSources(tx, principal.shopId, events) : null;
+      const common = {
+        state: "ready" as const, usageView: query.view, periodPage,
         usageEvents: events.map((event) => ({
           id: event.id, metric: event.metric, quantity: quantity(event.quantity),
           occurredAt: event.occurredAt.toISOString(),
@@ -172,7 +179,13 @@ export class MerchantUsageHistoryService {
           periodStart: selected?.periodStart.toISOString() ?? null,
           periodEnd: selected?.periodEnd.toISOString() ?? null,
         },
-      } satisfies UsageHistoryResponse;
+      };
+      if (chargedAgainst) {
+        return { ...common, schemaVersion: 2, usageEvents: common.usageEvents.map((event) => ({
+          ...event, chargedAgainst: chargedAgainst.get(event.id) ?? "UNATTRIBUTED",
+        })) } satisfies UsageHistoryResponse;
+      }
+      return { ...common, schemaVersion: 1 } satisfies UsageHistoryResponse;
     }, { isolationLevel: "RepeatableRead" });
   }
 }

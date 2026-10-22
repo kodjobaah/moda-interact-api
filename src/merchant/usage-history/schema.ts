@@ -4,6 +4,10 @@ import type { UsageHistoryResponse } from "./contract.js";
 const ID = /^[A-Za-z0-9_-]{1,191}$/;
 const CURSOR = /^[A-Za-z0-9_-]{1,1024}$/;
 const METRICS = new Set<string>(Object.values(UsageMetric));
+const CHARGE_SOURCES = new Set([
+  "LIFETIME_FREE_CREDITS", "INCLUDED_PLAN_ALLOWANCE", "PURCHASED_TOP_UP",
+  "PROMOTIONAL_CREDITS", "NOT_APPLICABLE", "UNATTRIBUTED",
+]);
 
 function object(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -39,7 +43,7 @@ function source(value: unknown): boolean {
 export function isUsageHistoryResponse(value: unknown): value is UsageHistoryResponse {
   if (!exact(value, ["schemaVersion", "state", "usageView", "periodPage", "usageEvents", "usagePagination"])) return false;
   const result = object(value)!;
-  if (result.schemaVersion !== 1 || !["ready", "unavailable"].includes(String(result.state)) ||
+  if (![1, 2].includes(result.schemaVersion as number) || !["ready", "unavailable"].includes(String(result.state)) ||
       !["current", "past"].includes(String(result.usageView))) return false;
   const periods = object(result.periodPage);
   if (!exact(periods, ["items", "previousCursor", "nextCursor"]) || !Array.isArray(periods?.items) ||
@@ -66,10 +70,13 @@ export function isUsageHistoryResponse(value: unknown): value is UsageHistoryRes
   if (!Array.isArray(result.usageEvents) || result.usageEvents.length > (paging.pageSize as number) ||
       result.usageEvents.length > (paging.total as number)) return false;
   if (!result.usageEvents.every((event) => {
-    if (!exact(event, ["id", "metric", "quantity", "occurredAt", "sourceRecovery"])) return false;
+    const expected = ["id", "metric", "quantity", "occurredAt", "sourceRecovery"];
+    if (result.schemaVersion === 2) expected.push("chargedAgainst");
+    if (!exact(event, expected)) return false;
     const item = object(event)!;
     return id(item.id) && METRICS.has(String(item.metric)) && finiteQuantity(item.quantity) &&
-      date(item.occurredAt) && source(item.sourceRecovery);
+      date(item.occurredAt) && source(item.sourceRecovery) &&
+      (result.schemaVersion !== 2 || CHARGE_SOURCES.has(String(item.chargedAgainst)));
   })) return false;
   if (result.state === "unavailable" &&
       (result.usageEvents.length > 0 || paging.billId !== null || paging.total !== 0)) return false;

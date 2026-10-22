@@ -25,6 +25,8 @@ function fixture(config: {
   rows?: Array<Record<string, unknown>>;
   periodRows?: object[];
   recoveryRows?: object[];
+  reservationRows?: object[];
+  reservationError?: Error;
 } = {}) {
   const queries: Array<{ operation: string; args: unknown }> = [];
   const sub = { id: "sub_a", shopId: principal.shopId,
@@ -70,6 +72,13 @@ function fixture(config: {
     },
     checkoutRecovery: {
       findMany: async (args: unknown) => { queries.push({ operation: "sources", args }); return config.recoveryRows ?? []; },
+    },
+    usageReservation: {
+      findMany: async (args: unknown) => {
+        queries.push({ operation: "reservations", args });
+        if (config.reservationError) throw config.reservationError;
+        return config.reservationRows ?? [];
+      },
     },
   };
   const database = { $transaction: async (run: (transaction: typeof tx) => Promise<unknown>, options: unknown) => {
@@ -208,4 +217,50 @@ test("cancelled paid subscription retains CLOSED period history, not a fictional
   assert.equal(where.shopId, principal.shopId);
   assert.equal(where.provider, "WOOCOMMERCE");
   assert.deepEqual(record((where.OR as unknown[])[0]), { billingPeriodId: closed.id });
+});
+
+
+test("v1 stays byte-shape compatible and v2 exposes only verified reservation allocation", async () => {
+  const rows = [{ id: "usage_a", metric: "RECOVERY_CONVERSATION", billingPeriodId: null,
+    correctionOfUsageEventId: null, quantity: new Prisma.Decimal(1), occurredAt: now, sourceId: null }];
+  const { service, queries } = fixture({ rows, reservationRows: [{
+    shopId: "shop_a", status: "COMMITTED", committedUsageEventId: "usage_a", compensationUsageEventId: null,
+    counterId: "counter_free", counter: { shopId: "shop_a", counter: "LIFETIME_FREE_RECOVERY_CREDITS" },
+    billingPeriodEntitlementCounterId: null, billingPeriodEntitlementCounter: null,
+    purchasedCreditPurchaseId: null, purchasedCreditPurchase: null,
+    promotionalCreditGrantId: null, promotionalCreditGrant: null,
+  }] });
+  const old = await service.read(principal, query);
+  assert.equal(old.schemaVersion, 1);
+  assert.equal(JSON.stringify(old).includes("chargedAgainst"), false);
+  assert.equal(queries.some((q) => q.operation === "reservations"), false);
+  const attributed = await service.read(principal, { ...query, responseVersion: 2 });
+  assert.equal(attributed.schemaVersion, 2);
+  assert.deepEqual(attributed.usageEvents.map((row) => ("chargedAgainst" in row ? row.chargedAgainst : null)),
+    ["LIFETIME_FREE_CREDITS"]);
+  assert.equal(queries.some((q) => q.operation === "reservations"), true);
+  assert.equal(JSON.stringify(attributed).includes("counter_free"), false);
+});
+
+test("unavailable v2 response includes no events and preserves no-billing-period semantics", async () => {
+  const { service, queries } = fixture({ subscription: "missing" });
+  const result = await service.read(principal, { ...query, responseVersion: 2 });
+  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.state, "unavailable");
+  assert.deepEqual(result.usageEvents, []);
+  assert.equal(queries.some((q) => q.operation === "reservations"), false);
+});
+
+
+test("v2 allocation query failures propagate instead of returning misleading UNATTRIBUTED results", async () => {
+  const failure = new Error("usage-reservation-read-failed");
+  const { service, queries } = fixture({ rows: [{ id: "usage_a", metric: "RECOVERY_CONVERSATION",
+    billingPeriodId: null, correctionOfUsageEventId: null, quantity: new Prisma.Decimal(1),
+    occurredAt: now, sourceId: null }], reservationError: failure });
+  await assert.rejects(service.read(principal, { ...query, responseVersion: 2 }),
+    (error: unknown) => error === failure);
+  assert.equal(queries.some((entry) => entry.operation === "reservations"), true);
+  const legacy = await service.read(principal, query);
+  assert.equal(legacy.schemaVersion, 1);
+  assert.equal(legacy.usageEvents.length, 1);
 });
