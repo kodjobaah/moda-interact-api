@@ -37,6 +37,8 @@ import { createMerchantConversationMessageRoutes } from "../merchant/conversatio
 import { MerchantSupportReadService } from "../merchant/support/read.service.js";
 import { MerchantSupportCommandService, type SupportTranslationDispatch } from "../merchant/support/commands.service.js";
 import { createMerchantSupportRoutes } from "../merchant/support/routes.js";
+import { createMerchantUsageHistoryRoute } from "../merchant/usage-history/routes.js";
+import { MerchantUsageHistoryService } from "../merchant/usage-history/history.service.js";
 import { MerchantPromotionsService } from "../merchant/promotions/service.js";
 import { createMerchantPromotionsRoutes } from "../merchant/promotions/routes.js";
 
@@ -53,6 +55,9 @@ export function createMerchantRoutes(options: {
   const commerceEnvironment = commerceEnvironmentForApi(environment);
   const knowledgeRead = new MerchantKnowledgeReadService(prisma, undefined, options.platformConfiguration);
   return [
+    createMerchantUsageHistoryRoute({
+      service: new MerchantUsageHistoryService(prisma), authenticator, logger,
+    }),
     createMerchantPromotionsRoutes({
       service: new MerchantPromotionsService(prisma), authenticator, logger,
     }),
