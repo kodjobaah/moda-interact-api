@@ -184,3 +184,107 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     await db.$disconnect();
   }
 });
+
+
+test("API-022 PostgreSQL: cancellation preserves closed paid usage and signed late corrections", {
+  skip: !url,
+}, async () => {
+  if (!url) return;
+  const db = new PrismaClient({ datasources: { db: { url } } });
+  const suffix = randomUUID().replaceAll("-", "");
+  let shopId: string | null = null;
+  let planId: string | null = null;
+  let observedAt = new Date("2026-10-20T12:00:00.000Z");
+  const service = new MerchantUsageHistoryService(db, () => observedAt);
+  const start = new Date("2026-10-01T00:00:00.000Z");
+  const end = new Date("2026-10-31T00:00:00.000Z");
+  try {
+    const plan = await db.billingPlan.create({ data: {
+      name: `Cancellation paid ${suffix}`, shopifyPlanHandle: `cancel-paid-${suffix}`, kind: "PAID_METERED",
+    } });
+    planId = plan.id;
+    const shop = await db.shop.create({ data: {
+      domain: `https://cancel-${suffix}.test.invalid`, platform: "WOOCOMMERCE", onboardingCompleted: true,
+    } });
+    shopId = shop.id;
+    const installation = await db.wooCommerceInstallation.create({ data: {
+      shopId, canonicalSiteUrl: shop.domain, credentialDigest: Buffer.alloc(32, 84),
+    } });
+    const principal = { shopId, canonicalSiteUrl: shop.domain,
+      installationId: installation.id, credentialVersion: installation.credentialVersion };
+    const subscription = await db.subscription.create({ data: {
+      shopId, status: "ACTIVE", planId, cancelAtPeriodEnd: true,
+      lastProviderLifecycleState: "CANCELLATION_SCHEDULED",
+    } });
+    const period = await db.billingPeriod.create({ data: {
+      shopId, subscriptionId: subscription.id, planId, planKindSnapshot: "PAID_METERED",
+      periodStart: start, periodEnd: end, status: "OPEN",
+    } });
+    await db.subscription.update({ where: { id: subscription.id }, data: {
+      billingPeriodId: period.id, currentPeriodStart: start, currentPeriodEnd: end,
+    } });
+    let sequence = 0;
+    const writeEvent = (quantity: string, extra: Record<string, unknown>) =>
+      db.usageEvent.create({ data: {
+        shopId: shop.id, metric: "RECOVERY_CONVERSATION", provider: "WOOCOMMERCE",
+        quantity: new Prisma.Decimal(quantity),
+        idempotencyKey: `arch035-cancel-${suffix}-${++sequence}`, ...extra,
+      } });
+    const debit = await writeEvent("3", {
+      billingPeriodId: period.id, sourceType: "PAID_RECOVERY_CONVERSATION",
+      occurredAt: new Date("2026-10-05T12:00:00.000Z"),
+    });
+    await writeEvent("2", {
+      sourceType: "PURCHASED_RECOVERY_CREDITS", occurredAt: new Date("2026-10-10T12:00:00.000Z"),
+    });
+    await writeEvent("80", {
+      sourceType: "FREE_RECOVERY_RESERVATION", occurredAt: new Date("2026-09-10T12:00:00.000Z"),
+    });
+
+    // Cancellation is scheduled, not effective: the paid entitlement remains current.
+    const scheduled = await service.read(principal, query);
+    assert.equal(scheduled.state, "ready");
+    assert.equal(scheduled.usagePagination.billId, period.id);
+    assert.equal(scheduled.usagePagination.total, 2);
+    assert.equal(scheduled.usagePagination.totalQuantity, 5);
+
+    await db.billingPeriod.update({ where: { id: period.id }, data: {
+      status: "CLOSED", closedAt: end, closeReason: "CONTRACT_ENDED",
+    } });
+    await db.subscription.update({ where: { id: subscription.id }, data: {
+      status: "NO_CONTRACT", planId: null, billingPeriodId: null,
+      currentPeriodStart: null, currentPeriodEnd: null, cancelAtPeriodEnd: false,
+      lastProviderLifecycleState: "CANCELED", providerCoverageEndAt: end,
+    } });
+    await writeEvent("-1", {
+      correctionOfUsageEventId: debit.id, sourceType: "PAID_CORRECTION",
+      occurredAt: new Date("2026-11-02T12:00:00.000Z"),
+    });
+    observedAt = new Date("2026-11-03T12:00:00.000Z");
+
+    const current = await service.read(principal, query);
+    assert.equal(current.state, "unavailable");
+    assert.deepEqual(current.usageEvents, []);
+    assert.equal(current.usagePagination.billId, null);
+
+    const history = await service.read(principal, { ...query, view: "past", periodId: period.id });
+    assert.equal(history.state, "ready");
+    assert.deepEqual(history.periodPage.items.map(({ id }) => id), [period.id]);
+    assert.equal(history.usagePagination.billId, period.id);
+    assert.equal(history.usagePagination.periodStart, start.toISOString());
+    assert.equal(history.usagePagination.periodEnd, end.toISOString());
+    assert.equal(history.usagePagination.total, 3);
+    assert.equal(history.usagePagination.totalQuantity, 4);
+    assert.deepEqual(history.usageEvents.map(({ quantity }) => quantity), [-1, 2, 3]);
+    assert.equal((await service.read(principal, { ...query, view: "past" })).usagePagination.totalQuantity, 4);
+  } finally {
+    if (shopId) {
+      await db.usageEvent.deleteMany({ where: { shopId } });
+      await db.billingPeriod.deleteMany({ where: { shopId } });
+      await db.subscription.deleteMany({ where: { shopId } });
+      await db.shop.deleteMany({ where: { id: shopId } });
+    }
+    if (planId) await db.billingPlan.deleteMany({ where: { id: planId } });
+    await db.$disconnect();
+  }
+});

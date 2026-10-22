@@ -17,7 +17,8 @@ const paidPeriod = {
 
 function fixture(config: {
   paid?: boolean;
-  subscription?: "missing";
+  subscription?: "missing" | "cancelled";
+  closedPeriod?: typeof paidPeriod;
   period?: object | null;
   shop?: object;
   installation?: object;
@@ -31,6 +32,10 @@ function fixture(config: {
     billingPeriodId: config.paid ? "period_a" : null,
     currentPeriodStart: config.paid ? paidPeriod.periodStart : null,
     currentPeriodEnd: config.paid ? paidPeriod.periodEnd : null,
+    ...(config.subscription === "cancelled" ? {
+      status: "NO_CONTRACT", plan: null, billingPeriodId: null,
+      currentPeriodStart: null, currentPeriodEnd: null,
+    } : {}),
   };
   const rows = config.rows ?? [{ id: "usage_a", metric: "RECOVERY_CONVERSATION",
     quantity: new Prisma.Decimal(2), occurredAt: now, sourceId: "recovery_a" }];
@@ -47,10 +52,15 @@ function fixture(config: {
     subscription: { findUnique: async () => config.subscription === "missing" ? null : sub },
     billingPeriod: {
       findFirst: async ({ where }: { where: { id?: string; status?: string } }) => {
-        if (where.status === "CLOSED") return null;
+        if (where.status === "CLOSED") {
+          return config.closedPeriod?.id === where.id ? config.closedPeriod : null;
+        }
         return config.period === undefined ? (config.paid ? paidPeriod : null) : config.period;
       },
-      findMany: async () => config.periodRows ?? [],
+      findMany: async (args: unknown) => {
+        queries.push({ operation: "periods", args });
+        return config.periodRows ?? [];
+      },
     },
     usageEvent: {
       findMany: async (args: unknown) => { queries.push({ operation: "findMany", args }); return rows; },
@@ -163,4 +173,39 @@ test("usageWhere permits only Woo provider and signed corrections to matching or
   const targets = record(correction.is).OR;
   assert.ok(Array.isArray(targets));
   assert.deepEqual(targets[0], { billingPeriodId: "period_a" });
+});
+
+
+test("cancelled paid subscription retains CLOSED period history, not a fictional current period", async () => {
+  const closed = { ...paidPeriod, status: "CLOSED" };
+  const { service, queries } = fixture({
+    subscription: "cancelled", closedPeriod: closed, periodRows: [closed],
+    rows: [
+      { id: "correction", metric: "RECOVERY_CONVERSATION", quantity: new Prisma.Decimal("-1"),
+        occurredAt: new Date("2026-11-02T12:00:00.000Z"), sourceId: null },
+      { id: "debit", metric: "RECOVERY_CONVERSATION", quantity: new Prisma.Decimal("3"),
+        occurredAt: new Date("2026-10-05T12:00:00.000Z"), sourceId: null },
+    ],
+  });
+
+  const current = await service.read(principal, query);
+  assert.equal(current.state, "unavailable");
+  assert.deepEqual(current.periodPage.items, []);
+  assert.equal(current.usagePagination.billId, null);
+  assert.equal(queries.some(({ operation }) => operation === "findMany"), false);
+
+  const past = await service.read(principal, { ...query, view: "past", periodId: closed.id });
+  assert.equal(past.state, "ready");
+  assert.deepEqual(past.periodPage.items.map(({ id }) => id), [closed.id]);
+  assert.equal(past.usagePagination.billId, closed.id);
+  assert.equal(past.usagePagination.total, 2);
+  assert.equal(past.usagePagination.totalQuantity, 2);
+  assert.deepEqual(past.usageEvents.map(({ quantity }) => quantity), [-1, 3]);
+  const periodsQuery = record(queries.find(({ operation }) => operation === "periods")?.args);
+  assert.deepEqual(record(periodsQuery.where), { shopId: principal.shopId, status: "CLOSED" });
+  const usageQuery = record(queries.find(({ operation }) => operation === "findMany")?.args);
+  const where = record(usageQuery.where);
+  assert.equal(where.shopId, principal.shopId);
+  assert.equal(where.provider, "WOOCOMMERCE");
+  assert.deepEqual(record((where.OR as unknown[])[0]), { billingPeriodId: closed.id });
 });
