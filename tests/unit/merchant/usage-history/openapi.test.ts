@@ -42,8 +42,12 @@ test("API-022 OpenAPI exactly matches the Woo installation-only read, strict res
   const history = spec.components.schemas.UsageHistory;
   const historyV1 = spec.components.schemas.UsageHistoryV1;
   const historyV2 = spec.components.schemas.UsageHistoryV2;
+  const usageEventV2 = spec.components.schemas.UsageEventV2;
   assert.ok(periodPage);
   assert.ok(history);
+  assert.ok(historyV1, "UsageHistoryV1 schema is required");
+  assert.ok(historyV2, "UsageHistoryV2 schema is required");
+  assert.ok(usageEventV2, "UsageEventV2 schema is required");
   assert.equal(periodPage.properties.items?.maxItems, 25);
   assert.deepEqual(history.oneOf, [
     { $ref: "#/components/schemas/UsageHistoryV1" },
@@ -54,8 +58,8 @@ test("API-022 OpenAPI exactly matches the Woo installation-only read, strict res
   assert.deepEqual(historyV1.required,
     ["schemaVersion", "state", "usageView", "periodPage", "usageEvents", "usagePagination"]);
   assert.deepEqual(historyV2.required, historyV1.required);
-  assert.ok(spec.components.schemas.UsageEventV2.required?.includes("chargedAgainst"));
-  assert.deepEqual(spec.components.schemas.UsageEventV2.properties.chargedAgainst?.enum,
+  assert.ok(usageEventV2.required?.includes("chargedAgainst"));
+  assert.deepEqual(usageEventV2.properties.chargedAgainst?.enum,
     ["LIFETIME_FREE_CREDITS", "INCLUDED_PLAN_ALLOWANCE", "PURCHASED_TOP_UP",
       "PROMOTIONAL_CREDITS", "NOT_APPLICABLE", "UNATTRIBUTED"]);
   for (const forbidden of ["shopId", "providerEventHandle", "idempotencyKey", "shopifyEventHandle", "providerReference", "providerSubscriptionId"]) {

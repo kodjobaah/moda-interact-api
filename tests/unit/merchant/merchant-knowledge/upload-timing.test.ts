@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import type { UploadIntentRequest } from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
 import { MerchantKnowledgeUploadService } from "../../../../src/merchant/merchant-knowledge/upload.service.js";
 import type { KnowledgeTimings } from "../../../../src/merchant/merchant-knowledge/timing.js";
 
 const principal = { shopId: "shop-a", installationId: "install-a", canonicalSiteUrl: "https://woo.example.test",
   credentialVersion: 3 };
-const upload = { idempotencyKey: "550e8400-e29b-41d4-a716-446655440000", purposeKey: "PRODUCT_INFORMATION",
+const upload: UploadIntentRequest = { idempotencyKey: "550e8400-e29b-41d4-a716-446655440000", purposeKey: "PRODUCT_INFORMATION",
   dataFormatKey: "CSV", originalFileName: "products.csv", contentType: "text/csv",
   sizeBytes: 20, sha256: "a".repeat(64) };
 const featureConfig = { schemaVersion: 1, maxKnowledgeSources: 10, maxContentUnitsPerSource: 1500,
