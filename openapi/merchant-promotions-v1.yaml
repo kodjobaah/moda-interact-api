@@ -1,0 +1,240 @@
+openapi: 3.1.0
+info:
+  title: Moda WooCommerce Merchant Promotional Recovery Credits
+  version: 1.0.0
+  description: >-
+    Installation-authenticated recovery-credit campaigns, selection and grant history.
+    Recovery credits are not WooCommerce coupon codes or merchant-funded discounts.
+paths:
+  /v1/merchant/promotions:
+    get:
+      operationId: readMerchantPromotions
+      summary: Read the merchant's eligible offers, current selection and grant history
+      description: >-
+        Reads one consistent database snapshot. Presentation locale never changes the
+        store or customer language. Active offers are scoped to the authenticated Shop
+        and plan; historical grants remain visible after campaign expiry. Pages are
+        clamped to the latest available page, and each contains up to six entries.
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      parameters:
+        - name: offerPage
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 1 }
+        - name: historyPage
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 1 }
+        - name: locale
+          in: query
+          description: Optional merchant presentation locale (supported Moda locale or fallback to English).
+          schema: { type: string, minLength: 1, maxLength: 64 }
+      responses:
+        '200': { $ref: '#/components/responses/ReadSuccess' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '500': { $ref: '#/components/responses/InternalError' }
+  /v1/merchant/promotions/selection:
+    put:
+      operationId: selectMerchantPromotion
+      summary: Compare-and-set the authenticated merchant's recovery-credit promotion
+      description: >-
+        The expected revision is taken from GET. A changed revision or a conflicting
+        active selection yields 409; repeating a successfully selected, still-active
+        campaign is idempotent, even when the original revision is replayed. Neither
+        grant consumption nor existing credit balances are reset or supplied by callers.
+        Selection is locked until campaign expiry, including when credits are exhausted.
+      security:
+        - WooInstallationId: []
+          WooInstallationCredential: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SelectionRequest' }
+      responses:
+        '200': { $ref: '#/components/responses/SelectionSuccess' }
+        '400': { $ref: '#/components/responses/InvalidRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/RequestTooLarge' }
+        '422': { $ref: '#/components/responses/Denied' }
+        '500': { $ref: '#/components/responses/InternalError' }
+components:
+  securitySchemes:
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+    WooInstallationCredential:
+      type: http
+      scheme: bearer
+  schemas:
+    Revision:
+      type: string
+      pattern: '^[a-f0-9]{64}$'
+      minLength: 64
+      maxLength: 64
+    Id:
+      type: string
+      pattern: '^[A-Za-z0-9_-]{1,128}$'
+      minLength: 1
+      maxLength: 128
+    Count: { type: integer, minimum: 0 }
+    Date: { type: string, format: date-time }
+    Pagination:
+      type: object
+      additionalProperties: false
+      required: [page, pageSize, totalEntries, totalPages]
+      properties:
+        page: { type: integer, minimum: 1, maximum: 1000 }
+        pageSize: { type: integer, const: 6 }
+        totalEntries: { $ref: '#/components/schemas/Count' }
+        totalPages: { type: integer, minimum: 1 }
+    Offer:
+      type: object
+      additionalProperties: false
+      required: [id, merchantTitle, merchantDescription, quantity, expiresAt, remainingQuantity, exhausted, previouslyClaimed, currentlySelected, eligible, selectable]
+      properties:
+        id: { $ref: '#/components/schemas/Id' }
+        merchantTitle: { type: string, minLength: 1, maxLength: 255 }
+        merchantDescription: { type: string, maxLength: 10000 }
+        quantity: { $ref: '#/components/schemas/Count' }
+        expiresAt: { $ref: '#/components/schemas/Date' }
+        remainingQuantity: { $ref: '#/components/schemas/Count' }
+        exhausted: { type: boolean }
+        previouslyClaimed: { type: boolean }
+        currentlySelected: { type: boolean }
+        eligible: { type: boolean }
+        selectable: { type: boolean }
+    Selection:
+      type: object
+      additionalProperties: false
+      required: [campaignId, merchantTitle, remainingQuantity, quantityGranted, reservedQuantity, committedQuantity, expiresAt, locked, exhausted, campaignStatus, targetEligible, spendable]
+      properties:
+        campaignId: { $ref: '#/components/schemas/Id' }
+        merchantTitle: { type: string, minLength: 1, maxLength: 255 }
+        remainingQuantity: { $ref: '#/components/schemas/Count' }
+        quantityGranted: { $ref: '#/components/schemas/Count' }
+        reservedQuantity: { $ref: '#/components/schemas/Count' }
+        committedQuantity: { $ref: '#/components/schemas/Count' }
+        expiresAt: { $ref: '#/components/schemas/Date' }
+        locked: { type: boolean }
+        exhausted: { type: boolean }
+        campaignStatus: { type: string, enum: [DRAFT, ACTIVE, CLOSED] }
+        targetEligible: { type: boolean }
+        spendable: { type: boolean }
+    HistoryEntry:
+      type: object
+      additionalProperties: false
+      required: [campaignId, campaignTitle, status, quantityGranted, committedQuantity, remainingQuantity, lastSelectedAt, expiresAt]
+      properties:
+        campaignId: { $ref: '#/components/schemas/Id' }
+        campaignTitle: { type: string, minLength: 1, maxLength: 255 }
+        status:
+          type: string
+          enum: [SELECTED, USED, EXHAUSTED, EXPIRED, CLOSED, NO_LONGER_ELIGIBLE, REOPENED]
+        quantityGranted: { $ref: '#/components/schemas/Count' }
+        committedQuantity: { $ref: '#/components/schemas/Count' }
+        remainingQuantity: { $ref: '#/components/schemas/Count' }
+        lastSelectedAt: { type: [string, 'null'], format: date-time }
+        expiresAt: { $ref: '#/components/schemas/Date' }
+    History:
+      type: object
+      additionalProperties: false
+      required: [page, pageSize, totalEntries, totalPages, entries]
+      properties:
+        page: { type: integer, minimum: 1, maximum: 1000 }
+        pageSize: { type: integer, const: 6 }
+        totalEntries: { $ref: '#/components/schemas/Count' }
+        totalPages: { type: integer, minimum: 1 }
+        entries:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/HistoryEntry' }
+    ReadResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, revision, offers, offersPagination, selection, history]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        revision: { $ref: '#/components/schemas/Revision' }
+        offers:
+          type: array
+          maxItems: 6
+          items: { $ref: '#/components/schemas/Offer' }
+        offersPagination: { $ref: '#/components/schemas/Pagination' }
+        selection:
+          oneOf:
+            - { $ref: '#/components/schemas/Selection' }
+            - { type: 'null' }
+        history: { $ref: '#/components/schemas/History' }
+    SelectionRequest:
+      type: object
+      additionalProperties: false
+      required: [campaignId, expectedRevision]
+      properties:
+        campaignId: { $ref: '#/components/schemas/Id' }
+        expectedRevision: { $ref: '#/components/schemas/Revision' }
+    SelectionResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, revision, selection]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        revision: { $ref: '#/components/schemas/Revision' }
+        selection: { $ref: '#/components/schemas/Selection' }
+    Error:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          type: string
+          enum: [invalid_request, request_too_large, unauthorized, promotion_unavailable, promotion_revision_conflict, promotion_selection_locked, promotion_not_eligible, promotion_exhausted, promotion_integrity_invalid, internal_error]
+  responses:
+    ReadSuccess:
+      description: Versioned merchant promotional-credit read
+      headers:
+        Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ReadResponse' }
+    SelectionSuccess:
+      description: Authoritative selected campaign and remaining balance
+      headers:
+        Cache-Control: { schema: { type: string, const: 'private, no-store' } }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/SelectionResponse' }
+    InvalidRequest:
+      description: Malformed query, invalid display locale, unexpected fields or invalid JSON
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Invalid, revoked or mismatched Woo installation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: Stale revision, different active selection, unavailable plan or integrity failure
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RequestTooLarge:
+      description: JSON body exceeds 4096 bytes
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Denied:
+      description: Campaign not eligible, expired, closed or credits exhausted
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    InternalError:
+      description: Internal error without shop data or sensitive diagnostics
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }

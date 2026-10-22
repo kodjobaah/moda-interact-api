@@ -13,6 +13,8 @@ const directRunners = [
   "scripts/test-arch041-cross-domain-postgres.mjs",
   "scripts/test-arch035-merchant-knowledge-postgres.mjs",
   "scripts/test-arch035-feature-preferences-postgres.mjs",
+  "scripts/test-arch035-promotions-postgres.mjs",
+  "scripts/test-arch035-woo-support-postgres.mjs",
   "scripts/test-arch035-knowledge-upload-postgres.mjs",
   "scripts/run-arch043-platform-configuration-postgres.mjs",
 ] as const;
