@@ -6,6 +6,7 @@ export function composeApiRoutes(input: {
   wooBillingWebhook: ApiRouteHandler;
   wooActivity?: ApiRouteHandler;
   wooConsent?: ApiRouteHandler;
+  wooRecoverySelection?: ApiRouteHandler;
   merchant: readonly ApiRouteHandler[];
   billing: readonly ApiRouteHandler[];
   wooInstallation: ApiRouteHandler;
@@ -15,6 +16,7 @@ export function composeApiRoutes(input: {
     input.wooBillingWebhook,
     ...(input.wooActivity ? [input.wooActivity] : []),
     ...(input.wooConsent ? [input.wooConsent] : []),
+    ...(input.wooRecoverySelection ? [input.wooRecoverySelection] : []),
     ...input.merchant,
     ...input.billing,
     input.wooInstallation,
