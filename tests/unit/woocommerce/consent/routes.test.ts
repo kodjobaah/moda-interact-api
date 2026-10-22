@@ -69,6 +69,7 @@ test("both Classic and Blocks reject forged guest checkout CSRF/session assertio
       return { schemaVersion: "woo.whatsapp-consent.v1" as const, status: "recorded" as const,
         decision: "GRANT" as const, consentRevision: "1", decisionSequence: "1" }; } } };
   for (const checkoutMode of ["CLASSIC", "BLOCKS"] as const) {
+    const startingRecords = records;
     const valid = consentEvent({ checkoutAction: { ...consentEvent().checkoutAction, checkoutMode } });
     const forged: unknown[] = [
       { ...valid, checkoutAction: { ...valid.checkoutAction, nonceVerified: false } },
@@ -85,9 +86,10 @@ test("both Classic and Blocks reject forged guest checkout CSRF/session assertio
       const rejected = await requestRoute(deps, invalid);
       assert.equal(rejected.status, 400, `invalid ${checkoutMode} checkout attestation must be rejected`);
     }
-    assert.equal(records, 0, `no forged ${checkoutMode} event can reach the consent service`);
+    assert.equal(records, startingRecords, `no forged ${checkoutMode} event can reach the consent service`);
     const admitted = await requestRoute(deps, valid);
     assert.equal(admitted.status, 200, `verified ${checkoutMode} server assertions reach the service`);
+    assert.equal(records, startingRecords + 1, `only the valid ${checkoutMode} event reaches the service`);
   }
   assert.equal(records, 2);
 });
