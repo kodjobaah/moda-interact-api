@@ -8,6 +8,7 @@ import { createUploadR2, type UploadR2, type UploadR2Configuration } from "./upl
 import type { ApiPlatformConfigurationReader } from "../../platform-configuration/service.js";
 import { assertWooPrincipal } from "./read.service.js";
 import { MerchantKnowledgeReadError } from "./contract.js";
+import { timeKnowledgePhase, type KnowledgeTimings } from "./timing.js";
 
 type Tx = Prisma.TransactionClient;
 const pairKey = (purpose: string, format: string) => `${purpose}\u0000${format}`;
@@ -113,11 +114,11 @@ export class MerchantKnowledgeUploadService {
   }
   private now() { return this.options.now?.() ?? nowDate(); }
 
-  async intent(principal: WooInstallationPrincipal, request: UploadIntentRequest) {
-    const { config, r2, environment } = await this.dependencies();
+  async intent(principal: WooInstallationPrincipal, request: UploadIntentRequest, timings?: KnowledgeTimings) {
+    const { config, r2, environment } = await timeKnowledgePhase(timings, "configurationMs", () => this.dependencies());
     if (request.sizeBytes > config.maxUploadBytes) throw new KnowledgeUploadError(413, "request_too_large");
     const assetId = deterministicAssetId(principal.shopId, request.idempotencyKey);
-    const prepared = await this.database.$transaction(async (tx) => {
+    const prepared = await timeKnowledgePhase(timings, "intentTransactionMs", () => this.database.$transaction(async (tx) => {
       // The storage hostname is taken only from the validated Shop record.
       const shopDomain = await assertWoo(tx, principal);
       const entitlementConfig = await entitlement(tx, principal.shopId);
@@ -147,22 +148,24 @@ export class MerchantKnowledgeUploadService {
         originalFileName: request.originalFileName, contentType: request.contentType,
         sizeBytes: BigInt(request.sizeBytes), sha256: request.sha256, uploadExpiresAt: expiresAt } });
       return { expiresAt, objectKey };
-    });
+    }));
     // No external R2 operation inside the database transaction. Retrying uses the same immutable intent.
     const secondsLeft = Math.floor((prepared.expiresAt.getTime() - this.now().getTime()) / 1000);
     if (secondsLeft < 1) throw new KnowledgeUploadError(409, "knowledge_upload_expired");
-    const signed = await r2.sign({ key: prepared.objectKey, contentType: request.contentType,
-      sha256: request.sha256, expiresIn: Math.min(UPLOAD_TTL_SECONDS, secondsLeft) });
+    const signed = await timeKnowledgePhase(timings, "signingMs", () => r2.sign({
+      key: prepared.objectKey, contentType: request.contentType,
+      sha256: request.sha256, expiresIn: Math.min(UPLOAD_TTL_SECONDS, secondsLeft),
+    }));
     return { schemaVersion: 1 as const, assetId, uploadUrl: signed,
       expiresAt: prepared.expiresAt.toISOString(), maxUploadBytes: config.maxUploadBytes,
       requiredHeaders: { "Content-Type": request.contentType, "If-None-Match": "*",
         "x-amz-meta-sha256": request.sha256 } };
   }
 
-  async finalize(principal: WooInstallationPrincipal, request: UploadFinalizeRequest) {
-    const { config, r2 } = await this.dependencies();
+  async finalize(principal: WooInstallationPrincipal, request: UploadFinalizeRequest, timings?: KnowledgeTimings) {
+    const { config, r2 } = await timeKnowledgePhase(timings, "configurationMs", () => this.dependencies());
     if (request.sizeBytes > config.maxUploadBytes) throw integrity();
-    const preliminary = await this.database.$transaction(async (tx) => {
+    const preliminary = await timeKnowledgePhase(timings, "preliminaryTransactionMs", () => this.database.$transaction(async (tx) => {
       await assertWoo(tx, principal);
       const asset = await tx.merchantKnowledgeUploadedAsset.findFirst({ where: { id: request.assetId, shopId: principal.shopId },
         select: { id: true, status: true, shopId: true, objectKey: true, uploadExpiresAt: true,
@@ -186,13 +189,15 @@ export class MerchantKnowledgeUploadService {
       if (asset.status !== "PENDING_UPLOAD") throw conflict();
       if (asset.uploadExpiresAt <= this.now()) throw new KnowledgeUploadError(409, "knowledge_upload_expired");
       return { completed: false as const, objectKey: asset.objectKey };
-    });
+    }));
     if (preliminary.completed) return { schemaVersion: 1 as const, sourceId: preliminary.sourceId,
       revisionId: preliminary.revisionId, generation: preliminary.generation, status: "ACCEPTED" as const };
     // HEAD metadata is not proof of bytes. GET and bounded SHA-256 verification are mandatory.
-    await r2.verify({ key: preliminary.objectKey, contentType: request.contentType,
-      sha256: request.sha256, sizeBytes: request.sizeBytes });
-    return this.database.$transaction(async (tx) => {
+    await timeKnowledgePhase(timings, "r2VerificationMs", () => r2.verify({
+      key: preliminary.objectKey, contentType: request.contentType,
+      sha256: request.sha256, sizeBytes: request.sizeBytes,
+    }, timings));
+    return timeKnowledgePhase(timings, "commitTransactionMs", () => this.database.$transaction(async (tx) => {
       await assertWoo(tx, principal);
       const currentConfig = await entitlement(tx, principal.shopId);
       const asset = await tx.merchantKnowledgeUploadedAsset.findFirst({ where: { id: request.assetId, shopId: principal.shopId },
@@ -242,7 +247,7 @@ export class MerchantKnowledgeUploadService {
       }, select: { id: true } });
       return { schemaVersion: 1 as const, sourceId, revisionId: revision.id,
         generation, status: "ACCEPTED" as const };
-    }, { timeout: 10_000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+    }, { timeout: 10_000, isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted }));
   }
 
   async edit(principal: WooInstallationPrincipal, sourceId: string, change: { name: string; languageTag: string }) {

@@ -45,6 +45,12 @@ test("read-only route authenticates, returns no-store and bounded merchant state
   assert.equal(result.read().headers["cache-control"], "no-store");
   assert.equal(result.read().body.state, "MERCHANT_DISABLED");
   assert.deepEqual(app.called, ["auth", null]);
+  const fields = app.logs[0] as Record<string, unknown>;
+  assert.equal(fields.shopId, principal.shopId);
+  for (const field of ["authenticationMs", "durationMs"]) {
+    assert.equal(typeof fields[field], "number");
+    assert.ok(Number.isFinite(fields[field]));
+  }
 });
 
 test("afterPosition is the only permitted query field; owner comes from principal", async () => {
@@ -81,5 +87,10 @@ test("bad credential, stale principal, integration errors and unknown failures s
     assert.equal(output.read().status, status);
     assert.deepEqual(output.read().body, { error: code });
     assert.equal(JSON.stringify(app.logs).includes("secret"), false);
+    if (status !== 401) {
+      const fields = app.logs[0] as Record<string, unknown>;
+      assert.equal(typeof fields.authenticationMs, "number");
+      assert.equal(typeof fields.durationMs, "number");
+    }
   }
 });

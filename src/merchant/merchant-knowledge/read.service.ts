@@ -5,6 +5,7 @@ import type { WooInstallationPrincipal } from "../../auth/woo-installation/princ
 import { MERCHANT_KNOWLEDGE_PAGE_SIZE, MerchantKnowledgeReadError, type MerchantKnowledgeReadResponse } from "./contract.js";
 import { projectCatalogue, projectSource, type ActiveRevisionRow } from "./projection.js";
 import type { ApiPlatformConfigurationReader } from "../../platform-configuration/service.js";
+import { timeKnowledgePhase, type KnowledgeTimings } from "./timing.js";
 
 /** Read-only Prisma delegates supported by both the root client and a writer's transaction client. */
 export type KnowledgeReadDatabase = Pick<Prisma.TransactionClient,
@@ -125,63 +126,69 @@ export class MerchantKnowledgeReadService {
     private readonly configuration?: Pick<ApiPlatformConfigurationReader, "readMerchantKnowledgeUploadPolicy">,
   ) {}
 
-  async read(principal: WooInstallationPrincipal, afterPosition: number | null = null): Promise<MerchantKnowledgeReadResponse> {
+  async read(principal: WooInstallationPrincipal, afterPosition: number | null = null,
+    timings?: KnowledgeTimings): Promise<MerchantKnowledgeReadResponse> {
     if (afterPosition !== null && (!Number.isSafeInteger(afterPosition) || afterPosition < 0 || afterPosition > 2147483647)) {
       throw new MerchantKnowledgeReadError(400, "invalid_request");
     }
     try {
       // Read configuration independently; no database transaction is required for a GET.
-      const maxUploadBytes = this.configuration
-        ? (await this.configuration.readMerchantKnowledgeUploadPolicy()).maxUploadBytes
-        : resolveUploadLimit(this.uploadLimitEnvironment);
-      const defaultLanguage = await assertWooPrincipal(this.database, principal);
-      const [{ configuration, merchantEnabled }, allSourceCount] = await Promise.all([
-        readEntitlement(this.database, principal.shopId),
-        this.database.merchantKnowledgeSource.count({ where: { shopId: principal.shopId } }),
-      ]);
+      const maxUploadBytes = await timeKnowledgePhase(timings, "configurationMs", async () =>
+        this.configuration
+          ? (await this.configuration.readMerchantKnowledgeUploadPolicy()).maxUploadBytes
+          : resolveUploadLimit(this.uploadLimitEnvironment));
+      const defaultLanguage = await timeKnowledgePhase(timings, "shopValidationMs", () =>
+        assertWooPrincipal(this.database, principal));
+      const [{ configuration, merchantEnabled }, allSourceCount] = await timeKnowledgePhase(
+        timings, "entitlementAndCountMs", () => Promise.all([
+          readEntitlement(this.database, principal.shopId),
+          this.database.merchantKnowledgeSource.count({ where: { shopId: principal.shopId } }),
+        ]));
       const planEntitled = configuration !== null;
       const allowed = configuration?.allowedSourceTypes ?? [];
       const allowedKeys = new Set(allowed.map(({ purposeKey, dataFormatKey }) => `${purposeKey}\u0000${dataFormatKey}`));
-      const [catalogueRows, pageRows, planEligibleSourceCount, precedingEligibleCount] = await Promise.all([
-        allowed.length ? this.database.merchantKnowledgePurposeDataFormat.findMany({
-          where: {
-            OR: allowed.map(({ purposeKey, dataFormatKey }) => ({ purpose: { is: { key: purposeKey } }, dataFormat: { is: { key: dataFormatKey } } })),
-            purpose: { is: { active: true } },
-            dataFormat: { is: { active: true, inputKind: { in: ["REMOTE_URL", "UPLOAD"] } } },
-          },
-          orderBy: [{ purpose: { displayOrder: "asc" } }, { purpose: { key: "asc" } },
-            { dataFormat: { displayOrder: "asc" } }, { dataFormat: { key: "asc" } }],
-          select: {
-            purpose: { select: { key: true, displayName: true } },
-            dataFormat: { select: { key: true, displayName: true, inputKind: true, canonicalExtension: true, acceptedContentTypes: true } },
-          },
-        }) : Promise.resolve([]),
-        this.database.merchantKnowledgeSource.findMany({
-          where: { shopId: principal.shopId, ...(afterPosition === null ? {} : { position: { gt: afterPosition } }) },
-          orderBy: [{ position: "asc" }, { id: "asc" }],
-          take: MERCHANT_KNOWLEDGE_PAGE_SIZE + 1,
-          select: {
-            id: true, name: true, languageTag: true, position: true, currentGeneration: true,
-            purpose: { select: { key: true, displayName: true, active: true } },
-            dataFormat: { select: { key: true, displayName: true, active: true } },
-            revisions: {
-              orderBy: [{ generation: "desc" }, { id: "desc" }], take: 1,
-              select: { id: true, generation: true, reason: true, status: true, requestedUrl: true,
-                resolvedUrl: true, contentUnits: true, truncated: true, fetchedAt: true,
-                completedAt: true, failureCode: true,
-                uploadedAsset: { select: { originalFileName: true } },
+      const [catalogueRows, pageRows, planEligibleSourceCount, precedingEligibleCount] = await timeKnowledgePhase(
+        timings, "sourceQueriesMs", () => Promise.all([
+          allowed.length ? this.database.merchantKnowledgePurposeDataFormat.findMany({
+            where: {
+              OR: allowed.map(({ purposeKey, dataFormatKey }) => ({ purpose: { is: { key: purposeKey } }, dataFormat: { is: { key: dataFormatKey } } })),
+              purpose: { is: { active: true } },
+              dataFormat: { is: { active: true, inputKind: { in: ["REMOTE_URL", "UPLOAD"] } } },
+            },
+            orderBy: [{ purpose: { displayOrder: "asc" } }, { purpose: { key: "asc" } },
+              { dataFormat: { displayOrder: "asc" } }, { dataFormat: { key: "asc" } }],
+            select: {
+              purpose: { select: { key: true, displayName: true } },
+              dataFormat: { select: { key: true, displayName: true, inputKind: true, canonicalExtension: true, acceptedContentTypes: true } },
+            },
+          }) : Promise.resolve([]),
+          this.database.merchantKnowledgeSource.findMany({
+            where: { shopId: principal.shopId, ...(afterPosition === null ? {} : { position: { gt: afterPosition } }) },
+            orderBy: [{ position: "asc" }, { id: "asc" }],
+            take: MERCHANT_KNOWLEDGE_PAGE_SIZE + 1,
+            select: {
+              id: true, name: true, languageTag: true, position: true, currentGeneration: true,
+              purpose: { select: { key: true, displayName: true, active: true } },
+              dataFormat: { select: { key: true, displayName: true, active: true } },
+              revisions: {
+                orderBy: [{ generation: "desc" }, { id: "desc" }], take: 1,
+                select: { id: true, generation: true, reason: true, status: true, requestedUrl: true,
+                  resolvedUrl: true, contentUnits: true, truncated: true, fetchedAt: true,
+                  completedAt: true, failureCode: true,
+                  uploadedAsset: { select: { originalFileName: true } },
+                },
               },
             },
-          },
-        }),
-        allowed.length ? this.database.merchantKnowledgeSource.count({ where: allowedSourceWhere(principal.shopId, allowed) }) : Promise.resolve(0),
-        allowed.length && afterPosition !== null
-          ? this.database.merchantKnowledgeSource.count({ where: allowedSourceWhere(principal.shopId, allowed, { lte: afterPosition }) })
-          : Promise.resolve(0),
-      ]);
+          }),
+          allowed.length ? this.database.merchantKnowledgeSource.count({ where: allowedSourceWhere(principal.shopId, allowed) }) : Promise.resolve(0),
+          allowed.length && afterPosition !== null
+            ? this.database.merchantKnowledgeSource.count({ where: allowedSourceWhere(principal.shopId, allowed, { lte: afterPosition }) })
+            : Promise.resolve(0),
+      ]));
       const more = pageRows.length > MERCHANT_KNOWLEDGE_PAGE_SIZE;
       const page = pageRows.slice(0, MERCHANT_KNOWLEDGE_PAGE_SIZE);
-      const active = await readActiveRevisions(this.database, page.map(({ id }) => id));
+      const active = await timeKnowledgePhase(timings, "activeRevisionsMs", () =>
+        readActiveRevisions(this.database, page.map(({ id }) => id)));
       let eligibleRank = precedingEligibleCount;
       const sources = page.map((row) => {
         const typeEligible = row.purpose.active && row.dataFormat.active &&

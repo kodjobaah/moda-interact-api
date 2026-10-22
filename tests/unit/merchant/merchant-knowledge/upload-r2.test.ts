@@ -38,12 +38,17 @@ test("R2 finalisation performs HEAD metadata and bounded GET byte SHA-256, not o
     throw new Error("unexpected command");
   }) as typeof client.send;
   const r2 = createUploadR2(config, client);
-  await r2.verify({ key: "object", contentType: "text/csv", sha256: hash, sizeBytes: body.length });
+  const timings: Record<string, number> = {};
+  await r2.verify({ key: "object", contentType: "text/csv", sha256: hash, sizeBytes: body.length }, timings);
   assert.deepEqual(calls, ["HEAD", "GET"]);
+  assert.deepEqual(Object.keys(timings).sort(), ["r2HeadMs", "r2GetMs", "r2HashMs"].sort());
+  assert.ok(Object.values(timings).every((milliseconds) => milliseconds >= 0 && Number.isFinite(milliseconds)));
   calls = [];
+  const rejectedTimings: Record<string, number> = {};
   await assert.rejects(() => r2.verify({ key: "object", contentType: "text/csv", sha256: "b".repeat(64),
-    sizeBytes: body.length }));
+    sizeBytes: body.length }, rejectedTimings));
   assert.deepEqual(calls, ["HEAD"]);
+  assert.deepEqual(Object.keys(rejectedTimings), ["r2HeadMs"]);
   client.send = (async (command: unknown) => command instanceof HeadObjectCommand
     ? { ContentLength: body.length, ContentType: "text/csv", Metadata: { sha256: hash } }
     : { Body: Readable.from([Buffer.alloc(body.length, 0x78)]) }) as typeof client.send;

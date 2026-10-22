@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { performance } from "node:perf_hooks";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
@@ -8,6 +9,7 @@ import { KNOWLEDGE_UPLOAD_FINALIZE_PATH, KNOWLEDGE_UPLOAD_INTENTS_PATH,
   KNOWLEDGE_UPLOAD_ROUTE, UPLOAD_REQUEST_MAX_BYTES, KnowledgeUploadError,
   invalid, parseEdit, parseFinalize, parseIntent } from "./upload-contract.js";
 import { MerchantKnowledgeUploadService, normaliseUploadError } from "./upload.service.js";
+import { elapsedMs, timeKnowledgePhase, type KnowledgeTimings } from "./timing.js";
 
 async function strictBody(request: IncomingMessage, empty = false): Promise<unknown> {
   if (empty) {
@@ -46,16 +48,19 @@ export function createMerchantKnowledgeUploadRoutes(options: {
       if (!action) return false;
       if (typeof action !== "string" && !((method === "PATCH" && !action[2]) || (method === "POST" && action[2]))) return false;
       const operation = typeof action === "string" ? action : action[2] ? "reprocess" : "edit";
-      const startedAt = Date.now();
+      const startedAt = performance.now();
+      const timings: KnowledgeTimings = {};
       try {
-        const principal = await authenticator.authenticate(request);
+        const principal = await timeKnowledgePhase(timings, "authenticationMs", () => authenticator.authenticate(request));
         if (url.search) throw invalid();
-        const result = action === "intent" ? await service.intent(principal, parseIntent(await strictBody(request))) :
-          action === "finalize" ? await service.finalize(principal, parseFinalize(await strictBody(request))) :
-          action[2] ? await (async () => { await strictBody(request, true); return service.reprocess(principal, action[1]!); })() :
-            await service.edit(principal, action[1]!, parseEdit(await strictBody(request)));
-        // Object key, body bytes, SHA-256, signed host and URL are never logged.
-        logger.info("merchant.knowledge.upload", { shopId: principal.shopId, operation });
+        const body = await timeKnowledgePhase(timings, "requestBodyMs", () => strictBody(request, operation === "reprocess"));
+        const result = action === "intent" ? await service.intent(principal, parseIntent(body), timings) :
+          action === "finalize" ? await service.finalize(principal, parseFinalize(body), timings) :
+          action[2] ? await service.reprocess(principal, action[1]!) :
+            await service.edit(principal, action[1]!, parseEdit(body));
+        // Timings are numeric only: no object keys, hashes, signed URLs, headers or customer data.
+        logger.info("merchant.knowledge.upload", { shopId: principal.shopId, operation,
+          ...timings, durationMs: elapsedMs(startedAt) });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) sendNoStoreJson(response, 401, { error: "unauthorized" });
@@ -69,7 +74,7 @@ export function createMerchantKnowledgeUploadRoutes(options: {
             const cause = error instanceof KnowledgeUploadError ? "domain" : prismaCode ? "prisma" :
               error instanceof TypeError ? "type_error" : "unexpected";
             logger.warn("merchant.knowledge.upload.failed", { operation, reason: failure.code, cause,
-              ...(prismaCode ? { prismaCode } : {}), durationMs: Date.now() - startedAt });
+              ...(prismaCode ? { prismaCode } : {}), ...timings, durationMs: elapsedMs(startedAt) });
           }
           sendNoStoreJson(response, failure.status, { error: failure.code });
         }

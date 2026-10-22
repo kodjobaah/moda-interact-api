@@ -4,6 +4,7 @@ import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../.
 import { sendNoStoreJson } from "../../http/response.js";
 import { MERCHANT_KNOWLEDGE_PATH, MerchantKnowledgeReadError } from "./contract.js";
 import type { MerchantKnowledgeReadService } from "./read.service.js";
+import { timeKnowledgePhase, type KnowledgeTimings } from "./timing.js";
 
 function parsePosition(request: IncomingMessage, url: URL): number | null {
   if (url.searchParams.size === 0) return null;
@@ -39,23 +40,28 @@ export function createMerchantKnowledgeRoute(options: {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (url.pathname !== MERCHANT_KNOWLEDGE_PATH || request.method !== "GET") return false;
       const started = now();
+      const timings: KnowledgeTimings = {};
       try {
-        const principal = await authenticator.authenticate(request);
+        const principal = await timeKnowledgePhase(timings, "authenticationMs", () => authenticator.authenticate(request));
         if (hasBody(request)) throw new MerchantKnowledgeReadError(400, "invalid_request");
-        const result = await service.read(principal, parsePosition(request, url));
+        const result = await service.read(principal, parsePosition(request, url), timings);
         logger.info("merchant.knowledge.read", {
           shopId: principal.shopId, state: result.state, returnedSourceCount: result.sources.length,
-          durationMs: Math.max(0, now() - started),
+          ...timings, durationMs: Math.max(0, now() - started),
         });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) {
           sendNoStoreJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof MerchantKnowledgeReadError) {
-          if (error.status !== 400) logger.warn("merchant.knowledge.read.failed", { reason: error.code });
+          if (error.status !== 400) logger.warn("merchant.knowledge.read.failed", {
+            reason: error.code, ...timings, durationMs: Math.max(0, now() - started),
+          });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
-          logger.error("merchant.knowledge.read.failed", { reason: "internal" });
+          logger.error("merchant.knowledge.read.failed", {
+            reason: "internal", ...timings, durationMs: Math.max(0, now() - started),
+          });
           sendNoStoreJson(response, 503, { error: "merchant_knowledge_unavailable" });
         }
       }

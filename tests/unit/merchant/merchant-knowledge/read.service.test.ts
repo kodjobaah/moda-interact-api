@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MerchantKnowledgeReadService } from "../../../../src/merchant/merchant-knowledge/read.service.js";
 import { MerchantKnowledgeReadError } from "../../../../src/merchant/merchant-knowledge/contract.js";
+import type { KnowledgeTimings } from "../../../../src/merchant/merchant-knowledge/timing.js";
 
 const principal = { shopId: "shop-woo", installationId: "install-woo", canonicalSiteUrl: "https://woo.example",
   credentialVersion: 3 };
@@ -208,4 +209,26 @@ test("invalid query bounds and absent upload configuration do not enable writes"
   assert.equal(result.catalogue.length, 2);
   assert.equal(result.sources.length, 2);
   assert.equal(data.calls.some(({ name }) => name === "transaction"), false);
+});
+
+
+test("read service records safe timings for configuration, shop checks, queries and active revisions", async () => {
+  const timings: KnowledgeTimings = {};
+  await fake({ active: true }).service.read(principal, null, timings);
+  for (const phase of ["configurationMs", "shopValidationMs", "entitlementAndCountMs",
+    "sourceQueriesMs", "activeRevisionsMs"] as const) {
+    assert.equal(typeof timings[phase], "number", phase);
+    assert.ok(Number.isFinite(timings[phase]), phase);
+    assert.ok(timings[phase]! >= 0, phase);
+  }
+  assert.deepEqual(Object.keys(timings).sort(), ["configurationMs", "shopValidationMs", "entitlementAndCountMs",
+    "sourceQueriesMs", "activeRevisionsMs"].sort());
+});
+
+test("read service retains timing for a failing database phase without exposing its error", async () => {
+  const timings: KnowledgeTimings = {};
+  await assert.rejects(() => fake({ fail: true }).service.read(principal, null, timings),
+    (error: unknown) => error instanceof MerchantKnowledgeReadError && error.status === 503);
+  assert.equal(typeof timings.entitlementAndCountMs, "number");
+  assert.equal(timings.sourceQueriesMs, undefined);
 });

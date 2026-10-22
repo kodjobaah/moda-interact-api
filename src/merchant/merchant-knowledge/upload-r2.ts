@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { integrity, unavailable } from "./upload-contract.js";
+import { timeKnowledgePhase, type KnowledgeTimings } from "./timing.js";
 
 export interface UploadR2Configuration {
   bucket: string; endpoint: string; accessKeyId: string; secretAccessKey: string;
@@ -9,7 +10,8 @@ export interface UploadR2Configuration {
 }
 export interface UploadR2 {
   sign(input: { key: string; contentType: string; sha256: string; expiresIn: number }): Promise<string>;
-  verify(input: { key: string; contentType: string; sha256: string; sizeBytes: number }): Promise<void>;
+  verify(input: { key: string; contentType: string; sha256: string; sizeBytes: number },
+    timings?: KnowledgeTimings): Promise<void>;
 }
 /** Legacy test fixture parser. Production composition never invokes this environment reader. */
 export function loadUploadR2Configuration(env: NodeJS.ProcessEnv = process.env): UploadR2Configuration {
@@ -52,30 +54,34 @@ export function createUploadR2(config: UploadR2Configuration, injectedClient?: S
         return signed;
       } catch { throw unavailable(); }
     },
-    async verify({ key, contentType, sha256, sizeBytes }) {
+    async verify({ key, contentType, sha256, sizeBytes }, timings) {
       if (sizeBytes < 1 || sizeBytes > config.maxUploadBytes) throw integrity();
       try {
-        const head = await client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key }));
+        const head = await timeKnowledgePhase(timings, "r2HeadMs", () =>
+          client.send(new HeadObjectCommand({ Bucket: config.bucket, Key: key })));
         if (head.ContentLength !== sizeBytes || head.ContentType?.toLowerCase() !== contentType ||
           head.Metadata?.sha256 !== sha256) throw integrity();
-        const object = await client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key }));
+        const object = await timeKnowledgePhase(timings, "r2GetMs", () =>
+          client.send(new GetObjectCommand({ Bucket: config.bucket, Key: key })));
         const body = object.Body;
         if (!body || typeof (body as { [Symbol.asyncIterator]?: unknown })[Symbol.asyncIterator] !== "function")
           throw unavailable();
         // AWS SDK bodies can also be browser streams at the type level. This Node
         // transport requires a real async iterable to verify bytes incrementally.
         const stream = body as AsyncIterable<Uint8Array> & { destroy?: () => void };
-        let bytes = 0;
-        const hash = createHash("sha256");
-        for await (const chunk of stream) {
-          bytes += chunk.byteLength;
-          if (bytes > config.maxUploadBytes || bytes > sizeBytes) {
-            stream.destroy?.();
-            throw integrity();
+        await timeKnowledgePhase(timings, "r2HashMs", async () => {
+          let bytes = 0;
+          const hash = createHash("sha256");
+          for await (const chunk of stream) {
+            bytes += chunk.byteLength;
+            if (bytes > config.maxUploadBytes || bytes > sizeBytes) {
+              stream.destroy?.();
+              throw integrity();
+            }
+            hash.update(chunk);
           }
-          hash.update(chunk);
-        }
-        if (bytes !== sizeBytes || hash.digest("hex") !== sha256) throw integrity();
+          if (bytes !== sizeBytes || hash.digest("hex") !== sha256) throw integrity();
+        });
       } catch (error) {
         if (error instanceof Error && error.message === "knowledge_upload_integrity_mismatch") throw error;
         throw unavailable();

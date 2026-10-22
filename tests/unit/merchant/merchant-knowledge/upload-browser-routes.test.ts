@@ -5,6 +5,7 @@ import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/a
 import { KNOWLEDGE_UPLOAD_FINALIZE_PATH, KNOWLEDGE_UPLOAD_INTENTS_PATH } from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
 import { createMerchantKnowledgeUploadRoutes } from "../../../../src/merchant/merchant-knowledge/upload.routes.js";
 import { normaliseUploadError } from "../../../../src/merchant/merchant-knowledge/upload.service.js";
+import type { KnowledgeTimings } from "../../../../src/merchant/merchant-knowledge/timing.js";
 
 const principal = { shopId: "shop-tenant-a", installationId: "installation-a",
   canonicalSiteUrl: "https://woo.example.test", credentialVersion: 3 };
@@ -26,13 +27,23 @@ function setup(options: { fail?: boolean; reprocessFailure?: boolean } = {}) {
       return principal;
     } } as never,
     service: {
-      async intent(p: typeof principal) {
+      async intent(p: typeof principal, _request: unknown, timings: KnowledgeTimings) {
         calls.push({ operation: "intent", shopId: p.shopId });
+        timings.configurationMs = 2.5;
         if (options.fail) throw new Error(`provider failed: ${capability} credential=never-log`);
+        timings.intentTransactionMs = 3.5;
+        timings.signingMs = 0.4;
         return intent;
       },
-      async finalize(p: typeof principal) {
+      async finalize(p: typeof principal, _request: unknown, timings: KnowledgeTimings) {
         calls.push({ operation: "finalize", shopId: p.shopId });
+        timings.configurationMs = 1.2;
+        timings.preliminaryTransactionMs = 2.1;
+        timings.r2VerificationMs = 3.1;
+        timings.r2HeadMs = 0.5;
+        timings.r2GetMs = 0.9;
+        timings.r2HashMs = 1.3;
+        timings.commitTransactionMs = 1.6;
         return { schemaVersion: 1, sourceId: "source-a", revisionId: "revision-a", generation: 1, status: "ACCEPTED" };
       },
       async reprocess(p: typeof principal, sourceId: string) {
@@ -107,7 +118,19 @@ test("only the authenticated installation receives the opaque signed capability;
   assert.equal(JSON.stringify(state.logs).includes("X-Amz-Signature"), false);
   assert.equal(JSON.stringify(state.logs).includes(body.sha256), false);
   assert.equal(JSON.stringify(state.logs).includes("authenticated-secret"), false);
-  assert.deepEqual(state.logs, [{ name: "merchant.knowledge.upload", data: { shopId: principal.shopId, operation: "intent" } }]);
+  assert.equal(state.logs.length, 1);
+  assert.equal(state.logs[0]?.name, "merchant.knowledge.upload");
+  const fields = state.logs[0]?.data as Record<string, unknown>;
+  assert.equal(fields.shopId, principal.shopId);
+  assert.equal(fields.operation, "intent");
+  assert.equal(fields.configurationMs, 2.5);
+  assert.equal(fields.intentTransactionMs, 3.5);
+  assert.equal(fields.signingMs, 0.4);
+  for (const field of ["authenticationMs", "requestBodyMs", "durationMs"]) {
+    assert.equal(typeof fields[field], "number");
+    assert.ok(Number.isFinite(fields[field]));
+    assert.ok((fields[field] as number) >= 0);
+  }
 });
 
 test("only authenticated metadata finalize is accepted; malformed or upstream errors stay bounded and no-store", async () => {
@@ -137,8 +160,21 @@ test("only authenticated metadata finalize is accepted; malformed or upstream er
   assert.equal(failureDetails.reason, "knowledge_upload_unavailable");
   assert.equal(failureDetails.cause, "unexpected");
   assert.equal(typeof failureDetails.durationMs, "number");
-  assert.deepEqual(state.logs[1], { name: "merchant.knowledge.upload",
-    data: { shopId: principal.shopId, operation: "finalize" } });
+  assert.equal(typeof failureDetails.authenticationMs, "number");
+  assert.equal(typeof failureDetails.requestBodyMs, "number");
+  assert.equal(failureDetails.configurationMs, 2.5);
+  assert.equal(failureDetails.intentTransactionMs, undefined);
+  assert.equal(state.logs[1]?.name, "merchant.knowledge.upload");
+  const finalTiming = state.logs[1]?.data as Record<string, unknown>;
+  assert.equal(finalTiming.shopId, principal.shopId);
+  assert.equal(finalTiming.operation, "finalize");
+  for (const field of ["authenticationMs", "requestBodyMs", "durationMs",
+    "configurationMs", "preliminaryTransactionMs", "r2VerificationMs", "r2HeadMs", "r2GetMs",
+    "r2HashMs", "commitTransactionMs"]) {
+    assert.equal(typeof finalTiming[field], "number", field);
+    assert.ok(Number.isFinite(finalTiming[field]), field);
+    assert.ok((finalTiming[field] as number) >= 0, field);
+  }
   assert.equal(JSON.stringify(state.logs).includes(capability), false);
   assert.equal(JSON.stringify(state.logs).includes("never-log"), false);
 });
