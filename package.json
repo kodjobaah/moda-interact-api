@@ -33,7 +33,9 @@
     "test:arch035-woo-support:unit": "tsx --test \"tests/unit/merchant/support/*.test.ts\" \"tests/unit/auth/woo-installation/authenticator.test.ts\"",
     "test:arch035-woo-support:postgres": "node scripts/test-arch035-woo-support-postgres.mjs",
     "test:arch046-woo-consent:unit": "tsx --test \"tests/unit/woocommerce/consent/*.test.ts\"",
-    "test:arch046-woo-consent:postgres": "node scripts/test-arch046-woo-consent-postgres.mjs"
+    "test:arch046-woo-consent:postgres": "node scripts/test-arch046-woo-consent-postgres.mjs",
+    "test:arch046-woo-selection:unit": "tsx --test \"tests/unit/woocommerce/recovery-selection/*.test.ts\"",
+    "test:arch046-woo-selection:postgres": "node scripts/test-arch046-woo-consent-postgres.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",

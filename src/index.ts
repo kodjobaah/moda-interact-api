@@ -40,6 +40,7 @@ async function main(): Promise<void> {
       wooBillingWebhook: woo.billingWebhook,
       wooActivity: woo.activity,
       wooConsent: woo.consent,
+      wooRecoverySelection: woo.recoverySelection,
       merchant,
       billing,
       wooInstallation: woo.installation,

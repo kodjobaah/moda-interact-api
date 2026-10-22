@@ -1,0 +1,86 @@
+openapi: 3.1.0
+info:
+  title: Moda WooCommerce merchant WhatsApp recovery selection
+  version: 1.0.0
+  description: >-
+    Server-to-server installation-authenticated merchant no-contact API.
+    WordPress plugin must verify admin login, management capability and REST
+    nonce before setting X-Moda-WP-Admin-Verified to 1. Never send installation
+    bearer or verified admin header from a browser.
+paths:
+  /v1/woocommerce/customer-recovery-selection:
+    get:
+      summary: Read exact merchant-scoped phone no-contact status
+      security: [{wooInstallation: []}]
+      parameters:
+        - {name: X-Moda-Installation-Id, in: header, required: true, schema: {type: string}}
+        - {name: X-Moda-WP-Admin-Verified, in: header, required: true, schema: {type: string, const: '1'}}
+        - name: canonicalPhone
+          in: query
+          required: true
+          schema: {type: string, pattern: '^[1-9][0-9]{1,14}$'}
+      responses:
+        '200':
+          description: No-store contact status without PII
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/PhoneStatus'}
+        '401': {description: Invalid/revoked installation}
+        '403': {description: Missing privileged WordPress server assertion}
+        '404': {description: No exact active canonical phone}
+        '409': {description: Ambiguous recipient}
+    post:
+      summary: Suppress, reenable, or record customer-reported STOP
+      security: [{wooInstallation: []}]
+      parameters:
+        - {name: X-Moda-Installation-Id, in: header, required: true, schema: {type: string}}
+        - {name: X-Moda-WP-Admin-Verified, in: header, required: true, schema: {type: string, const: '1'}}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [schemaVersion, canonicalPhone, action, expectedNoContactRevision, evidenceReference]
+              properties:
+                schemaVersion: {type: string, const: woo.customer-recovery-selection.v1}
+                canonicalPhone: {type: string, pattern: '^[1-9][0-9]{1,14}$'}
+                action: {type: string, enum: [SUPPRESS, REENABLE, RECORD_CUSTOMER_STOP]}
+                expectedNoContactRevision: {type: string, pattern: '^(0|[1-9][0-9]{0,18})$'}
+                evidenceReference: {type: [string, 'null'], maxLength: 128}
+      responses:
+        '200':
+          description: No-store committed status and updated/duplicate outcome
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - {$ref: '#/components/schemas/PhoneStatus'}
+                  - type: object
+                    required: [outcome]
+                    properties:
+                      outcome: {type: string, enum: [updated, duplicate]}
+        '400': {description: Invalid command}
+        '401': {description: Invalid installation}
+        '403': {description: Missing admin assertion}
+        '404': {description: Phone not found}
+        '409': {description: Stale/ambiguous request, missing consent or terminal STOP}
+        '413': {description: Request larger than 2048 bytes}
+        '503': {description: Unavailable database}
+components:
+  schemas:
+    PhoneStatus:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, consentDecision, suppressed, suppressionReason, noContactRevision, phoneEligibleForRecovery, canReenable]
+      properties:
+        schemaVersion: {type: string, const: woo.customer-recovery-selection.v1}
+        consentDecision: {type: string, enum: [UNKNOWN, GRANTED, REVOKED]}
+        suppressed: {type: boolean}
+        suppressionReason: {type: [string, 'null'], enum: [MERCHANT_OPT_OUT, CUSTOMER_STOP, null]}
+        noContactRevision: {type: string, pattern: '^(0|[1-9][0-9]{0,18})$'}
+        phoneEligibleForRecovery: {type: boolean}
+        canReenable: {type: boolean}
+  securitySchemes:
+    wooInstallation: {type: http, scheme: bearer}
