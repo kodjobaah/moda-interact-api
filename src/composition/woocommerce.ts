@@ -15,6 +15,8 @@ import { createWooCheckoutActivityRoute } from "../woocommerce/activity/routes.j
 import type { WooCheckoutPublisher } from "../woocommerce/activity/producer.js";
 import type { WooOrderPublisher } from "../woocommerce/activity/order-producer.js";
 import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
+import { createWooConsentRoute } from "../woocommerce/consent/routes.js";
+import { WooConsentService } from "../woocommerce/consent/service.js";
 
 /** The Woo routes each retain their distinct connect, signed-webhook and callback trust boundaries. */
 export function createWooRoutes(options: {
@@ -25,7 +27,7 @@ export function createWooRoutes(options: {
   platformConfiguration?: ApiPlatformConfigurationReader;
   checkoutPublisher?: WooCheckoutPublisher;
   orderPublisher?: WooOrderPublisher;
-}): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; restRead?: ApiRouteHandler } {
+}): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; consent: ApiRouteHandler; restRead?: ApiRouteHandler } {
   const { prisma, config, authenticator, logger } = options;
   const installation = createWooInstallationRoutes({
     mode: config.woocommerceConnectionMode,
@@ -70,6 +72,7 @@ export function createWooRoutes(options: {
   return {
     installation,
     activity,
+    consent: createWooConsentRoute({ authenticator, service: new WooConsentService(prisma), logger }),
     billingWebhook,
     ...(restRead ? { restRead } : {}),
   };
