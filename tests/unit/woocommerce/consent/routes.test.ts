@@ -58,3 +58,36 @@ test("revoked credentials, DB outage and invalid guest attestations fail closed"
   assert.equal(forged.status, 400);
   assert.equal(records, 0);
 });
+
+// This verifies the hosted API's rejection of false/malformed *server attestations*.
+// Whether a real Classic/Blocks Woo hook correctly verifies a customer nonce,
+// cart/session transition or login/logout is a WOOCOMMERCE-002/003 producer test.
+test("both Classic and Blocks reject forged guest checkout CSRF/session assertions", async () => {
+  let records = 0;
+  const deps = { authenticator: { authenticate: async () => principal }, logger,
+    service: { record: async () => { records++;
+      return { schemaVersion: "woo.whatsapp-consent.v1" as const, status: "recorded" as const,
+        decision: "GRANT" as const, consentRevision: "1", decisionSequence: "1" }; } } };
+  for (const checkoutMode of ["CLASSIC", "BLOCKS"] as const) {
+    const valid = consentEvent({ checkoutAction: { ...consentEvent().checkoutAction, checkoutMode } });
+    const forged: unknown[] = [
+      { ...valid, checkoutAction: { ...valid.checkoutAction, nonceVerified: false } },
+      { ...valid, checkoutAction: { ...valid.checkoutAction, sessionVerified: false } },
+      { ...valid, checkoutAction: { ...valid.checkoutAction, userInitiated: false } },
+      { ...valid, checkoutAction: { ...valid.checkoutAction, source: "STOREFRONT_JS" } },
+      { ...valid, checkoutAction: { ...valid.checkoutAction, selection: "UNCHECKED" } },
+      { ...valid, checkoutAction: { ...valid.checkoutAction, nonceVerified: "true" } },
+      { ...valid, checkoutAction: { ...valid.checkoutAction, sessionVerified: "true" } },
+      { ...valid, checkoutAction: { ...valid.checkoutAction, customerId: "forged" } },
+      { ...valid, visitorId: "browser-supplied-guest" },
+    ];
+    for (const invalid of forged) {
+      const rejected = await requestRoute(deps, invalid);
+      assert.equal(rejected.status, 400, `invalid ${checkoutMode} checkout attestation must be rejected`);
+    }
+    assert.equal(records, 0, `no forged ${checkoutMode} event can reach the consent service`);
+    const admitted = await requestRoute(deps, valid);
+    assert.equal(admitted.status, 200, `verified ${checkoutMode} server assertions reach the service`);
+  }
+  assert.equal(records, 2);
+});

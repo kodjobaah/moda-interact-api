@@ -52,7 +52,8 @@ try {
     "SELECT 1 FROM \"commerce\".\"WhatsAppConsentEvidence\" LIMIT 1"]);
   phase = "running Woo consent API integration suite";
   run("node", ["--import", "tsx", "--test", "--test-concurrency=1",
-    "tests/integration/woocommerce/consent/service.postgres.test.ts"], { env, stdio: "inherit" });
+    "tests/integration/woocommerce/consent/service.postgres.test.ts",
+    "tests/integration/woocommerce/consent/races.postgres.test.ts"], { env, stdio: "inherit" });
 } catch {
   // Do not print process errors: Docker args and database URLs contain secrets.
   process.stderr.write(`ARCH-046 Woo consent PostgreSQL validation failed while ${phase}.\n`);
