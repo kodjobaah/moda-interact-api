@@ -162,8 +162,7 @@ export class MerchantUsageHistoryService {
         tx.usageEvent.aggregate({ where, _sum: { quantity: true } }),
       ]);
       if (!Number.isSafeInteger(total) || total < 0) throw new UsageHistoryIntegrityError();
-      const sources = await readUsageRecoverySources(tx, principal.shopId,
-        events.flatMap((event) => event.sourceId ? [event.sourceId] : []));
+      const sources = await readUsageRecoverySources(tx, principal.shopId, events);
       const chargedAgainst = query.responseVersion === 2
         ? await readUsageChargeSources(tx, principal.shopId, events) : null;
       const common = {
@@ -171,7 +170,7 @@ export class MerchantUsageHistoryService {
         usageEvents: events.map((event) => ({
           id: event.id, metric: event.metric, quantity: quantity(event.quantity),
           occurredAt: event.occurredAt.toISOString(),
-          sourceRecovery: event.sourceId ? sources.get(event.sourceId) ?? null : null,
+          sourceRecovery: sources.get(event.id) ?? null,
         })),
         usagePagination: {
           page: query.page, pageSize: query.pageSize, total, totalQuantity: quantity(aggregated._sum.quantity),

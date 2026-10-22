@@ -225,7 +225,7 @@ test("v1 stays byte-shape compatible and v2 exposes only verified reservation al
     correctionOfUsageEventId: null, quantity: new Prisma.Decimal(1), occurredAt: now, sourceId: null }];
   const { service, queries } = fixture({ rows, reservationRows: [{
     shopId: "shop_a", status: "COMMITTED", committedUsageEventId: "usage_a", compensationUsageEventId: null,
-    counterId: "counter_free", counter: { shopId: "shop_a", counter: "LIFETIME_FREE_RECOVERY_CREDITS" },
+    sourceKey: "legacy-test-reservation", counterId: "counter_free", counter: { shopId: "shop_a", counter: "LIFETIME_FREE_RECOVERY_CREDITS" },
     billingPeriodEntitlementCounterId: null, billingPeriodEntitlementCounter: null,
     purchasedCreditPurchaseId: null, purchasedCreditPurchase: null,
     promotionalCreditGrantId: null, promotionalCreditGrant: null,
@@ -233,7 +233,9 @@ test("v1 stays byte-shape compatible and v2 exposes only verified reservation al
   const old = await service.read(principal, query);
   assert.equal(old.schemaVersion, 1);
   assert.equal(JSON.stringify(old).includes("chargedAgainst"), false);
-  assert.equal(queries.some((q) => q.operation === "reservations"), false);
+  // Both response versions may read reservations to resolve real recovery links;
+  // v1 must not perform charge attribution or add the v2 charge field.
+  assert.equal(queries.some((q) => q.operation === "reservations"), true);
   const attributed = await service.read(principal, { ...query, responseVersion: 2 });
   assert.equal(attributed.schemaVersion, 2);
   assert.deepEqual(attributed.usageEvents.map((row) => ("chargedAgainst" in row ? row.chargedAgainst : null)),
@@ -260,7 +262,6 @@ test("v2 allocation query failures propagate instead of returning misleading UNA
   await assert.rejects(service.read(principal, { ...query, responseVersion: 2 }),
     (error: unknown) => error === failure);
   assert.equal(queries.some((entry) => entry.operation === "reservations"), true);
-  const legacy = await service.read(principal, query);
-  assert.equal(legacy.schemaVersion, 1);
-  assert.equal(legacy.usageEvents.length, 1);
+  // Recovery-link lookups must not swallow database failures even on v1.
+  await assert.rejects(service.read(principal, query), (error: unknown) => error === failure);
 });

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { Prisma, PrismaClient } from "@prisma/client";
+import { createRecoveryIdempotencyKey } from "@modainteract/moda-interact-shared/billing";
 import { MerchantUsageHistoryService } from "../../../../src/merchant/usage-history/history.service.js";
 import { UsageHistoryIntegrityError, UsageHistoryRequestError, type UsageHistoryQuery } from "../../../../src/merchant/usage-history/contract.js";
 
@@ -63,11 +64,14 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
       shopId: other.id, customerId: foreignCustomer.id, checkoutToken: `foreign-${suffix}`,
       lastExternalActivityAt: now,
     } });
+    // Production Free writer stores the reservation ID as UsageEvent.sourceId,
+    // not the recovery ID. This is the case that previously showed Unlinked.
+    const freeReservationId = `arch035-free-reservation-${suffix}`;
     const freeDebit = await db.usageEvent.create({ data: event(shop.id, "2", {
-      sourceType: "FREE_RECOVERY_RESERVATION", sourceId: ownedRecovery.id,
+      sourceType: "FREE_RECOVERY_RESERVATION", sourceId: freeReservationId,
       occurredAt: new Date("2026-09-10T10:00:00.000Z"),
     }) });
-    await db.usageEvent.create({ data: event(shop.id, "-1", {
+    const freeCorrection = await db.usageEvent.create({ data: event(shop.id, "-1", {
       correctionOfUsageEventId: freeDebit.id, sourceType: "FREE_CORRECTION",
       occurredAt: new Date("2026-09-11T10:00:00.000Z"),
     }) });
@@ -76,7 +80,8 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
       grantedQuantity: 5, committedQuantity: 2,
     } });
     await db.usageReservation.create({ data: {
-      shopId: shop.id, counterId: freeCounter.id, sourceKey: `free-${suffix}`,
+      id: freeReservationId, shopId: shop.id, counterId: freeCounter.id,
+      sourceKey: createRecoveryIdempotencyKey(shop.id, ownedRecovery.id),
       quantity: 2, status: "COMMITTED", committedUsageEventId: freeDebit.id,
     } });
     await db.usageEvent.create({ data: event(shop.id, "3", {
@@ -93,6 +98,8 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     assert.equal(freeHistory.usagePagination.total, 3);
     assert.equal(freeHistory.usagePagination.totalQuantity, 4);
     assert.equal(freeHistory.usageEvents.find((x) => x.id === freeDebit.id)?.sourceRecovery?.customerName, "Same Shop");
+    assert.equal(freeHistory.usageEvents.find((x) => x.id === freeCorrection.id)?.sourceRecovery?.recoveryId,
+      ownedRecovery.id);
     assert.equal(freeHistory.usageEvents.find((x) => x.quantity === 3)?.sourceRecovery, null);
     assert.deepEqual((await service.read(principal, { ...query, view: "past" })).usageEvents, []);
     const attributedFree = await service.read(principal, { ...query, responseVersion: 2 });
@@ -116,9 +123,15 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
       planId: paidPlan.id, billingPeriodId: currentPeriod.id,
       currentPeriodStart: currentStart, currentPeriodEnd: currentEnd,
     } });
+    const outreachAttempt = await db.recoveryOutreachAttempt.create({ data: {
+      checkoutRecoveryId: ownedRecovery.id, recipient: "447700900001",
+      sequence: 1, trigger: "INITIAL", configuredOfferMode: "NONE",
+    } });
+    const paidSourceKey = createRecoveryIdempotencyKey(shop.id,
+      `recovery-outreach:${outreachAttempt.id}`);
     const paidDebit = await db.usageEvent.create({ data: event(shop.id, "2", {
       billingPeriodId: currentPeriod.id, sourceType: "PAID_RECOVERY_CONVERSATION",
-      sourceId: ownedRecovery.id, occurredAt: new Date("2026-10-02T08:00:00.000Z"),
+      sourceId: paidSourceKey, occurredAt: new Date("2026-10-02T08:00:00.000Z"),
     }) });
     await db.usageEvent.create({ data: event(shop.id, "-1", {
       billingPeriodId: currentPeriod.id, correctionOfUsageEventId: paidDebit.id,
@@ -130,8 +143,8 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     } });
     await db.usageReservation.create({ data: {
       shopId: shop.id, billingPeriodEntitlementCounterId: paidCounter.id,
-      sourceKey: `paid-${suffix}`, quantity: 2, status: "COMMITTED",
-      committedUsageEventId: paidDebit.id,
+      sourceKey: `paid-included:${currentPeriod.id}:${paidSourceKey}`,
+      quantity: 2, status: "COMMITTED", committedUsageEventId: paidDebit.id,
     } });
     await db.usageEvent.create({ data: event(shop.id, "2", {
       sourceType: "PURCHASED_RECOVERY_CREDITS", occurredAt: new Date("2026-10-15T08:00:00.000Z"),
@@ -150,6 +163,10 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     assert.equal(paid.usagePagination.billId, currentPeriod.id);
     assert.equal(paid.usagePagination.totalQuantity, 4);
     assert.equal(paid.usagePagination.total, 4);
+    assert.equal(paid.usageEvents.find((row) => row.id === paidDebit.id)?.sourceRecovery?.recoveryId,
+      ownedRecovery.id);
+    assert.equal(paid.usageEvents.find((row) => row.quantity === -1)?.sourceRecovery?.recoveryId,
+      ownedRecovery.id);
     const attributedPaid = await service.read(principal, { ...query, responseVersion: 2 });
     assert.equal(attributedPaid.schemaVersion, 2);
     if (attributedPaid.schemaVersion !== 2) throw new Error("expected v2 response");
