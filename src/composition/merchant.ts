@@ -37,6 +37,8 @@ import { createMerchantConversationMessageRoutes } from "../merchant/conversatio
 import { MerchantSupportReadService } from "../merchant/support/read.service.js";
 import { MerchantSupportCommandService, type SupportTranslationDispatch } from "../merchant/support/commands.service.js";
 import { createMerchantSupportRoutes } from "../merchant/support/routes.js";
+import { MerchantPromotionsService } from "../merchant/promotions/service.js";
+import { createMerchantPromotionsRoutes } from "../merchant/promotions/routes.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -51,6 +53,9 @@ export function createMerchantRoutes(options: {
   const commerceEnvironment = commerceEnvironmentForApi(environment);
   const knowledgeRead = new MerchantKnowledgeReadService(prisma, undefined, options.platformConfiguration);
   return [
+    createMerchantPromotionsRoutes({
+      service: new MerchantPromotionsService(prisma), authenticator, logger,
+    }),
     createMerchantSupportRoutes({
       read: new MerchantSupportReadService(prisma),
       commands: new MerchantSupportCommandService(prisma,
