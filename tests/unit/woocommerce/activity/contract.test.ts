@@ -73,3 +73,28 @@ test("rejects uncorrelated, foreign-shop, malformed and fabricated order evidenc
   for (const payload of invalidOrders) assert.throws(() => parseWooActivityEvent(payload), (error: unknown) =>
     error instanceof WooActivityRequestError && error.status === 400);
 });
+
+test("authenticated Woo activity HTTP v2 projects an exact canonical recipient into the existing v1 queue", () => {
+  const newer = {
+    ...event, schemaVersion: "woo.activity.v2", checkout: { ...event.checkout, contact: {
+      phone: "07400 123456", canonicalPhone: "447400123456", verifiedCountryCode: "GB", email: "customer@example.com",
+    } },
+  };
+  const projected = parseWooActivityEvent(newer);
+  assert.equal(projected.schemaVersion, "woo.activity.v1");
+  if (projected.eventType !== "CHECKOUT_UPDATED") throw new Error("expected checkout");
+  assert.deepEqual(projected.checkout.contact, { phone: "+447400123456", email: "customer@example.com" });
+  const withoutCountry = { ...newer, checkout: { ...newer.checkout, contact: {
+    ...newer.checkout.contact, phone: "+447400123456", verifiedCountryCode: null,
+  } } };
+  const projectedInternational = parseWooActivityEvent(withoutCountry);
+  if (projectedInternational.eventType !== "CHECKOUT_UPDATED") throw new Error("expected checkout");
+  assert.equal(projectedInternational.checkout.contact?.phone, "+447400123456");
+  for (const bad of [
+    { ...newer, checkout: { ...newer.checkout, contact: { ...newer.checkout.contact, canonicalPhone: "447400123459" } } },
+    { ...newer, checkout: { ...newer.checkout, contact: { phone: "07400 123456" } } },
+    { ...newer, checkout: { ...newer.checkout, contact: { ...newer.checkout.contact, verifiedCountryCode: "FR" } } },
+    { ...newer, checkout: { ...newer.checkout, contact: { ...newer.checkout.contact, consent: true } } },
+    { ...newer, shopId: "forged" },
+  ]) assert.throws(() => parseWooActivityEvent(bad), WooActivityRequestError);
+});

@@ -39,6 +39,7 @@ async function main(): Promise<void> {
       ...(woo.restRead ? { wooRestRead: woo.restRead } : {}),
       wooBillingWebhook: woo.billingWebhook,
       wooActivity: woo.activity,
+      wooConsent: woo.consent,
       merchant,
       billing,
       wooInstallation: woo.installation,

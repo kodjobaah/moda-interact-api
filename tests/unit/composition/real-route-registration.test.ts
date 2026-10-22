@@ -76,6 +76,7 @@ const protectedRoutes: ReadonlyArray<readonly [method: string, path: string]> = 
   ["POST", "/v1/billing/subscription/switch"],
   ["GET", "/v1/woocommerce/installation"],
   ["POST", "/v1/woocommerce/activity"],
+  ["POST", "/v1/woocommerce/whatsapp-consent"],
   ["POST", "/v1/woocommerce/read-authorizations"],
   ["GET", "/v1/woocommerce/read-authorization"],
   ["DELETE", "/v1/woocommerce/read-authorization"],
@@ -89,15 +90,17 @@ test("real domain composition registers every authenticated route and retains tr
   assert.equal(billing.length, 3);
   assert.ok(woo.restRead, "REST-read callbacks must be registered when enabled");
   assert.ok(woo.activity, "Woo capture route is registered independently of Redis readiness");
+  assert.ok(woo.consent, "Woo consent writes are registered independently of Redis readiness");
   const handlers = composeApiRoutes({
     wooRestRead: woo.restRead,
     wooBillingWebhook: woo.billingWebhook,
     wooActivity: woo.activity,
+    wooConsent: woo.consent,
     merchant,
     billing,
     wooInstallation: woo.installation,
   });
-  assert.equal(handlers.length, 25);
+  assert.equal(handlers.length, 26);
 
   const database = { async probe() {}, async disconnect() {} };
   const runtime = createApiRuntime(config, database, logger, handlers);
