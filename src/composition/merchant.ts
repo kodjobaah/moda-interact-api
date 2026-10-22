@@ -39,6 +39,8 @@ import { MerchantSupportCommandService, type SupportTranslationDispatch } from "
 import { createMerchantSupportRoutes } from "../merchant/support/routes.js";
 import { createMerchantUsageHistoryRoute } from "../merchant/usage-history/routes.js";
 import { MerchantUsageHistoryService } from "../merchant/usage-history/history.service.js";
+import { MerchantPromotionsService } from "../merchant/promotions/service.js";
+import { createMerchantPromotionsRoutes } from "../merchant/promotions/routes.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -55,6 +57,9 @@ export function createMerchantRoutes(options: {
   return [
     createMerchantUsageHistoryRoute({
       service: new MerchantUsageHistoryService(prisma), authenticator, logger,
+    }),
+    createMerchantPromotionsRoutes({
+      service: new MerchantPromotionsService(prisma), authenticator, logger,
     }),
     createMerchantSupportRoutes({
       read: new MerchantSupportReadService(prisma),

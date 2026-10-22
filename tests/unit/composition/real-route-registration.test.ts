@@ -65,6 +65,8 @@ const protectedRoutes: ReadonlyArray<readonly [method: string, path: string]> = 
   ["POST", "/v1/merchant/store-category"],
   ["GET", "/v1/merchant/bootstrap"],
   ["PUT", "/v1/merchant/store-context"],
+  ["GET", "/v1/merchant/promotions"],
+  ["PUT", "/v1/merchant/promotions/selection"],
   ["GET", "/v1/billing/recovery-credit-purchases"],
   ["POST", "/v1/billing/recovery-credit-purchases"],
   ["GET", "/v1/billing"],
@@ -83,7 +85,7 @@ test("real domain composition registers every authenticated route and retains tr
   const merchant = createMerchantRoutes({ prisma, authenticator, logger, environment: config.environment });
   const billing = createBillingRoutes({ prisma, authenticator, logger, wooBilling: config.wooBilling });
   const woo = createWooRoutes({ prisma, authenticator, logger, config });
-  assert.equal(merchant.length, 16);
+  assert.equal(merchant.length, 18);
   assert.equal(billing.length, 3);
   assert.ok(woo.restRead, "REST-read callbacks must be registered when enabled");
   assert.ok(woo.activity, "Woo capture route is registered independently of Redis readiness");
@@ -95,7 +97,7 @@ test("real domain composition registers every authenticated route and retains tr
     billing,
     wooInstallation: woo.installation,
   });
-  assert.equal(handlers.length, 23);
+  assert.equal(handlers.length, 25);
 
   const database = { async probe() {}, async disconnect() {} };
   const runtime = createApiRuntime(config, database, logger, handlers);
