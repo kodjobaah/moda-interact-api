@@ -1,0 +1,141 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact Woo checkout consent transport
+  version: woo.whatsapp-consent.v2
+  description: >-
+    Breaking pre-production, PHP-server-only consent recording. An authenticated
+    WooCommerce installation asserts explicit customer consent/withdrawal; the API
+    commits current phone consent and immutable evidence without recovery work.
+paths:
+  /v1/woocommerce/whatsapp-consent:
+    post:
+      operationId: recordWooCheckoutMarketingConsent
+      summary: Record a WooCommerce server-observed consent decision (v2 only)
+      description: >-
+        Requires authenticated installation bearer and ID. The WooCommerce plugin
+        validates shopper action and checkout session. The API rechecks installation
+        status, ensures immutable idempotency and current ordering, then commits
+        current CustomerPhone consent and evidence atomically. No billing query,
+        recovery job, or external messaging occurs.
+      security:
+        - WooBearer: []
+          WooInstallationId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WooConsentEvent'
+      responses:
+        '200':
+          description: Committed consent event or idempotent duplicate
+          headers:
+            Cache-Control:
+              description: no-store
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WooConsentResponse'
+        '400':
+          description: Malformed payload, unsupported version or unexpected field
+        '401':
+          description: Invalid, revoked or rotated installation credential
+        '409':
+          description: Replay conflict, stale choice or ambiguous phone
+        '413':
+          description: Request exceeds 8192 bytes
+        '422':
+          description: Noncanonical or invalid phone number
+        '503':
+          description: No durable consent acknowledgement
+components:
+  securitySchemes:
+    WooBearer:
+      type: http
+      scheme: bearer
+      description: Existing installation secret encoded as base64url
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+  schemas:
+    WooConsentEvent:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, eventId, decision, canonicalPhone, occurredAt, disclosure]
+      properties:
+        schemaVersion:
+          const: woo.whatsapp-consent.v2
+        eventId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+        decision:
+          enum: [GRANT, REVOKE]
+        canonicalPhone:
+          type: string
+          maxLength: 15
+          pattern: '^[1-9][0-9]{1,14}$'
+        occurredAt:
+          type: string
+          description: Canonical UTC millisecond timestamp, ordered per merchant and recipient
+          pattern: '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$'
+        disclosure:
+          oneOf:
+            - $ref: '#/components/schemas/MarketingDisclosure'
+            - type: 'null'
+      allOf:
+        - if:
+            properties:
+              decision:
+                const: GRANT
+          then:
+            properties:
+              disclosure:
+                $ref: '#/components/schemas/MarketingDisclosure'
+        - if:
+            properties:
+              decision:
+                const: REVOKE
+          then:
+            properties:
+              disclosure:
+                type: 'null'
+    MarketingDisclosure:
+      type: object
+      additionalProperties: false
+      required: [version, locale, text]
+      properties:
+        version:
+          type: string
+          maxLength: 128
+          pattern: '^moda\.woo\.whatsapp-recovery-marketing\.v[1-9][0-9]*$'
+        locale:
+          type: string
+          minLength: 2
+          maxLength: 64
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: Exact localized customer-visible disclosure; no merchant URL field
+    WooConsentResponse:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, status, decision, consentRevision, decisionSequence]
+      properties:
+        schemaVersion:
+          const: woo.whatsapp-consent.v2
+        status:
+          enum: [recorded, duplicate]
+        decision:
+          enum: [GRANT, REVOKE]
+        consentRevision:
+          type: string
+          pattern: '^[1-9][0-9]*$'
+        decisionSequence:
+          type: string
+          pattern: '^[1-9][0-9]*$'

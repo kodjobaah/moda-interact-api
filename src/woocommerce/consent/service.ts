@@ -3,14 +3,14 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { normalizeRecipientPhone } from "@modainteract/moda-interact-shared/identity";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
-import { WooConsentHttpError, WOO_CONSENT_VERSION,
+import { WooConsentHttpError,
   type WooConsentEvent, type WooConsentResult } from "./contract.js";
 
 type Database = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
-type Shop = { id: string; domain: string; platform: string; status: string; shopifyShopId: string | null };
-type Installation = { id: string; shopId: string; canonicalSiteUrl: string; status: string;
-  credentialVersion: number; revokedAt: Date | null };
+type InstallationShop = { id: string; shopId: string; canonicalSiteUrl: string;
+  installationStatus: string; credentialVersion: number; revokedAt: Date | null;
+  domain: string; platform: string; shopStatus: string; shopifyShopId: string | null };
 type Phone = { id: string; customerId: string; whatsappCanonicalPhone: string | null;
   whatsappConsentSource: string | null; whatsappConsentDecision: string;
   whatsappConsentRevision: bigint; whatsappConsentDecisionSequence: bigint;
@@ -23,40 +23,24 @@ const conflict = (code: string) => new WooConsentHttpError(409, code);
 /** Called *inside* the write transaction so a revoked/rotated installation
  * cannot race the initial HTTP bearer authentication. */
 async function verifyInstallation(tx: Tx, principal: WooInstallationPrincipal): Promise<void> {
-  const shops = await tx.$queryRaw<Shop[]>(Prisma.sql`
-    SELECT "id", "domain", "platform"::text AS "platform", "status"::text AS "status", "shopifyShopId"
-    FROM "commerce"."Shop" WHERE "id" = ${principal.shopId} FOR SHARE
+  // One indexed JOIN with share locks on *both* rows. PostgreSQL rechecks
+  // current row versions after competing disconnect/rotation transactions.
+  const rows = await tx.$queryRaw<InstallationShop[]>(Prisma.sql`
+    SELECT i."id", i."shopId", i."canonicalSiteUrl",
+      i."status"::text AS "installationStatus", i."credentialVersion", i."revokedAt",
+      s."domain", s."platform"::text AS "platform",
+      s."status"::text AS "shopStatus", s."shopifyShopId"
+    FROM "commerce"."Shop" s
+    JOIN "woocommerce"."WooCommerceInstallation" i ON i."shopId" = s."id"
+    WHERE s."id" = ${principal.shopId} AND i."id" = ${principal.installationId}
+    FOR SHARE OF s, i
   `);
-  const shop = shops[0];
-  if (!shop || shop.domain !== principal.canonicalSiteUrl || shop.platform !== "WOOCOMMERCE" ||
-    shop.shopifyShopId !== null || shop.status !== "ACTIVE") throw new WooUnauthenticatedError();
-  const installations = await tx.$queryRaw<Installation[]>(Prisma.sql`
-    SELECT "id", "shopId", "canonicalSiteUrl", "status"::text AS "status", "credentialVersion", "revokedAt"
-    FROM "woocommerce"."WooCommerceInstallation" WHERE "id" = ${principal.installationId} FOR SHARE
-  `);
-  const i = installations[0];
-  if (!i || i.shopId !== principal.shopId || i.canonicalSiteUrl !== shop.domain ||
-    i.credentialVersion !== principal.credentialVersion || i.status !== "ACTIVE" ||
-    i.revokedAt !== null) throw new WooUnauthenticatedError();
-}
-
-/** A stale page cannot grant when recovery has been disabled for this shop. */
-async function requireRecoveryFeature(tx: Tx, shopId: string): Promise<void> {
-  const result = await tx.$queryRaw<Array<{ eligible: boolean }>>(Prisma.sql`
-    SELECT EXISTS (
-      SELECT 1 FROM "billing"."Subscription" s
-      JOIN "billing"."BillingPlan" p ON p."id" = s."planId"
-      JOIN "billing"."BillingPlanFeature" pf ON pf."planId" = p."id" AND pf."enabled"
-      JOIN "billing"."Feature" f ON f."id" = pf."featureId"
-      WHERE s."shopId" = ${shopId} AND s."status" IN ('ACTIVE', 'TRIALING')
-        AND p."active" AND f."active" AND f."key" = 'checkout_recovery'
-        AND (f."activationMode" = 'ALWAYS_ENABLED' OR EXISTS (
-          SELECT 1 FROM "billing"."ShopFeaturePreference" pref
-          WHERE pref."shopId" = s."shopId" AND pref."featureId" = f."id" AND pref."enabled"
-        ))
-    ) AS "eligible"
-  `);
-  if (result[0]?.eligible !== true) throw conflict("checkout_recovery_unavailable");
+  const row = rows[0];
+  if (!row || row.shopId !== principal.shopId ||
+    row.domain !== principal.canonicalSiteUrl || row.canonicalSiteUrl !== row.domain ||
+    row.platform !== "WOOCOMMERCE" || row.shopifyShopId !== null || row.shopStatus !== "ACTIVE" ||
+    row.credentialVersion !== principal.credentialVersion ||
+    row.installationStatus !== "ACTIVE" || row.revokedAt !== null) throw new WooUnauthenticatedError();
 }
 
 /** Lock by authenticated merchant + exact E.164 recipient even on first insertion.
@@ -116,10 +100,7 @@ export class WooConsentService {
   constructor(private readonly database: Database, private readonly now: () => Date = () => new Date()) {}
 
   async record(principal: WooInstallationPrincipal, event: WooConsentEvent): Promise<WooConsentResult> {
-    const normalized = normalizeRecipientPhone(event.checkoutAction.serverObservedPhone, {
-      ...(event.checkoutAction.verifiedCountryCode
-        ? { verifiedCountryCode: event.checkoutAction.verifiedCountryCode } : {}),
-    });
+    const normalized = normalizeRecipientPhone(`+${event.canonicalPhone}`);
     if (!normalized.ok || normalized.e164.slice(1) !== event.canonicalPhone) {
       throw new WooConsentHttpError(422, "recipient_mismatch");
     }
@@ -143,18 +124,12 @@ export class WooConsentService {
         if (existing.length) {
           const previous = existing[0]!;
           if (!Buffer.from(previous.payloadDigest).equals(digest)) throw conflict("consent_event_replay_conflict");
-          return { schemaVersion: WOO_CONSENT_VERSION, status: "duplicate", decision: previous.decision,
+          return { schemaVersion: event.schemaVersion, status: "duplicate", decision: previous.decision,
             consentRevision: previous.phoneConsentRevision.toString(),
             decisionSequence: previous.decisionSequence.toString() };
         }
-        if (event.decision === "GRANT") {
-          if (!event.disclosure || event.disclosure.merchantSiteUrl !== principal.canonicalSiteUrl ||
-            !event.disclosure.text.includes(principal.canonicalSiteUrl) ||
-            !/WhatsApp/i.test(event.disclosure.text)) throw conflict("consent_disclosure_invalid");
-          await requireRecoveryFeature(tx, principal.shopId);
-        }
         const now = this.now();
-        const occurred = new Date(event.checkoutAction.occurredAt);
+        const occurred = new Date(event.occurredAt);
         // Woo validates the action timestamp, then the API bounds clock skew and
         // insists that *accepted* decisions have increasing observed times.
         if (occurred.getTime() > now.getTime() ||
@@ -192,7 +167,7 @@ export class WooConsentService {
             ${sequence}, ${revision}, ${occurred}, ${event.disclosure?.text ?? null},
             ${event.disclosure?.version ?? null}, ${event.disclosure?.locale ?? null})
         `);
-        return { schemaVersion: WOO_CONSENT_VERSION, status: "recorded", decision: event.decision,
+        return { schemaVersion: event.schemaVersion, status: "recorded", decision: event.decision,
           consentRevision: revision.toString(), decisionSequence: sequence.toString() };
       }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 10_000 });
     } catch (error) {
