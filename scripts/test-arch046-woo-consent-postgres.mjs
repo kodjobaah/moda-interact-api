@@ -1,5 +1,7 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
@@ -12,6 +14,7 @@ const database = `woo_consent_${suffix.slice(0, 14)}`;
 const user = `woo_${suffix.slice(16, 28)}`;
 const password = randomUUID();
 let started = false;
+let baselineDirectory = null;
 let phase = "verifying ARCH-045-DATABASE-002 schema dependency";
 const run = (command, args, options = {}) =>
   execFileSync(command, args, { encoding: "utf8", stdio: "pipe", ...options });
@@ -54,7 +57,39 @@ try {
   run("node", ["--import", "tsx", "--test", "--test-concurrency=1",
     "tests/integration/woocommerce/consent/service.postgres.test.ts",
     "tests/integration/woocommerce/consent/races.postgres.test.ts",
+    "tests/integration/woocommerce/consent/v2.postgres.test.ts",
     "tests/integration/woocommerce/recovery-selection/service.postgres.test.ts"], { env, stdio: "inherit" });
+
+  // Explicit opt-in: run the same independent performance scenario against the
+  // pinned pre-API-007 service (v1) and the current v2 service. Both use this
+  // disposable migrated PostgreSQL and identical setup. Do not duplicate v1
+  // application code inside the v2 product or current production tests.
+  if (process.env.ARCH046_CONSENT_COMPARE_BASELINE === "1") {
+    phase = "preparing isolated pre-API-007 comparison";
+    const baselineRef = process.env.ARCH046_CONSENT_BASELINE_REF || "220fa2b^";
+    const original = resolve(process.cwd());
+    const nodeModules = join(original, "node_modules");
+    if (!existsSync(nodeModules)) throw new Error("Installed API node_modules required for benchmark");
+    baselineDirectory = mkdtempSync(join(tmpdir(), "moda-api007-baseline-"));
+    const archive = execFileSync("git", ["archive", baselineRef], { maxBuffer: 100 * 1024 * 1024 });
+    execFileSync("tar", ["-xf", "-", "-C", baselineDirectory], { input: archive });
+    const performanceTest = "tests/integration/woocommerce/consent/performance.postgres.test.ts";
+    mkdirSync(join(baselineDirectory, "tests/integration/woocommerce/consent"), { recursive: true });
+    copyFileSync(join(original, performanceTest), join(baselineDirectory, performanceTest));
+    symlinkSync(nodeModules, join(baselineDirectory, "node_modules"), "dir");
+    if (!readFileSync(join(baselineDirectory, "src/woocommerce/consent/contract.ts"), "utf8")
+      .includes('woo.whatsapp-consent.v1')) {
+      throw new Error("Selected baseline does not contain the pre-change v1 consent API");
+    }
+    phase = "measuring pre-API-007 v1 baseline";
+    run("node", ["--import", "tsx", "--test", performanceTest], {
+      cwd: baselineDirectory, env: { ...env, ARCH046_CONSENT_BENCH_VERSION: "v1" }, stdio: "inherit",
+    });
+    phase = "measuring API-007 v2 implementation";
+    run("node", ["--import", "tsx", "--test", performanceTest], {
+      cwd: original, env: { ...env, ARCH046_CONSENT_BENCH_VERSION: "v2" }, stdio: "inherit",
+    });
+  }
 } catch {
   // Do not print process errors: Docker args and database URLs contain secrets.
   process.stderr.write(`ARCH-046 Woo consent PostgreSQL validation failed while ${phase}.\n`);
@@ -63,6 +98,7 @@ try {
   }
   process.exitCode = 1;
 } finally {
+  if (baselineDirectory) rmSync(baselineDirectory, { recursive: true, force: true });
   if (started) {
     try { docker(["rm", "--force", name]); }
     catch { process.stderr.write("ARCH-046 Woo consent PostgreSQL cleanup failed.\n"); process.exitCode = 1; }

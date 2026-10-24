@@ -21,16 +21,13 @@ const phoneB = "447400123464";
 const observedAt = (secondsBeforeNow: number) =>
   new Date(now.getTime() - secondsBeforeNow * 1000).toISOString();
 
-function event(site: string, id: string, decision: "GRANT" | "REVOKE",
-  secondsBeforeNow: number, phone = phoneA, checkoutKey = "same-woo-cart"): WooConsentEvent {
+function event(_site: string, id: string, decision: "GRANT" | "REVOKE",
+  secondsBeforeNow: number, phone = phoneA): WooConsentEvent {
   const example = consentEvent();
   return consentEvent({
     eventId: id, decision, canonicalPhone: phone,
-    checkoutAction: { ...example.checkoutAction, checkoutKey,
-      occurredAt: observedAt(secondsBeforeNow), serverObservedPhone: `+${phone}`,
-      selection: decision === "GRANT" ? "CHECKED" : "UNCHECKED" },
-    disclosure: decision === "GRANT" ? { ...example.disclosure!, merchantSiteUrl: site,
-      text: `Allow ${site} to send WhatsApp abandoned-checkout marketing reminders.` } : null,
+    occurredAt: observedAt(secondsBeforeNow),
+    disclosure: decision === "GRANT" ? example.disclosure : null,
   });
 }
 
@@ -174,11 +171,11 @@ test("changed-number tabs never copy existing phone consent to a different recip
   const { db, shop, site, principal, service } = await setup();
   try {
     await service.record(principal, event(site, "first-number-grant", "GRANT", 110));
-    // A stale tab names the old phone while the Woo server has observed a new one.
-    const stale = event(site, "old-tab-claims-new-phone", "GRANT", 80);
-    stale.checkoutAction.serverObservedPhone = `+${phoneB}`;
+    // A changed recipient under the original event ID is rejected as a replay
+    // conflict; WooCommerce is responsible for validating the actual billing phone.
+    const stale = event(site, "first-number-grant", "GRANT", 80, phoneB);
     await assert.rejects(() => service.record(principal, stale), error =>
-      error instanceof WooConsentHttpError && error.status === 422 && error.code === "recipient_mismatch");
+      error instanceof WooConsentHttpError && error.code === "consent_event_replay_conflict");
     assert.equal((await phones(db, shop.id)).length, 1);
     // The new number is an independent recipient; a negative selection cannot
     // inherit the former number's GRANT.

@@ -24,14 +24,9 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
   let clock = new Date("2026-10-22T12:02:00.000Z");
   const service = new WooConsentService(db, () => clock);
   const tick = () => { clock = new Date(clock.getTime() + 10_000); return new Date(clock.getTime() - 1_000).toISOString(); };
-  const captured = (site: string, eventId: string, decision: "GRANT" | "REVOKE", at: string, phone = digits) => {
-    const source = consentEvent();
-    return consentEvent({ eventId, decision, canonicalPhone: phone,
-      checkoutAction: { ...source.checkoutAction, occurredAt: at, serverObservedPhone: `+${phone}`,
-        selection: decision === "GRANT" ? "CHECKED" : "UNCHECKED" },
-      disclosure: decision === "GRANT" ? { ...source.disclosure!, merchantSiteUrl: site,
-        text: `Allow ${site} to send WhatsApp abandoned-basket marketing reminders.` } : null });
-  };
+  const captured = (_site: string, eventId: string, decision: "GRANT" | "REVOKE", at: string, phone = digits) =>
+    consentEvent({ eventId, decision, canonicalPhone: phone, occurredAt: at,
+      disclosure: decision === "GRANT" ? { ...consentEvent().disclosure! } : null });
   async function current(shopId: string, phone = digits) {
     return db.$queryRaw<Array<{ id: string; customerId: string; whatsappConsentDecision: string;
       whatsappConsentRevision: bigint; whatsappConsentDecisionSequence: bigint;
@@ -83,10 +78,6 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
     initial.disclosure = { ...initial.disclosure!,
       version: "moda.woo.whatsapp-recovery-marketing.v3", locale: "fr-FR",
       text: "Envoyez-moi des actualités, des rappels et des offres." };
-    await assert.rejects(() => service.record(principal, { ...initial, eventId: "wrong-merchant-site",
-      disclosure: { ...initial.disclosure!, merchantSiteUrl: other.domain },
-    }), rejected("consent_disclosure_invalid"));
-    assert.equal((await evidence(shop.id)).length, 0);
     const first = await service.record(principal, initial);
     assert.deepEqual([first.status, first.consentRevision, first.decisionSequence], ["recorded", "1", "1"]);
     assert.deepEqual([...(await current(shop.id)).map(row => row.whatsappConsentDecision)], ["GRANTED"]);
@@ -114,23 +105,27 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
     }), rejected("consent_event_replay_conflict"));
     await assert.rejects(() => service.record(principal, {
       ...initial, canonicalPhone: "447400123458",
-    }), rejected("recipient_mismatch"));
+    }), rejected("consent_event_replay_conflict"));
     assert.equal((await evidence(shop.id)).length, 1);
 
-    // A withdrawal can succeed with the entitlement disabled, but not an old grant.
+    // Consent recording is passive even when the merchant disables recovery.
+    // Background, not this endpoint, owns entitlement/recovery/send gating.
     await db.billingPlanFeature.update({ where: { planId_featureId: { planId: plan.id, featureId: feature.id } },
       data: { enabled: false } });
     const withdraw = captured(shop.domain, "revoke-002", "REVOKE", tick());
     const second = await service.record(principal, withdraw);
     assert.equal(second.consentRevision, "2");
-    await assert.rejects(() => service.record(principal, captured(shop.domain, "grant-disabled", "GRANT", tick())),
-      rejected("checkout_recovery_unavailable"));
+    const disabledGrant = await service.record(principal,
+      captured(shop.domain, "grant-disabled", "GRANT", tick()));
+    assert.equal(disabledGrant.consentRevision, "3");
+    assert.equal(await db.checkoutRecovery.count({ where: { shopId: shop.id } }), 0);
+    assert.equal(await db.billingOperation.count({ where: { shopId: shop.id } }), 0);
     await db.billingPlanFeature.update({ where: { planId_featureId: { planId: plan.id, featureId: feature.id } },
       data: { enabled: true } });
     await assert.rejects(() => service.record(principal, captured(shop.domain, "late-grant", "GRANT",
-      initial.checkoutAction.occurredAt)), rejected("stale_consent_action"));
+      initial.occurredAt)), rejected("stale_consent_action"));
     assert.equal((await service.record(principal, initial)).status, "duplicate");
-    assert.equal((await current(shop.id))[0]?.whatsappConsentDecision, "REVOKED");
+    assert.equal((await current(shop.id))[0]?.whatsappConsentDecision, "GRANTED");
 
     // STOP is a stronger, independent no-contact prohibition: no checkbox may clear it.
     const phoneId = (await current(shop.id))[0]!.id;
@@ -140,10 +135,10 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
         "whatsappNoContactRevision"="whatsappNoContactRevision"+1 WHERE "id"=${phoneId}
     `;
     const regrant = await service.record(principal, captured(shop.domain, "regrant-003", "GRANT", tick()));
-    assert.equal(regrant.consentRevision, "3");
+    assert.equal(regrant.consentRevision, "4");
     assert.deepEqual([(await current(shop.id))[0]?.whatsappNoContact,
       (await current(shop.id))[0]?.whatsappNoContactReason], [true, "CUSTOMER_STOP"]);
-    assert.equal((await evidence(shop.id)).length, 3);
+    assert.equal((await evidence(shop.id)).length, 4);
     assert.equal(await db.checkoutRecovery.count({ where: { shopId: shop.id } }), 0);
     assert.equal(await db.billingOperation.count({ where: { shopId: shop.id } }), 0);
 
@@ -186,16 +181,14 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
         VALUES (${existingPhone}, ${existingCustomer}, ${`+${matchedDigits}`}, ${matchedDigits}, CURRENT_TIMESTAMP)`;
       assert.equal((await current(other.id, matchedDigits))[0]?.whatsappConsentDecision, "UNKNOWN");
       const verified = captured(other.domain, "signed-post-001", "GRANT", tick(), matchedDigits);
-      const verifiedReply = await post({ ...verified, checkoutAction: {
-        ...verified.checkoutAction, verifiedCountryCode: "US",
-      } });
+      const verifiedReply = await post(verified);
       assert.equal(verifiedReply.status, 200);
       assert.deepEqual([(await verifiedReply.json() as { status: string }).status,
         (await current(other.id, matchedDigits))[0]?.customerId], ["recorded", existingCustomer]);
       assert.equal((await current(other.id, matchedDigits))[0]?.whatsappConsentDecision, "GRANTED");
-      const badAttestation = await post({ ...verified, eventId: "unsigned-choice-002",
-        checkoutAction: { ...verified.checkoutAction, nonceVerified: false } });
-      assert.equal(badAttestation.status, 400);
+      const invalidExtra = await post({ ...verified, eventId: "unsigned-choice-002",
+        nonceVerified: false });
+      assert.equal(invalidExtra.status, 400);
       const missingBearer = await post(verified, { authorization: "Bearer invalid" });
       assert.equal(missingBearer.status, 401);
       assert.equal((await evidence(other.id)).length, 2);
@@ -218,7 +211,7 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
     await assert.rejects(() => service.record(principal,
       captured(shop.domain, "ambiguous-004", "GRANT", tick(), duplicateDigits)),
       rejected("ambiguous_customer_phone"));
-    assert.equal((await evidence(shop.id)).length, 3);
+    assert.equal((await evidence(shop.id)).length, 4);
 
     // Credential rotation and revocation must be reverified inside the transaction.
     await db.wooCommerceInstallation.update({ where: { id: installed.id }, data: { credentialVersion: { increment: 1 } } });
