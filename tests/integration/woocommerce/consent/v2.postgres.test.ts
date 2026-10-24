@@ -80,6 +80,19 @@ test("v2 API accepts a passive grant without subscription, keeps evidence/STOP",
         [grant.disclosure!.text, grant.disclosure!.version, grant.disclosure!.locale, 1n]);
       assert.equal(evidence.customerPhoneId.length > 0, true);
       assert.equal(evidence.canonicalPhone, grant.canonicalPhone);
+      // API-006 must be able to resolve this exact proof tuple, not only the
+      // unique (shopId,eventId) idempotency key. Any altered part fails.
+      const proof = { shopId: shop.id, eventId: grant.eventId,
+        canonicalPhone: grant.canonicalPhone, customerPhoneId: evidence.customerPhoneId,
+        phoneConsentRevision: BigInt(result.body.consentRevision as string) };
+      const retrieved = await db.whatsAppConsentEvidence.findFirst({ where: proof });
+      assert.equal(retrieved?.id, evidence.id);
+      assert.equal(await db.whatsAppConsentEvidence.findFirst({ where: {
+        ...proof, phoneConsentRevision: proof.phoneConsentRevision + 1n,
+      } }), null);
+      assert.equal(await db.whatsAppConsentEvidence.findFirst({ where: {
+        ...proof, shopId: other.id,
+      } }), null);
       assert.equal((await measure("duplicate_v2_retry", () => post(grant))).body.status, "duplicate");
       assert.equal((await db.whatsAppConsentEvidence.count({ where: { shopId: shop.id } })), 1);
       assert.deepEqual([await db.subscription.count({ where: { shopId: shop.id } }),
@@ -135,4 +148,98 @@ test("v2 direct service rejects noncanonical recipient, freshness drift and time
     })), rejected("stale_consent_action"));
     assert.equal(await db.whatsAppConsentEvidence.count({ where: { shopId: shop.id } }), 0);
   } finally { await db.$disconnect(); }
+});
+
+// Exercise the *actual* PostgreSQL rollback boundary without a production
+// fault-injection hook. The test-only trigger aborts the evidence INSERT after
+// CustomerPhone has been UPDATEd (or the new Customer/Phone created).
+test("v2 evidence-insert failure rolls back consent update and newly created customer", {
+  skip: !url,
+}, async () => {
+  if (!url) return;
+  const db = new PrismaClient({ datasources: { db: { url } } });
+  const site = `https://woo-rollback-${randomUUID()}.invalid`;
+  const triggerName = "arch046_api007_test_abort_evidence";
+  const functionName = '"commerce"."arch046_api007_test_abort_evidence"';
+  let functionCreated = false;
+  let triggerCreated = false;
+  try {
+    const shop = await db.shop.create({ data: { domain: site, platform: "WOOCOMMERCE" } });
+    const installation = await db.wooCommerceInstallation.create({ data: {
+      shopId: shop.id, canonicalSiteUrl: site,
+      credentialDigest: Uint8Array.from(digestSecret(Buffer.alloc(32, 0x73))),
+    } });
+    const principal = { shopId: shop.id, installationId: installation.id,
+      canonicalSiteUrl: site, credentialVersion: installation.credentialVersion };
+    const service = new WooConsentService(db, () => now);
+    const initial = consentEvent({ eventId: "thin-v2-rollback-initial", occurredAt: timestamp(100) });
+    await service.record(principal, initial);
+    const before = await db.customerPhone.findFirstOrThrow({
+      where: { customer: { shopId: shop.id }, whatsappCanonicalPhone: initial.canonicalPhone },
+    });
+    const beforeEvidence = await db.whatsAppConsentEvidence.count({ where: { shopId: shop.id } });
+    const beforeCustomers = await db.customer.count({ where: { shopId: shop.id } });
+    const beforePhones = await db.customerPhone.count({ where: { customer: { shopId: shop.id } } });
+
+    // This function exists exclusively in the disposable test database. It
+    // fails selected event IDs, never any unrelated application write.
+    await db.$executeRawUnsafe(`
+      CREATE FUNCTION ${functionName}() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW."eventId" LIKE 'thin-v2-rollback-fail-%' THEN
+          RAISE EXCEPTION 'arch046_api007_evidence_insertion_injected_failure';
+        END IF;
+        RETURN NEW;
+      END;
+      $$
+    `);
+    functionCreated = true;
+    await db.$executeRawUnsafe(`
+      CREATE TRIGGER ${triggerName} BEFORE INSERT
+      ON "commerce"."WhatsAppConsentEvidence"
+      FOR EACH ROW EXECUTE FUNCTION ${functionName}()
+    `);
+    triggerCreated = true;
+
+    const failedRevoke = consentEvent({ eventId: "thin-v2-rollback-fail-revoke",
+      occurredAt: timestamp(80), decision: "REVOKE", disclosure: null });
+    await assert.rejects(() => service.record(principal, failedRevoke),
+      /arch046_api007_evidence_insertion_injected_failure/);
+    const after = await db.customerPhone.findUniqueOrThrow({ where: { id: before.id } });
+    assert.deepEqual({ decision: after.whatsappConsentDecision,
+      revision: after.whatsappConsentRevision,
+      sequence: after.whatsappConsentDecisionSequence,
+      observed: after.whatsappConsentProviderObservedAt,
+      verified: after.whatsappConsentVerifiedAt,
+      source: after.whatsappConsentSource },
+    { decision: before.whatsappConsentDecision,
+      revision: before.whatsappConsentRevision,
+      sequence: before.whatsappConsentDecisionSequence,
+      observed: before.whatsappConsentProviderObservedAt,
+      verified: before.whatsappConsentVerifiedAt,
+      source: before.whatsappConsentSource });
+    assert.equal(await db.whatsAppConsentEvidence.count({ where: { shopId: shop.id } }), beforeEvidence);
+    assert.equal(await db.whatsAppConsentEvidence.findFirst({ where: {
+      shopId: shop.id, eventId: failedRevoke.eventId,
+    } }), null);
+
+    const newPhone = "447400123459";
+    const failedNew = consentEvent({ eventId: "thin-v2-rollback-fail-new-phone",
+      occurredAt: timestamp(70), canonicalPhone: newPhone });
+    await assert.rejects(() => service.record(principal, failedNew),
+      /arch046_api007_evidence_insertion_injected_failure/);
+    assert.equal(await db.customer.count({ where: { shopId: shop.id } }), beforeCustomers);
+    assert.equal(await db.customerPhone.count({ where: { customer: { shopId: shop.id } } }), beforePhones);
+    assert.equal(await db.whatsAppConsentEvidence.count({ where: { shopId: shop.id } }), beforeEvidence);
+    assert.equal(await db.customerPhone.findFirst({ where: {
+      customer: { shopId: shop.id }, whatsappCanonicalPhone: newPhone,
+    } }), null);
+  } finally {
+    // Cleanup is mandatory even when an assertion fails, so the other suites
+    // do not inherit the deliberate database failure mode.
+    if (triggerCreated) await db.$executeRawUnsafe(
+      `DROP TRIGGER IF EXISTS ${triggerName} ON "commerce"."WhatsAppConsentEvidence"`);
+    if (functionCreated) await db.$executeRawUnsafe(`DROP FUNCTION IF EXISTS ${functionName}()`);
+    await db.$disconnect();
+  }
 });

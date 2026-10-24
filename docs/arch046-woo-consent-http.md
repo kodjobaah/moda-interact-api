@@ -54,3 +54,45 @@ The existing WooCommerce checkout producer sends v1 today; it must be modified t
 The Woo plugin must await successful consent commit before treating ordinary `woo.activity` as eligible for consent-gated recovery. A failed/timeout consent write must not block order placement or be treated as accepted. Retry only the original unacknowledged event with an unchanged event ID/body while valid. The separate `/v1/woocommerce/activity` endpoint and its queue contract remain unchanged; activity does not create consent.
 
 The consent event ID is for idempotency, **not** proof of returning-customer identity. ARCH-046-API-006 must require a separately established secure account/session binding before revealing consent status. STOP messages remain authoritative regardless of any subsequent GRANT.
+
+## ARCH-046-API-007 Attempt 2: failure injection and measured comparison
+
+`npm run test:arch046-woo-consent:postgres` runs the normal disposable PostgreSQL
+consent tests, including an actual database-trigger failure between the
+`CustomerPhone` mutation and immutable evidence insertion. The test asserts
+both the existing permission and a newly created customer's state roll back.
+It also exercises API-006's full `(shopId, eventId, canonicalPhone,
+customerPhoneId, phoneConsentRevision)` evidence lookup, including negative
+shop/revision probes. The trigger is dropped even when the test fails; it is
+never deployed by a migration.
+
+For a comparable **before/after** measurement, run from the dedicated API-007
+implementation worktree with its normal Git history and Docker environment:
+
+```sh
+ARCH046_CONSENT_COMPARE_BASELINE=1 npm run test:arch046-woo-consent:postgres \
+  2>&1 | tee arch046-api007-attempt2-validation.log
+```
+
+The disposable test runner first executes its normal integration tests, then
+archives the pinned pre-change Git tree (`220fa2b^`, overridable by
+`ARCH046_CONSENT_BASELINE_REF`) into an isolated temporary directory. It runs
+the **same** `performance.postgres.test.ts` fixture against the archived v1
+service and the current v2 service; the archived directory is deleted on exit.
+The legacy v1 producer fields exist only inside the benchmark fixture, not in
+the running v2 API. The comparison is unavailable if the pinned historical Git
+revision, installed dependencies or Docker PostgreSQL are unavailable; report
+that limitation rather than marking performance evidence complete.
+
+Each `ARCH046_CONSENT_COMPARISON` JSON line records `version`, `scenario`
+(`fresh_GRANT`, `existing_GRANT`, `REVOKE`, `duplicate_retry`, and
+`stale_GRANT_failure`, and `injected_evidence_failure`), `sql_statements`, `transaction_client_ms`,
+`scenario_wall_ms`, `outcome`, and whether a billing query ran.
+`transaction_client_ms` measures the client-observed duration of the Prisma
+`$transaction` call (including its SQL and callback, excluding HTTP
+installation authentication and test setup). It is **not** database-server-only
+time or an exact network-free SQL duration. `scenario_wall_ms` includes the
+rest of the scenario. These isolated measurements are not a throughput capacity
+benchmark or production p95, and runtimes may vary with caching and host load.
+Include the paired emitted values and any failure outcomes in the Completion
+Report before checking the task's performance criterion.
