@@ -54,6 +54,7 @@ try {
   run("node", ["--import", "tsx", "--test", "--test-concurrency=1",
     "tests/integration/woocommerce/consent/service.postgres.test.ts",
     "tests/integration/woocommerce/consent/races.postgres.test.ts",
+    "tests/integration/woocommerce/consent/v2.postgres.test.ts",
     "tests/integration/woocommerce/recovery-selection/service.postgres.test.ts"], { env, stdio: "inherit" });
 } catch {
   // Do not print process errors: Docker args and database URLs contain secrets.

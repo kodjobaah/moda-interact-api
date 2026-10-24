@@ -1,44 +1,56 @@
-# ARCH-046-API-001 — Woo checkout WhatsApp marketing-consent HTTP contract
+# ARCH-046 — Woo WhatsApp checkout consent: API v2 (breaking pre-production contract)
 
-This is an **API-owned** v1 transport contract between the authenticated WooCommerce **PHP server** and the hosted Moda API. It does **not** create a recovery, notify a merchant, call Meta, charge credits, publish a job or cause later consent-based checkout rescans. This consent endpoint is not a customer-facing browser endpoint.
+**Rollout:** Pre-production breaking change. Moda has no existing production users or consent records to migrate. The former `woo.whatsapp-consent.v1` **is not accepted**. The WooCommerce plugin must adopt the six-field v2 payload before end-to-end checkout consent is enabled. This is a producer implementation task owned by `moda_woocommerce`, not an API change.
 
-## Request
+## Endpoint and security boundary
 
-`POST /v1/woocommerce/whatsapp-consent`, `Content-Type: application/json; charset=utf-8` (up to 8,192 bytes). Authenticate with the **existing** Woo installation headers (`X-Moda-Installation-Id` and `Authorization: Bearer <installation secret>`). Do not include `shopId`, `customerId`, user identifiers, or credentials in JSON. The server derives merchant scope from that installed principal, rechecking installation version, status and shop status inside the write transaction. Guest checkout does **not** weaken this authentication requirement.
+`POST /v1/woocommerce/whatsapp-consent` (the HTTP path remains stable),
+`Content-Type: application/json` (optional UTF-8 charset), body max 8,192 bytes.
+Require the active WooCommerce installation credential in the `Authorization: Bearer` header and `X-Moda-Installation-Id`. Authenticate **before** reading a bounded JSON body. Only the WooCommerce **PHP server** may call this endpoint; it is not a browser endpoint.
 
-The JSON contract is `woo.whatsapp-consent.v1`. The API-owned OpenAPI 3.1 contract is `docs/openapi/arch046-woo-consent-v1.yaml`; executable JSON fixtures are `tests/contracts/woocommerce/consent-grant.v1.json` and `consent-revoke.v1.json`. Required keys are exactly:
+The WooCommerce plugin owns checkout verification: session/cart, Classic nonce or Blocks Store API nonce/cart token, deliberate checked opt-in/explicit withdrawal, server-observed billing phone and displayed shop-localized disclosure. The API cannot verify WordPress session state and does not accept attacker-controlled `nonceVerified`, `checkoutMode`, `selection` or analogous assertions.
 
-- `schemaVersion`: `woo.whatsapp-consent.v1`; `purpose`: `WHATSAPP_CHECKOUT_RECOVERY` (abandoned-checkout **marketing**, never utility/transactional permission).
-- `eventId`: stable, opaque identifier generated once for the **server-observed customer choice**, preserved unchanged across timeouts/retries; it must not be regenerated merely because the API response was lost. Changing the payload under that ID yields `409 consent_event_replay_conflict`. A later choice needs its own identifier.
-- `decision`: `GRANT` on explicitly checked, `REVOKE` on explicitly unchecked; the checkbox MUST be initially unchecked. Phone capture, checkbox render or a merchant recovery setting is not permission.
-- `canonicalPhone`: digits-only E.164. `checkoutAction.serverObservedPhone` is the independently observed Woo checkout billing phone, not client-supplied canonical identity. With an independently verified `verifiedCountryCode` for national numbers, the API uses `@modainteract/moda-interact-shared/identity` to normalise it and checks exact equality with `canonicalPhone`. For an international phone, country can be `null` when no verified country is available. Ambiguity, invalid phones and mismatches return `422 recipient_mismatch`.
-- `checkoutAction`: required `checkoutKey`, `checkoutMode` (`CLASSIC`/`BLOCKS`), `source=WOO_CHECKOUT_SERVER_HOOK`, `fieldId=moda/whatsapp-checkout-recovery`, `selection` consistent with decision, booleans `userInitiated=true`, `nonceVerified=true`, `sessionVerified=true`, `serverObservedPhone`, `verifiedCountryCode` (`[A-Z]{2}` or `null`), and canonical UTC millisecond `occurredAt`.
-- `disclosure`: required for GRANT and null/optional for REVOKE (the field itself remains required). `version=moda.woo.whatsapp-recovery-marketing.v1`, valid `locale`, verbatim customer-visible text (must clearly say **WhatsApp** and include the merchant's exact canonical site URL), plus `merchantSiteUrl` exactly matching the authenticated installation's canonical URL. Do **not** reuse a generic notifications/privacy consent statement.
+The API independently authenticates the installation, rechecks Shop and installation status/credential version in the consent transaction, validates a single canonical recipient, records immutable consent evidence and ensures ordering/idempotency. Merchant ID and the fixed `WHATSAPP_CHECKOUT_RECOVERY` purpose derive from the authenticated route; no `shopId`, `customerId`, checkout key, merchant URL or purpose field is accepted in the body.
 
-**PHP producer security obligation (`ARCH-046-WOOCOMMERCE-002/003`):** derive all checkoutAction assertions *after* the current server request passes WooCommerce's Classic checkout nonce / Blocks Store API nonce or cart token, session/cart linkage, server-observed field transition, authenticated plugin-to-Moda installation credentials and server billing phone; do not forward assertion booleans from untrusted JavaScript. The hosted API cannot independently validate the WordPress nonce, guest session, or whether the checkbox was actually clicked. A deliberately forged/old attestation by the merchant-controlled plugin is outside what this bearer-authenticated hosted boundary can prove. In both modes, preserve stable eventId/checkoutKey and monotonic server-observed `occurredAt` across tabs, retries, login/logout and country/phone changes. A newly changed phone is a distinct recipient and requires its **own** confirmed opt-in; do not copy previous consent to a new number. Do not infer consent from Woo phone/billing data.
+## Six-field v2 payload
 
-## Response and ordering
+```json
+{
+  "schemaVersion": "woo.whatsapp-consent.v2",
+  "eventId": "stable-event-id",
+  "decision": "GRANT",
+  "canonicalPhone": "447400123456",
+  "occurredAt": "2026-10-24T10:00:00.000Z",
+  "disclosure": {
+    "version": "moda.woo.whatsapp-recovery-marketing.v3",
+    "locale": "en-GB",
+    "text": "Send me WhatsApp shopping updates, reminders and offers."
+  }
+}
+```
 
-A successful **committed** insert/update returns `200` with `{schemaVersion,status,decision,consentRevision,decisionSequence}`. `status` is `recorded` or `duplicate`. Revision/sequence are PostgreSQL BIGINT decimal strings. A duplicate returns the original revision and is a pure no-op even if a newer withdrawal/STOP was recorded later. `CustomerPhone` and an immutable `WhatsAppConsentEvidence` row are always written in **one** PostgreSQL transaction, not two HTTP calls. Merchant + exact *active* canonical phone must resolve to **one** row or **none** (a normal Customer/CustomerPhone is created); ambiguous matches fail with 409, and lookup by itself never grants permission.
+Top-level fields are **exactly** `schemaVersion`, `eventId`, `decision`, `canonicalPhone`, `occurredAt`, `disclosure`. For `REVOKE`, `disclosure` must be **null** and no checkbox/unchecked flag is needed. GRANT requires exactly `version`, `locale`, `text` in `disclosure`, containing the exact wording shown to the customer. Disclosure revisions `moda.woo.whatsapp-recovery-marketing.vN` are independent of transport v2 and translations need not contain a merchant URL/name or particular English phrase.
 
-For a **new** GRANT, the API validates active installation, merchant identity, disclosure, and *current* eligible checkout-recovery plan feature in the same transaction. It rejects an outdated checkout page, even when the checkbox appeared before the feature was disabled. A REVOKE is allowed while the feature is disabled, but not from revoked installation credentials. Later accepted decisions must have a **strictly increasing** verified `occurredAt` for that merchant+phone, including an older GRANT arriving after a newer REVOKE; concurrent decisions serialize per canonical recipient. A replay with a different eventId but older/equal timestamp yields `409 stale_consent_action`. Exact event replay remains idempotent. Server-side time bounds reject future choices and GRANT older than five minutes; **this is a freshness check on the checkout action, not a consent expiry**.
+`canonicalPhone` is digits-only E.164, normalised/validated once by the published Shared identity helper. `occurredAt` is the actual server-observed consent action time in canonical UTC milliseconds, not API receipt time. `eventId` is stable across retries and scoped to the authenticated shop. The API never creates consent merely because a shopper enters a phone number.
 
-**Checkout ordering:** the Woo plugin must await the successful consent **database-commit acknowledgement** before treating a checkout as eligible for a subsequent ordinary `woo.activity` capture. If its ordinary capture overtakes the consent acknowledgement, that checkout can remain ineligible. No automatic catch-up, rescan, recovery wakeup or compensation exists on the consent endpoint. When hosted Moda is unavailable (`503`/timeout), Woo must not block order placement and must not claim the consent was verified. Retry only the same unacknowledged event, with the same ID and body, while the original action is still valid.
+See the canonical OpenAPI 3.1 specification at `docs/openapi/arch046-woo-consent-v2.yaml` and executable golden contracts at `tests/contracts/woocommerce/consent-{grant,revoke}.v2.json`.
 
-`CUSTOMER_STOP` and merchant suppression are separate no-contact authorities: a later valid checkbox GRANT may advance current `whatsappConsentDecision` and evidence but **MUST NOT** clear `whatsappNoContact`, `whatsappNoContactReason`, its revision or timestamps. STOP stays effective for **all outbound WhatsApp** regardless of consent state. No endpoint in this task clears STOP.
+## Short synchronous commit
 
-## Checkout activity compatibility
+1. Authenticate installation credentials using the existing authenticator.
+2. Parse bounded JSON and reject unsupported versions/fields.
+3. In a short PostgreSQL transaction, revalidate installation and shop via **one locked JOIN**; serialise by event ID and canonical recipient; check immutable evidence for duplicate/replay conflicts.
+4. Preserve safe observed-time ordering. Reject future timestamps and GRANT older than five minutes (these are server clock-freshness constraints, **not** consent expiration). Do not remove these until a reviewed replacement ordering protocol exists.
+5. Locate/create the shop-scoped `Customer` and `CustomerPhone`, update current consent without modifying `whatsappNoContact`/`CUSTOMER_STOP`, append one immutable `WhatsAppConsentEvidence`, commit and acknowledge. Duplicate event returns its original revision and sequence.
 
-The existing authenticated `POST /v1/woocommerce/activity` / `woo.activity.v1` capture remains accepted unchanged. **Optionally**, a producer can use the minimal `woo.activity.v2` HTTP checkout envelope; `checkout.contact` then carries the raw `phone` **plus** `canonicalPhone` and optional `verifiedCountryCode`, normalised by the same published Shared identity helper. The API projects v2 to the existing **v1 checkout queue event** with `contact.phone=+E.164`, so no Background queue contract changes are introduced. **Neither v1 nor v2 activity creates consent**. Woo producer must preserve the consent ACK ordering separately. No new customer/checkout identity table is created.
+No billing/plan/feature query, recovery creation, checkout scan, Redis/BullMQ event, Meta call or outbound message occurs in this API operation. Background must check current entitlement, consent and STOP before any subsequent recovery or outbound message. Database uniqueness, advisory locks, revision ordering and STOP precedence remain enforced.
 
-## Status codes and safety
+Only a committed transaction returns `200` (`recorded` or `duplicate`) with `schemaVersion`, `status`, `decision`, decimal-string `consentRevision` and `decisionSequence`. Failure codes: `400` malformed/unsupported/extra fields, `401` unauthenticated or revoked installation, `409` replay/stale/ambiguous phone, `413` oversized body, `422` invalid recipient, `503` database unavailable. Responses use `Cache-Control: no-store`, logs exclude customer phone, full disclosure, credential or checkout payload.
 
-- `200`: committed `recorded` or unchanged `duplicate`.
-- `400`: malformed/forged shape, false CSRF/session/checkbox attestation, unsupported schema, missing or extra identity fields.
-- `401`: missing/invalid/revoked/rotated installation credentials or inactive shop.
-- `409`: eventId body conflict, stale action, ambiguous phone or unavailable checkout-recovery feature for GRANT.
-- `413`: request payload exceeds 8 KiB.
-- `422`: phone normalisation mismatch/invalid recipient.
-- `503`: database unavailable (no consent acknowledgement). The caller must not treat this as accepted.
+## Producer rollout and consent ordering
 
-Responses use `Cache-Control: no-store`; logging records only merchant identifier, accepted outcome/decision or bounded error reason, never phone, nonce, disclosure text, secret or checkout payload. Send no queued events for this consent request. System tests and the Woo plugin must independently verify the WordPress guest CSRF/session protections and actual customer-driven selection.
+The existing WooCommerce checkout producer sends v1 today; it must be modified to send v2 **before** this endpoint is used in checkout. No production backward-compatibility adapters or dual-parser are required. Coordinate API and Woo deployment in the pre-production environment and run the integrated system tests before marking ARCH-046 implemented.
+
+The Woo plugin must await successful consent commit before treating ordinary `woo.activity` as eligible for consent-gated recovery. A failed/timeout consent write must not block order placement or be treated as accepted. Retry only the original unacknowledged event with an unchanged event ID/body while valid. The separate `/v1/woocommerce/activity` endpoint and its queue contract remain unchanged; activity does not create consent.
+
+The consent event ID is for idempotency, **not** proof of returning-customer identity. ARCH-046-API-006 must require a separately established secure account/session binding before revealing consent status. STOP messages remain authoritative regardless of any subsequent GRANT.

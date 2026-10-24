@@ -54,13 +54,9 @@ async function insertUnknown(db: PrismaClient, shopId: string, digits: string): 
 
 async function grant(db: PrismaClient, input: Awaited<ReturnType<typeof setup>>["one"],
   digits: string, id: string, ageSeconds = 90): Promise<void> {
-  const example = consentEvent();
   await new WooConsentService(db).record(input.principal, consentEvent({
     eventId: id, canonicalPhone: digits,
-    checkoutAction: { ...example.checkoutAction, serverObservedPhone: `+${digits}`,
-      occurredAt: new Date(Date.now() - ageSeconds * 1000).toISOString(), verifiedCountryCode: "GB" },
-    disclosure: { ...example.disclosure!, merchantSiteUrl: input.site,
-      text: `Allow ${input.site} to send WhatsApp abandoned-basket marketing reminders.` },
+    occurredAt: new Date(Date.now() - ageSeconds * 1000).toISOString(),
   }));
 }
 

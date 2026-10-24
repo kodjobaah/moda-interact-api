@@ -5,7 +5,7 @@ import type { AddressInfo } from "node:net";
 import { createWooConsentRoute } from "../../../../src/woocommerce/consent/routes.js";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import { consentEvent } from "../../../fixtures/woocommerce/consent/event.js";
-import { WOO_CONSENT_PATH } from "../../../../src/woocommerce/consent/contract.js";
+import { WOO_CONSENT_PATH, type WooConsentEvent } from "../../../../src/woocommerce/consent/contract.js";
 
 async function requestRoute(deps: Parameters<typeof createWooConsentRoute>[0], body: unknown,
   settings: { headers?: Record<string, string>; path?: string } = {}) {
@@ -31,7 +31,7 @@ test("consent POST authenticates before processing and sends no-store only after
   let records = 0;
   const deps = { authenticator: { authenticate: async () => principal }, logger,
     service: { record: async () => { records++;
-      return { schemaVersion: "woo.whatsapp-consent.v1" as const, status: "recorded" as const,
+      return { schemaVersion: "woo.whatsapp-consent.v2" as const, status: "recorded" as const,
         decision: "GRANT" as const, consentRevision: "1", decisionSequence: "1" }; } } };
   const result = await requestRoute(deps, consentEvent());
   assert.equal(result.status, 200);
@@ -43,7 +43,7 @@ test("consent POST authenticates before processing and sends no-store only after
   assert.equal(records, 1);
 });
 
-test("revoked credentials, DB outage and invalid guest attestations fail closed", async () => {
+test("revoked credentials, DB outage and malformed extra fields fail closed", async () => {
   let records = 0;
   const denied = await requestRoute({ authenticator: { authenticate: async () => { throw new WooUnauthenticatedError(); } },
     service: { record: async () => { records++; throw new Error("unreachable"); } }, logger }, consentEvent());
@@ -54,42 +54,26 @@ test("revoked credentials, DB outage and invalid guest attestations fail closed"
   assert.deepEqual([outage.status, outage.json.error], [503, "consent_unavailable"]);
   const forged = await requestRoute({ authenticator: { authenticate: async () => principal },
     service: { record: async () => { records++; throw new Error("unreachable"); } }, logger },
-    consentEvent({ checkoutAction: { ...consentEvent().checkoutAction, sessionVerified: false as true } }));
+    { ...consentEvent(), sessionVerified: true });
   assert.equal(forged.status, 400);
   assert.equal(records, 0);
 });
 
-// This verifies the hosted API's rejection of false/malformed *server attestations*.
-// Whether a real Classic/Blocks Woo hook correctly verifies a customer nonce,
-// cart/session transition or login/logout is a WOOCOMMERCE-002/003 producer test.
-test("both Classic and Blocks reject forged guest checkout CSRF/session assertions", async () => {
-  let records = 0;
+test("v2 six-field POST uses the same authenticated route and echoes v2 in the acknowledgement", async () => {
+  const accepted: string[] = [];
   const deps = { authenticator: { authenticate: async () => principal }, logger,
-    service: { record: async () => { records++;
-      return { schemaVersion: "woo.whatsapp-consent.v1" as const, status: "recorded" as const,
-        decision: "GRANT" as const, consentRevision: "1", decisionSequence: "1" }; } } };
-  for (const checkoutMode of ["CLASSIC", "BLOCKS"] as const) {
-    const startingRecords = records;
-    const valid = consentEvent({ checkoutAction: { ...consentEvent().checkoutAction, checkoutMode } });
-    const forged: unknown[] = [
-      { ...valid, checkoutAction: { ...valid.checkoutAction, nonceVerified: false } },
-      { ...valid, checkoutAction: { ...valid.checkoutAction, sessionVerified: false } },
-      { ...valid, checkoutAction: { ...valid.checkoutAction, userInitiated: false } },
-      { ...valid, checkoutAction: { ...valid.checkoutAction, source: "STOREFRONT_JS" } },
-      { ...valid, checkoutAction: { ...valid.checkoutAction, selection: "UNCHECKED" } },
-      { ...valid, checkoutAction: { ...valid.checkoutAction, nonceVerified: "true" } },
-      { ...valid, checkoutAction: { ...valid.checkoutAction, sessionVerified: "true" } },
-      { ...valid, checkoutAction: { ...valid.checkoutAction, customerId: "forged" } },
-      { ...valid, visitorId: "browser-supplied-guest" },
-    ];
-    for (const invalid of forged) {
-      const rejected = await requestRoute(deps, invalid);
-      assert.equal(rejected.status, 400, `invalid ${checkoutMode} checkout attestation must be rejected`);
-    }
-    assert.equal(records, startingRecords, `no forged ${checkoutMode} event can reach the consent service`);
-    const admitted = await requestRoute(deps, valid);
-    assert.equal(admitted.status, 200, `verified ${checkoutMode} server assertions reach the service`);
-    assert.equal(records, startingRecords + 1, `only the valid ${checkoutMode} event reaches the service`);
-  }
-  assert.equal(records, 2);
+    service: { record: async (_principal: typeof principal, event: WooConsentEvent) => {
+      accepted.push(event.eventId);
+      return { schemaVersion: event.schemaVersion, status: "recorded" as const,
+        decision: event.decision, consentRevision: "1", decisionSequence: "1" };
+    } } };
+  const reply = await requestRoute(deps, consentEvent());
+  assert.equal(reply.status, 200);
+  assert.equal(reply.json.schemaVersion, "woo.whatsapp-consent.v2");
+  assert.equal(reply.cache, "no-store");
+  assert.deepEqual(accepted, ["woo-optin-001"]);
+  assert.equal((await requestRoute(deps, { ...consentEvent(), customerId: "other" })).status, 400);
+  assert.deepEqual(accepted, ["woo-optin-001"]);
+  assert.equal((await requestRoute(deps,
+    { ...consentEvent(), schemaVersion: "woo.whatsapp-consent.v1" })).status, 400);
 });

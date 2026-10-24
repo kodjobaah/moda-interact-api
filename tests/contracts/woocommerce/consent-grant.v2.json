@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "woo.whatsapp-consent.v2",
+  "eventId": "woo-v2-optin-001",
+  "decision": "GRANT",
+  "canonicalPhone": "447400123456",
+  "occurredAt": "2026-10-22T12:00:00.000Z",
+  "disclosure": {
+    "version": "moda.woo.whatsapp-recovery-marketing.v3",
+    "locale": "en-GB",
+    "text": "Send me WhatsApp shopping updates, reminders and offers."
+  }
+}
