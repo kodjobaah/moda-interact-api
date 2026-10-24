@@ -40,6 +40,34 @@ test("rejects forged browser identity, default checkbox, unverified Classic and 
   assert.equal(parseWooConsentEvent(blocks).checkoutAction.checkoutMode, "BLOCKS");
 });
 
+test("versioned disclosures preserve localized customer copy without text-content matching", () => {
+  const source = consentEvent();
+  const examples = [
+    { version: "moda.woo.whatsapp-recovery-marketing.v1", locale: "en-GB",
+      text: "Allow https://woo.example to send WhatsApp abandoned-basket marketing reminders." },
+    { version: "moda.woo.whatsapp-recovery-marketing.v2", locale: "de-DE",
+      text: "Ich stimme zu, Marketingnachrichten über WhatsApp zu erhalten." },
+    { version: "moda.woo.whatsapp-recovery-marketing.v3", locale: "fr-FR",
+      text: "Envoyez-moi des actualités, des rappels et des offres." },
+    { version: "moda.woo.whatsapp-recovery-marketing.v42", locale: "ja-JP",
+      text: "お買い物に関するお知らせを受け取ります。" },
+  ];
+  for (const example of examples) {
+    const grant = { ...source, disclosure: { ...source.disclosure!, ...example } };
+    const parsed = parseWooConsentEvent(grant);
+    assert.deepEqual(parsed, grant);
+    assert.equal(parsed.disclosure?.text, example.text);
+    assert.equal(parsed.disclosure?.version, example.version);
+    assert.equal(parsed.disclosure?.merchantSiteUrl, "https://woo.example");
+  }
+  for (const version of ["utility", "moda.woo.whatsapp-recovery-marketing.v0",
+    "moda.woo.whatsapp-recovery-marketing.v03", "moda.woo.whatsapp-recovery-marketing.v3-extra"]) {
+    rejected({ ...source, disclosure: { ...source.disclosure, version } });
+  }
+  rejected({ ...source, disclosure: { ...source.disclosure, text: "" } });
+  rejected({ ...source, disclosure: { ...source.disclosure, merchantSiteUrl: "" } });
+});
+
 test("a checkbox render/phone lookup is never consent evidence", () => {
   const source = consentEvent();
   rejected({ ...source, checkoutAction: { ...source.checkoutAction, userInitiated: undefined } });

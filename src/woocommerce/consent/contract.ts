@@ -1,6 +1,7 @@
 /** API-owned PHP -> hosted-API contract. It is never an indication of checkout recovery eligibility. */
 export const WOO_CONSENT_PATH = "/v1/woocommerce/whatsapp-consent";
 export const WOO_CONSENT_VERSION = "woo.whatsapp-consent.v1";
+/** Historical v1 fixture; newer disclosure revisions retain the same API schema. */
 export const WOO_CONSENT_DISCLOSURE = "moda.woo.whatsapp-recovery-marketing.v1";
 export const WOO_CONSENT_FIELD = "moda/whatsapp-checkout-recovery";
 export const MAX_WOO_CONSENT_BYTES = 8192;
@@ -27,9 +28,10 @@ export interface VerifiedWooCheckoutAction {
 }
 
 export interface WooConsentDisclosure {
-  version: typeof WOO_CONSENT_DISCLOSURE;
+  /** Versioned PHP-owned wording; the hosted API checks its shape, not its copy. */
+  version: string;
   locale: string;
-  /** Exact text rendered to the customer, including this merchant's canonical URL. */
+  /** Exact customer-visible text, retained as consent evidence without word matching. */
   text: string;
   merchantSiteUrl: string;
 }
@@ -110,10 +112,13 @@ export function parseWooConsentEvent(value: unknown): WooConsentEvent {
   let disclosure: WooConsentDisclosure | null = null;
   if (rawDisclosure !== null) {
     const d = exact(rawDisclosure, ["version", "locale", "text", "merchantSiteUrl"]);
-    if (d.version !== WOO_CONSENT_DISCLOSURE) throw invalid();
+    // Accept v1 and future numbered revisions, without requiring another
+    // API deployment when the Woo plugin changes its localized checkout copy.
+    const version = str(d.version, 128,
+      /^moda\.woo\.whatsapp-recovery-marketing\.v[1-9][0-9]*$/);
     const locale = str(d.locale, 64, /^[a-zA-Z]{2,8}(?:-[a-zA-Z0-9]{2,8}){0,4}$/);
     try { Intl.getCanonicalLocales(locale); } catch { throw invalid(); }
-    disclosure = { version: WOO_CONSENT_DISCLOSURE, locale,
+    disclosure = { version, locale,
       text: str(d.text, 4000), merchantSiteUrl: str(d.merchantSiteUrl, 512) };
   }
   if (decision === "GRANT" && disclosure === null) throw invalid();

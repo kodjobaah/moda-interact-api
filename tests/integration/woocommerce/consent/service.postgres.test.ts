@@ -78,10 +78,27 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
     const otherPrincipal = { shopId: other.id, installationId: otherInstalled.id,
       canonicalSiteUrl: other.domain, credentialVersion: otherInstalled.credentialVersion };
     const initial = captured(shop.domain, "grant-001", "GRANT", tick());
+    // Shop-language copy can be brief and need not embed the
+    // canonical site URL or an English word such as "WhatsApp".
+    initial.disclosure = { ...initial.disclosure!,
+      version: "moda.woo.whatsapp-recovery-marketing.v3", locale: "fr-FR",
+      text: "Envoyez-moi des actualités, des rappels et des offres." };
+    await assert.rejects(() => service.record(principal, { ...initial, eventId: "wrong-merchant-site",
+      disclosure: { ...initial.disclosure!, merchantSiteUrl: other.domain },
+    }), rejected("consent_disclosure_invalid"));
+    assert.equal((await evidence(shop.id)).length, 0);
     const first = await service.record(principal, initial);
     assert.deepEqual([first.status, first.consentRevision, first.decisionSequence], ["recorded", "1", "1"]);
     assert.deepEqual([...(await current(shop.id)).map(row => row.whatsappConsentDecision)], ["GRANTED"]);
     assert.equal((await evidence(shop.id)).length, 1);
+    const storedDisclosure = await db.$queryRaw<Array<{ disclosureText: string | null;
+      disclosureVersion: string | null; disclosureLocale: string | null }>>`
+      SELECT "disclosureText", "disclosureVersion", "disclosureLocale"
+      FROM "commerce"."WhatsAppConsentEvidence"
+      WHERE "shopId"=${shop.id} AND "eventId"=${initial.eventId}
+    `;
+    assert.deepEqual(storedDisclosure, [{ disclosureText: initial.disclosure!.text,
+      disclosureVersion: initial.disclosure!.version, disclosureLocale: "fr-FR" }]);
     assert.equal(await db.checkoutRecovery.count({ where: { shopId: shop.id } }), 0);
 
     // Lost ACK/repeated identical request, including simultaneous two-tab retries.
@@ -90,7 +107,7 @@ test("authenticated Woo consent: durable phone/evidence, ordering, STOP and tena
     ]);
     assert.deepEqual([repeatA.status, repeatB.status], ["duplicate", "duplicate"]);
     // Changing the disclosure (or phone) under the same eventId must fail,
-    // even though both versions would independently pass strict validation.
+    // even though both texts would independently pass shape validation.
     await assert.rejects(() => service.record(principal, {
       ...initial, disclosure: { ...initial.disclosure!,
         text: `Allow ${shop.domain} to send WhatsApp abandoned-checkout marketing messages.` },

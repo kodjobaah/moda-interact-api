@@ -140,7 +140,12 @@ components:
       required: [version, locale, text, merchantSiteUrl]
       properties:
         version:
-          const: moda.woo.whatsapp-recovery-marketing.v1
+          type: string
+          maxLength: 128
+          pattern: '^moda\.woo\.whatsapp-recovery-marketing\.v[1-9][0-9]*$'
+          description: >-
+            Numbered disclosure revision, independent of the v1 transport schema;
+            v1 and subsequent numbered revisions are accepted.
         locale:
           type: string
           minLength: 2
@@ -149,10 +154,16 @@ components:
           type: string
           minLength: 1
           maxLength: 4000
+          description: >-
+            Exact customer-visible, shop-localized opt-in text stored as evidence.
+            No English keyword, brand or URL is required inside the text itself.
         merchantSiteUrl:
           type: string
           minLength: 1
           maxLength: 512
+          description: >-
+            Separate merchant identity evidence; on GRANT must equal the
+            authenticated installation's canonical site URL.
     WooConsentResponse:
       type: object
       additionalProperties: false

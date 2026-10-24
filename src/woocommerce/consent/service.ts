@@ -148,9 +148,11 @@ export class WooConsentService {
             decisionSequence: previous.decisionSequence.toString() };
         }
         if (event.decision === "GRANT") {
-          if (!event.disclosure || event.disclosure.merchantSiteUrl !== principal.canonicalSiteUrl ||
-            !event.disclosure.text.includes(principal.canonicalSiteUrl) ||
-            !/WhatsApp/i.test(event.disclosure.text)) throw conflict("consent_disclosure_invalid");
+          // Merchant identity comes from the authenticated installation, not
+          // particular words or a URL embedded in the translated checkbox label.
+          if (!event.disclosure || event.disclosure.merchantSiteUrl !== principal.canonicalSiteUrl) {
+            throw conflict("consent_disclosure_invalid");
+          }
           await requireRecoveryFeature(tx, principal.shopId);
         }
         const now = this.now();
