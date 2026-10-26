@@ -1,12 +1,31 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
 /** API-owned disposable PostgreSQL proof. Never uses a shared development DB. */
 if (!existsSync("database/prisma/migrations/20261018092000_arch040_moderation_template_content_digest/migration.sql")) {
   process.stderr.write("ARCH-040-API-004 requires accepted DATABASE-005 in the API database submodule.\n");
+  process.exit(1);
+}
+// ARCH-047 requires accepted canonical migrations. The API's pinned database
+// submodule may be older, and isolated task worktrees need not have a sibling
+// database repository. Never copy migrations into API or use a shared database.
+// Prefer the API submodule when already updated; otherwise use the sibling
+// canonical repository or an explicitly supplied read-only schema path.
+const apiSchema = "database/prisma/schema.prisma";
+const acceptedMigration = "20261024133000_arch047_template_persistence";
+const configuredSchema = process.env.ARCH047_CANONICAL_DATABASE_SCHEMA;
+const candidates = configuredSchema
+  ? [configuredSchema]
+  : [apiSchema, "../moda-interact-database/prisma/schema.prisma"];
+const canonicalSchema = candidates.find((schema) => existsSync(schema) &&
+  existsSync(join(dirname(schema), "migrations", acceptedMigration, "migration.sql")));
+if (!canonicalSchema) {
+  process.stderr.write("ARCH-047-API-001 needs the accepted canonical ARCH-047 schema and migration. " +
+    "Update the API database submodule or set ARCH047_CANONICAL_DATABASE_SCHEMA to the approved schema.prisma path.\n");
   process.exit(1);
 }
 const salt = randomUUID().replaceAll("-", "");
@@ -41,12 +60,17 @@ try {
   exec("npx",["--no-install","prisma","generate","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
   phase = "deploying accepted database migrations";
   exec("npx",["--no-install","prisma","migrate","deploy","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
-  phase = "running HUMAN send, moderation and configured follow-up tests";
+  if (resolve(canonicalSchema) !== resolve(apiSchema)) {
+    phase = "deploying accepted canonical ARCH-047 migrations";
+    exec("npx",["--no-install","prisma","migrate","deploy","--schema",canonicalSchema],{env,stdio:"inherit"});
+  }
+  phase = "running HUMAN send and ARCH-047 linked template eligibility tests";
   exec("node",["--import","tsx","--test","--test-concurrency=1",
     "tests/integration/merchant/conversations/messages.service.postgres.test.ts",
     "tests/integration/merchant/conversations/messages.follow-up-policy.postgres.test.ts",
+    "tests/integration/merchant/conversations/messages.follow-up-catalogue.postgres.test.ts",
     "tests/integration/merchant/recoveries/detail/enriched-detail.postgres.test.ts"],{env,stdio:"inherit"});
-  process.stdout.write("PASS ARCH-040-API-002/004/005 disposable PostgreSQL read and admission suites\n");
+  process.stdout.write("PASS ARCH-040/ARCH-047 disposable PostgreSQL read and admission suites\n");
 } catch {
   process.stderr.write(`ARCH-040-API-004/API-005 PostgreSQL failed while ${phase}.\n`);
   process.exitCode = 1;

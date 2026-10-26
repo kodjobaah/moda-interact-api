@@ -6,6 +6,7 @@ import { digestSecret, randomSecret } from "../../../../src/auth/woo-installatio
 import { MerchantConversationControlService } from "../../../../src/merchant/conversations/control/service.js";
 import { MerchantConversationMessageAdmissionService } from "../../../../src/merchant/conversations/messages/admission.service.js";
 import { SendHttpError } from "../../../../src/merchant/conversations/messages/contract.js";
+import { createPublishedFollowUp, NAME, LANGUAGE, senderReader } from "./arch047-template-fixture.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const id = () => randomUUID();
@@ -13,8 +14,8 @@ const hour = 3600_000;
 const minute = 60_000;
 const template = () => ({
   kind: "RECOVERY_FOLLOW_UP_TEMPLATE" as const, expectedControlRevision: 1,
-  idempotencyKey: id(), templateName: "approved_recovery_follow_up",
-  templateLanguage: "en_GB", templateParameters: {},
+  idempotencyKey: id(), templateName: NAME,
+  templateLanguage: LANGUAGE, templateParameters: {},
 });
 const text = () => ({
   kind: "HUMAN_TEXT" as const, expectedControlRevision: 1,
@@ -44,13 +45,9 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
     } });
     const principal = { shopId: shop.id, canonicalSiteUrl: shop.domain,
       installationId: installation.id, credentialVersion: installation.credentialVersion };
-    await db.whatsAppTemplateVariant.create({ data: {
-      shopId: shop.id, providerAccountId: "woo-follow-up-provider", purpose: "checkout-recovery",
-      providerTemplateName: "approved_recovery_follow_up", providerLanguageCode: "en_GB",
-      languageTag: "en-GB", enabled: true, status: "APPROVED",
-    } });
+    await createPublishedFollowUp(db, shop.id, now);
     const control = new MerchantConversationControlService(db, () => now);
-    const admission = new MerchantConversationMessageAdmissionService(db, () => now);
+    const admission = new MerchantConversationMessageAdmissionService(db, () => now, senderReader);
 
     async function recovery(initialAt: Date | null, dueAt: Date | null, shopId = shop.id) {
       const checkout = await db.checkoutRecovery.create({ data: {
@@ -144,8 +141,12 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
     await denied(long.conversation.id, "follow_up_unavailable", "TEMPLATE");
     await noClaim(long.conversation.id, long.checkout.id);
     now = longDue; // Exactly at the saved due time, the closed-window send is admitted.
+    await db.$executeRaw`UPDATE "whatsapp"."WhatsAppTemplateMetaRegistration"
+      SET "lastReconciledAt"=${now} WHERE "wabaId"=${"123456789123"}`;
     assert.equal((await admission.admit(principal, long.conversation.id, template())).code, 202);
     now = new Date("2026-10-20T18:00:00.000Z");
+    await db.$executeRaw`UPDATE "whatsapp"."WhatsAppTemplateMetaRegistration"
+      SET "lastReconciledAt"=${now} WHERE "wabaId"=${"123456789123"}`;
 
     // Provider-verified inbound opens only the 24-hour free-text window.
     const initialAt = new Date(now.getTime() - 48 * hour);

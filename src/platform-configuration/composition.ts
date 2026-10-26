@@ -60,6 +60,8 @@ export function createApiPlatformConfigurationReader(input: {
       "merchant.knowledge.r2", "require_r2_configuration", () => service().requireMerchantKnowledgeR2Configuration()),
     requireCommerceConnectionSecurity: () => observedRead(
       "commerce.connectionKeys", "require_connection_security", () => service().requireCommerceConnectionSecurity()),
+    readMessagingSenderWabaId: () => observedRead(
+      "messaging.sender", "read_sender_waba", () => service().readMessagingSenderWabaId()),
     requireMetaWebhookSecrets: () => observedRead(
       "messaging.meta", "require_webhook_secrets", () => service().requireMetaWebhookSecrets()),
   });

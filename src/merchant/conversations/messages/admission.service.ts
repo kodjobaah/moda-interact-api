@@ -3,6 +3,8 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../../auth/woo-installation/principal.js";
 import { WooUnauthenticatedError } from "../../../auth/woo-installation/authenticator.js";
 import { humanPayloadDigest, SendHttpError, type HumanSendInput, type SendResponse } from "./contract.js";
+import { allowedFollowUpChoice, readEligibleFollowUpChoices,
+  type SenderWabaReader } from "./follow-up-catalogue.js";
 import { configuredFollowUpDue, latestVerifiedCustomerInbound,
   requireRecoveryExecution, windowOpen } from "./eligibility.js";
 
@@ -73,10 +75,19 @@ const goodRecipient = (recipient: string): boolean => /^\+?[1-9]\d{6,14}$/.test(
  */
 export class MerchantConversationMessageAdmissionService {
   constructor(private readonly database: Pick<PrismaClient,"$transaction">,
-    private readonly now: () => Date = () => new Date()) {}
+    private readonly now: () => Date = () => new Date(),
+    private readonly sender?: SenderWabaReader) {}
 
   async admit(principal: WooInstallationPrincipal, conversationId: string,
     input: HumanSendInput): Promise<{ code: 200 | 202; response: SendResponse }> {
+    // Validate even for direct service calls, before idempotent replay or writes.
+    // The route parser performs the same check on HTTP input.
+    if (input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" &&
+        !(Array.isArray(input.templateParameters) && input.templateParameters.length === 0) &&
+        !(input.templateParameters && typeof input.templateParameters === "object" &&
+          !Array.isArray(input.templateParameters) && Object.keys(input.templateParameters).length === 0)) {
+      throw new SendHttpError(400, "invalid_request");
+    }
     const digest = humanPayloadDigest(conversationId, input);
     try {
       return await this.database.$transaction(async (tx) => {
@@ -131,13 +142,12 @@ export class MerchantConversationMessageAdmissionService {
           // disabled or not-yet-due initial follow-up cannot claim sequence two.
           if (!configuredFollowUpDue(initial.followUpDueAt, now))
             throw new SendHttpError(409,"follow_up_unavailable");
-          // An exact, shop-owned, approved variant is the server allowlist.
-          // Reject ambiguous provider-account variants rather than guessing.
-          const approved = await tx.whatsAppTemplateVariant.findMany({ where: {
-            shopId: principal.shopId, purpose: "checkout-recovery", enabled: true, status: "APPROVED",
-            providerTemplateName: input.templateName, providerLanguageCode: input.templateLanguage,
-          }, select: { id: true, providerAccountId: true }, take: 3 });
-          if (approved.length !== 1) throw new SendHttpError(409,"template_not_allowed");
+          // Only the exact current published Moda assignment and approved,
+          // fresh, drift-free registration is a permitted merchant choice.
+          // No client-selected WABA or unverified positive offer is trusted.
+          const candidates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now);
+          if (!allowedFollowUpChoice(candidates, input.templateName, input.templateLanguage))
+            throw new SendHttpError(409,"template_not_allowed");
           // Create only the shared existing sequence=2. Shop/Conversation and
           // initial attempt remain locked while the claim and command commit.
           await tx.$executeRaw`INSERT INTO "commerce"."RecoveryOutreachAttempt"
@@ -175,8 +185,7 @@ export class MerchantConversationMessageAdmissionService {
           kind: input.kind, recipientSnapshot: recipient,
           ...(input.kind === "HUMAN_TEXT" ? { textBody: input.textBody }
             : { templateName: input.templateName, templateLanguageCode: input.templateLanguage,
-                templateParameters: Array.isArray(input.templateParameters)
-                  ? input.templateParameters as string[] : {},
+                templateParameters: [],
                 ...(attemptId ? { recoveryOutreachAttemptId: attemptId } : {}) }),
         } });
         return { code: 202 as const, response: commandReply(command) };
