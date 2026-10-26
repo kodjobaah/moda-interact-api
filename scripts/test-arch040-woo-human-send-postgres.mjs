@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { findAcceptedArch047Schema } from "./arch047-canonical-schema.mjs";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -10,22 +10,18 @@ if (!existsSync("database/prisma/migrations/20261018092000_arch040_moderation_te
   process.stderr.write("ARCH-040-API-004 requires accepted DATABASE-005 in the API database submodule.\n");
   process.exit(1);
 }
-// ARCH-047 requires accepted canonical migrations. The API's pinned database
-// submodule may be older, and isolated task worktrees need not have a sibling
-// database repository. Never copy migrations into API or use a shared database.
-// Prefer the API submodule when already updated; otherwise use the sibling
-// canonical repository or an explicitly supplied read-only schema path.
-const apiSchema = "database/prisma/schema.prisma";
-const acceptedMigration = "20261024133000_arch047_template_persistence";
-const configuredSchema = process.env.ARCH047_CANONICAL_DATABASE_SCHEMA;
-const candidates = configuredSchema
-  ? [configuredSchema]
-  : [apiSchema, "../moda-interact-database/prisma/schema.prisma"];
-const canonicalSchema = candidates.find((schema) => existsSync(schema) &&
-  existsSync(join(dirname(schema), "migrations", acceptedMigration, "migration.sql")));
+// Resolve from the API submodule, launcher's primary workspace, or Git's
+// primary API checkout. A wrong explicit override fails closed. All schemas
+// are read-only sources for this disposable PostgreSQL test harness.
+const canonicalSchema = findAcceptedArch047Schema({
+  cwd: process.cwd(),
+  explicitSchema: process.env.ARCH047_CANONICAL_DATABASE_SCHEMA,
+  workspaceRoot: process.env.MODA_WORKSPACE_ROOT,
+});
 if (!canonicalSchema) {
-  process.stderr.write("ARCH-047-API-001 needs the accepted canonical ARCH-047 schema and migration. " +
-    "Update the API database submodule or set ARCH047_CANONICAL_DATABASE_SCHEMA to the approved schema.prisma path.\n");
+  process.stderr.write("ARCH-047-API-001 needs an accepted canonical ARCH-047 schema and matching migrations. " +
+    "Check the primary workspace's moda-interact-database checkout, update the API database submodule, " +
+    "or set ARCH047_CANONICAL_DATABASE_SCHEMA to its approved schema.prisma path.\n");
   process.exit(1);
 }
 const salt = randomUUID().replaceAll("-", "");
@@ -58,12 +54,10 @@ try {
     WOO_INSTALLATION_TEST_DATABASE_URL: `postgresql://${user}:${password}@127.0.0.1:${port}/${database}` };
   phase = "generating Prisma Client";
   exec("npx",["--no-install","prisma","generate","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
-  phase = "deploying accepted database migrations";
-  exec("npx",["--no-install","prisma","migrate","deploy","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
-  if (resolve(canonicalSchema) !== resolve(apiSchema)) {
-    phase = "deploying accepted canonical ARCH-047 migrations";
-    exec("npx",["--no-install","prisma","migrate","deploy","--schema",canonicalSchema],{env,stdio:"inherit"});
-  }
+  // The canonical migrations are a superset of the API's pinned migrations;
+  // validate the common migration lineage before deploying the whole chain once.
+  phase = "deploying accepted canonical database migrations";
+  exec("npx",["--no-install","prisma","migrate","deploy","--schema",canonicalSchema],{env,stdio:"inherit"});
   phase = "running HUMAN send and ARCH-047 linked template eligibility tests";
   exec("node",["--import","tsx","--test","--test-concurrency=1",
     "tests/integration/merchant/conversations/messages.service.postgres.test.ts",

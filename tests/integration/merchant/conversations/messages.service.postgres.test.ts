@@ -10,9 +10,10 @@ import { MerchantConversationControlService } from "../../../../src/merchant/con
 import { MerchantConversationMessageAdmissionService } from "../../../../src/merchant/conversations/messages/admission.service.js";
 import { MerchantConversationSendStatusService } from "../../../../src/merchant/conversations/messages/status.service.js";
 import { SendHttpError, type HumanSendInput } from "../../../../src/merchant/conversations/messages/contract.js";
-import { createPublishedFollowUp, NAME, LANGUAGE, senderReader } from "./arch047-template-fixture.js";
+import { createPublishedFollowUp, NAME as BASE_NAME, LANGUAGE, senderReader } from "./arch047-template-fixture.js";
 import { createMerchantConversationMessageRoutes } from "../../../../src/merchant/conversations/messages/routes.js";
 
+const NAME = `${BASE_NAME}_service`;
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const sha = (v: string) => createHash("sha256").update(v, "utf8").digest("hex");
 const key = () => randomUUID();
@@ -85,7 +86,7 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
       trigger: "INITIAL", status: "WAITING_FOR_RESPONSE", configuredOfferMode: "NONE",
       outboundMessageId: outbound.id, sentAt: initialAt, followUpDueAt: new Date(initialAt.getTime() + 3600_000),
     } });
-    await createPublishedFollowUp(db, shop.id, clock);
+    await createPublishedFollowUp(db, shop.id, clock, { name: NAME });
     const control = new MerchantConversationControlService(db, () => clock);
     await control.change(principal, primary.conversation.id, { targetMode: "HUMAN", expectedControlRevision: 0 });
     const service = new MerchantConversationMessageAdmissionService(db, () => clock, senderReader);

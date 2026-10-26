@@ -6,8 +6,9 @@ import { digestSecret, randomSecret } from "../../../../src/auth/woo-installatio
 import { MerchantConversationControlService } from "../../../../src/merchant/conversations/control/service.js";
 import { MerchantConversationMessageAdmissionService } from "../../../../src/merchant/conversations/messages/admission.service.js";
 import { SendHttpError } from "../../../../src/merchant/conversations/messages/contract.js";
-import { createPublishedFollowUp, NAME, LANGUAGE, senderReader } from "./arch047-template-fixture.js";
+import { createPublishedFollowUp, NAME as BASE_NAME, LANGUAGE, senderReader } from "./arch047-template-fixture.js";
 
+const NAME = `${BASE_NAME}_policy`;
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const id = () => randomUUID();
 const hour = 3600_000;
@@ -45,7 +46,7 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
     } });
     const principal = { shopId: shop.id, canonicalSiteUrl: shop.domain,
       installationId: installation.id, credentialVersion: installation.credentialVersion };
-    await createPublishedFollowUp(db, shop.id, now);
+    await createPublishedFollowUp(db, shop.id, now, { name: NAME });
     const control = new MerchantConversationControlService(db, () => now);
     const admission = new MerchantConversationMessageAdmissionService(db, () => now, senderReader);
 
