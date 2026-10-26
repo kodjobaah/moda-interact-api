@@ -126,6 +126,23 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     const initialStatus = await statusService.read(principal, primary.conversation.id, fresh.response.commandId);
     assert.equal(initialStatus.moderationStatus, "moderation_pending");
     assert.equal(initialStatus.messageId, null);
+    // ARCH-040-DATABASE-007 requires HUMAN_TEXT moderation to follow the same
+    // claimed-lease, set-once prepared-content boundary used by Background.
+    const leaseToken = key();
+    const leaseNow = new Date();
+    await db.$executeRaw`UPDATE "whatsapp"."MerchantConversationSendCommand"
+      SET "state"='CLAIMED',"leaseToken"=${leaseToken},
+        "leaseExpiresAt"=${new Date(leaseNow.getTime() + 60_000)},
+        "dispatchAttemptCount"=1,"updatedAt"=${leaseNow}
+      WHERE "id"=${fresh.response.commandId} AND "state"='ACCEPTED'`;
+    const preparedEvidence = { schemaVersion: 1, outcome: "PASSTHROUGH",
+      reason: "NOT_CONFIGURED", bodySha256: sha(textInput.textBody) };
+    await db.$executeRaw`UPDATE "whatsapp"."MerchantConversationSendCommand"
+      SET "preparedTextBody"=${textInput.textBody},
+        "preparedWrapperEvidence"=${JSON.stringify(preparedEvidence)}::jsonb,
+        "preparedAt"=${leaseNow},"updatedAt"=${leaseNow}
+      WHERE "id"=${fresh.response.commandId} AND "state"='CLAIMED'
+        AND "leaseToken"=${leaseToken} AND "preparedTextBody" IS NULL`;
     const [assessment] = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT "whatsapp".arch040_moderation_create_or_reuse(${key()},${shop.id},${primary.conversation.id},
         'HUMAN_COMMAND'::"whatsapp"."ConversationModerationSubject",NULL,${fresh.response.commandId},
