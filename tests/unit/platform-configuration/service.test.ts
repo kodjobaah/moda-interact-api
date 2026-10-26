@@ -17,7 +17,7 @@ const hmac = randomBytes(32).toString("base64");
 const keyValues = { connectionKeysJson: JSON.stringify({ previous, current }), activeKeyId: "current", commandHmacKey: hmac };
 const validPolicy = adminR2PlaintextFixture;
 
-function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta" | "woocommerce.billing", version: number, payload: unknown) {
+function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta" | "messaging.sender" | "woocommerce.billing", version: number, payload: unknown) {
   const envelope = encryptCredential({ keyring: root, activeKeyId: "root-v1", plaintext: JSON.stringify(payload),
     aad: apiPlatformConfigurationAad(environment, key, version) });
   return { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM", wrappingKeyId: envelope.keyId,
@@ -136,8 +136,37 @@ test("Meta secret purpose: strict fields, AAD purpose binding and no generic sec
   await fails(service.requireMetaWebhookSecrets(), "DISABLED");
   assert.deepEqual(Object.keys(service).sort(), [
     "readMerchantKnowledgeUploadPolicy", "requireMerchantKnowledgeR2Configuration",
-    "requireCommerceConnectionSecurity", "requireMetaWebhookSecrets", "requireWooBillingCredentials",
+    "readMessagingSenderWabaId", "requireCommerceConnectionSecurity", "requireMetaWebhookSecrets", "requireWooBillingCredentials",
   ].sort());
+});
+
+test("sender WABA is purpose-scoped, fresh, sealed and exposes no provider credentials", async () => {
+  const { service, set, queries, database } = fixture();
+  const key = "messaging.sender";
+  const sender = { accessToken: "provider-token-must-not-escape", phoneNumberId: "1020304050",
+    businessAccountId: "123456789012345" };
+  set("test", key, sealed("test", key, 1, sender));
+  assert.equal(await service.readMessagingSenderWabaId(), sender.businessAccountId);
+  assert.ok(queries.every((query) => query === "test:messaging.sender"));
+  // Rotate the sealed record without caching the old business account.
+  set("test", key, sealed("test", key, 2, { ...sender, businessAccountId: "987654321012345" }), 2);
+  assert.equal(await service.readMessagingSenderWabaId(), "987654321012345");
+  for (const value of [
+    { ...sender, accessToken: "" }, { ...sender, phoneNumberId: "" },
+    { ...sender, businessAccountId: "not-a-waba" },
+    { ...sender, businessAccountId: "123" },
+    { ...sender, extraSecret: "not-allowed" },
+  ]) {
+    set("test", key, sealed("test", key, 3, value), 3);
+    await fails(service.readMessagingSenderWabaId(), "INVALID_VALUE");
+  }
+  set("test", key, sealed("test", "messaging.meta", 4, sender), 4);
+  await fails(service.readMessagingSenderWabaId(), "UNSEAL_FAILED");
+  set("test", key, { kind: "disabled", schemaVersion: 1 }, 5);
+  await fails(service.readMessagingSenderWabaId(), "DISABLED");
+  const noRoot = createApiPlatformConfigurationService({ database, environment: "test" });
+  set("test", key, sealed("test", key, 6, sender), 6);
+  await fails(noRoot.readMessagingSenderWabaId(), "UNSEAL_FAILED");
 });
 
 test("database errors, invalid deployment environment and malformed row fail closed", async () => {
@@ -201,4 +230,28 @@ test("R2: disabled/malformed envelopes, missing and wrong unseal root fail witho
       assert.equal(diagnostic.includes(secret), false);
     }
   }
+});
+
+test("sealed messaging sender reader returns only current trusted WABA identity", async () => {
+  const { service, set, queries } = fixture();
+  const key = "messaging.sender";
+  const sender = { accessToken: "private-provider-token", phoneNumberId: "123456789", businessAccountId: "123456789000" };
+  await fails(service.readMessagingSenderWabaId(), "MISSING");
+  set("production", key, sealed("production", key, 1, sender));
+  await fails(service.readMessagingSenderWabaId(), "MISSING");
+  set("test", key, sealed("test", key, 1, sender));
+  assert.equal(await service.readMessagingSenderWabaId(), "123456789000");
+  assert.ok(queries.every((q) => q === "test:messaging.sender"));
+  const rotated = { ...sender, businessAccountId: "987654321000" };
+  set("test", key, sealed("test", key, 2, rotated), 2);
+  assert.equal(await service.readMessagingSenderWabaId(), "987654321000");
+  for (const bad of [
+    { ...sender, businessAccountId: "" }, { ...sender, businessAccountId: "attacker" },
+    { ...sender, accessToken: "" }, { ...sender, extra: "secret" },
+  ]) {
+    set("test", key, sealed("test", key, 3, bad), 3);
+    await fails(service.readMessagingSenderWabaId(), "INVALID_VALUE");
+  }
+  set("test", key, sealed("test", key, 3, sender), 4);
+  await fails(service.readMessagingSenderWabaId(), "UNSEAL_FAILED");
 });

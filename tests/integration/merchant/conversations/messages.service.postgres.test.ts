@@ -10,8 +10,10 @@ import { MerchantConversationControlService } from "../../../../src/merchant/con
 import { MerchantConversationMessageAdmissionService } from "../../../../src/merchant/conversations/messages/admission.service.js";
 import { MerchantConversationSendStatusService } from "../../../../src/merchant/conversations/messages/status.service.js";
 import { SendHttpError, type HumanSendInput } from "../../../../src/merchant/conversations/messages/contract.js";
+import { createPublishedFollowUp, NAME as BASE_NAME, LANGUAGE, senderReader } from "./arch047-template-fixture.js";
 import { createMerchantConversationMessageRoutes } from "../../../../src/merchant/conversations/messages/routes.js";
 
+const NAME = `${BASE_NAME}_service`;
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const sha = (v: string) => createHash("sha256").update(v, "utf8").digest("hex");
 const key = () => randomUUID();
@@ -20,7 +22,7 @@ const baseText = (id: string, textBody = "Hello, how can I assist you?"): Extrac
 });
 const baseTemplate = (id: string): Extract<HumanSendInput, { kind: "RECOVERY_FOLLOW_UP_TEMPLATE" }> => ({
   kind: "RECOVERY_FOLLOW_UP_TEMPLATE", expectedControlRevision: 1,
-  idempotencyKey: id, templateName: "approved_recovery_follow_up", templateLanguage: "en_GB",
+  idempotencyKey: id, templateName: NAME, templateLanguage: LANGUAGE,
   templateParameters: {},
 });
 function reply() {
@@ -84,14 +86,10 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
       trigger: "INITIAL", status: "WAITING_FOR_RESPONSE", configuredOfferMode: "NONE",
       outboundMessageId: outbound.id, sentAt: initialAt, followUpDueAt: new Date(initialAt.getTime() + 3600_000),
     } });
-    await db.whatsAppTemplateVariant.create({ data: {
-      shopId: shop.id, providerAccountId: "test-provider-account", purpose: "checkout-recovery",
-      providerTemplateName: "approved_recovery_follow_up", providerLanguageCode: "en_GB",
-      languageTag: "en-GB", enabled: true, status: "APPROVED",
-    } });
+    await createPublishedFollowUp(db, shop.id, clock, { name: NAME });
     const control = new MerchantConversationControlService(db, () => clock);
     await control.change(principal, primary.conversation.id, { targetMode: "HUMAN", expectedControlRevision: 0 });
-    const service = new MerchantConversationMessageAdmissionService(db, () => clock);
+    const service = new MerchantConversationMessageAdmissionService(db, () => clock, senderReader);
     const statusService = new MerchantConversationSendStatusService(db);
     const nothing = { messages: await db.conversationMessage.count({ where: { conversationId: primary.conversation.id } }),
       usage: await db.usageEvent.count({ where: { shopId: shop.id } }) };
@@ -128,6 +126,23 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     const initialStatus = await statusService.read(principal, primary.conversation.id, fresh.response.commandId);
     assert.equal(initialStatus.moderationStatus, "moderation_pending");
     assert.equal(initialStatus.messageId, null);
+    // ARCH-040-DATABASE-007 requires HUMAN_TEXT moderation to follow the same
+    // claimed-lease, set-once prepared-content boundary used by Background.
+    const leaseToken = key();
+    const leaseNow = new Date();
+    await db.$executeRaw`UPDATE "whatsapp"."MerchantConversationSendCommand"
+      SET "state"='CLAIMED',"leaseToken"=${leaseToken},
+        "leaseExpiresAt"=${new Date(leaseNow.getTime() + 60_000)},
+        "dispatchAttemptCount"=1,"updatedAt"=${leaseNow}
+      WHERE "id"=${fresh.response.commandId} AND "state"='ACCEPTED'`;
+    const preparedEvidence = { schemaVersion: 1, outcome: "PASSTHROUGH",
+      reason: "NOT_CONFIGURED", bodySha256: sha(textInput.textBody) };
+    await db.$executeRaw`UPDATE "whatsapp"."MerchantConversationSendCommand"
+      SET "preparedTextBody"=${textInput.textBody},
+        "preparedWrapperEvidence"=${JSON.stringify(preparedEvidence)}::jsonb,
+        "preparedAt"=${leaseNow},"updatedAt"=${leaseNow}
+      WHERE "id"=${fresh.response.commandId} AND "state"='CLAIMED'
+        AND "leaseToken"=${leaseToken} AND "preparedTextBody" IS NULL`;
     const [assessment] = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT "whatsapp".arch040_moderation_create_or_reuse(${key()},${shop.id},${primary.conversation.id},
         'HUMAN_COMMAND'::"whatsapp"."ConversationModerationSubject",NULL,${fresh.response.commandId},
@@ -162,8 +177,11 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
       (e: unknown) => e instanceof SendHttpError && e.code === "service_window_closed");
 
     // A follow-up is allowed only when 24h elapsed after latest inbound.
+    const followUpClock = new Date(inboundAt.getTime() + 24 * 3600_000);
+    await db.$executeRaw`UPDATE "whatsapp"."WhatsAppTemplateMetaRegistration"
+      SET "lastReconciledAt"=${followUpClock} WHERE "wabaId"=${"123456789123"}`;
     const followupService = new MerchantConversationMessageAdmissionService(db,
-      () => new Date(inboundAt.getTime() + 24 * 3600_000));
+      () => followUpClock, senderReader);
     await assert.rejects(() => followupService.admit(principal, primary.conversation.id,
       { ...baseTemplate(key()), templateName: "unapproved_arbitrary" }),
       (e: unknown) => e instanceof SendHttpError && e.code === "template_not_allowed");
@@ -272,6 +290,7 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     const authenticate = new WooInstallationAuthenticator(db);
     const route = createMerchantConversationMessageRoutes({
       authenticator: authenticate, admission: service, status: statusService,
+      followUp: { async read() { return { schemaVersion: 1, templates: [] }; } } as never,
       logger: { info() {}, warn() {}, error() {} } as never,
     });
     const statusRequest = (credential: Uint8Array): IncomingMessage => {

@@ -32,6 +32,7 @@ import { MerchantConversationControlService } from "../merchant/conversations/co
 import { createMerchantConversationControlRoute } from "../merchant/conversations/control/routes.js";
 import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
 import { MerchantConversationMessageAdmissionService } from "../merchant/conversations/messages/admission.service.js";
+import { MerchantConversationFollowUpService } from "../merchant/conversations/messages/follow-up.service.js";
 import { MerchantConversationSendStatusService } from "../merchant/conversations/messages/status.service.js";
 import { createMerchantConversationMessageRoutes } from "../merchant/conversations/messages/routes.js";
 import { MerchantSupportReadService } from "../merchant/support/read.service.js";
@@ -68,8 +69,9 @@ export function createMerchantRoutes(options: {
       authenticator,logger,
     }),
     createMerchantConversationMessageRoutes({
-      admission: new MerchantConversationMessageAdmissionService(prisma),
+      admission: new MerchantConversationMessageAdmissionService(prisma, undefined, options.platformConfiguration),
       status: new MerchantConversationSendStatusService(prisma),
+      followUp: new MerchantConversationFollowUpService(prisma, options.platformConfiguration),
       authenticator, logger,
     }),
     createMerchantConversationControlRoute({

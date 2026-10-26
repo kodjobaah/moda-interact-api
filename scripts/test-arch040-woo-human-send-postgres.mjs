@@ -1,12 +1,27 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { findAcceptedArch047Schema } from "./arch047-canonical-schema.mjs";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
 /** API-owned disposable PostgreSQL proof. Never uses a shared development DB. */
 if (!existsSync("database/prisma/migrations/20261018092000_arch040_moderation_template_content_digest/migration.sql")) {
   process.stderr.write("ARCH-040-API-004 requires accepted DATABASE-005 in the API database submodule.\n");
+  process.exit(1);
+}
+// Resolve from the API submodule, launcher's primary workspace, or Git's
+// primary API checkout. A wrong explicit override fails closed. All schemas
+// are read-only sources for this disposable PostgreSQL test harness.
+const canonicalSchema = findAcceptedArch047Schema({
+  cwd: process.cwd(),
+  explicitSchema: process.env.ARCH047_CANONICAL_DATABASE_SCHEMA,
+  workspaceRoot: process.env.MODA_WORKSPACE_ROOT,
+});
+if (!canonicalSchema) {
+  process.stderr.write("ARCH-047-API-001 needs an accepted canonical ARCH-047 schema and matching migrations. " +
+    "Check the primary workspace's moda-interact-database checkout, update the API database submodule, " +
+    "or set ARCH047_CANONICAL_DATABASE_SCHEMA to its approved schema.prisma path.\n");
   process.exit(1);
 }
 const salt = randomUUID().replaceAll("-", "");
@@ -39,14 +54,17 @@ try {
     WOO_INSTALLATION_TEST_DATABASE_URL: `postgresql://${user}:${password}@127.0.0.1:${port}/${database}` };
   phase = "generating Prisma Client";
   exec("npx",["--no-install","prisma","generate","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
-  phase = "deploying accepted database migrations";
-  exec("npx",["--no-install","prisma","migrate","deploy","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
-  phase = "running HUMAN send, moderation and configured follow-up tests";
+  // The canonical migrations are a superset of the API's pinned migrations;
+  // validate the common migration lineage before deploying the whole chain once.
+  phase = "deploying accepted canonical database migrations";
+  exec("npx",["--no-install","prisma","migrate","deploy","--schema",canonicalSchema],{env,stdio:"inherit"});
+  phase = "running HUMAN send and ARCH-047 linked template eligibility tests";
   exec("node",["--import","tsx","--test","--test-concurrency=1",
     "tests/integration/merchant/conversations/messages.service.postgres.test.ts",
     "tests/integration/merchant/conversations/messages.follow-up-policy.postgres.test.ts",
+    "tests/integration/merchant/conversations/messages.follow-up-catalogue.postgres.test.ts",
     "tests/integration/merchant/recoveries/detail/enriched-detail.postgres.test.ts"],{env,stdio:"inherit"});
-  process.stdout.write("PASS ARCH-040-API-002/004/005 disposable PostgreSQL read and admission suites\n");
+  process.stdout.write("PASS ARCH-040/ARCH-047 disposable PostgreSQL read and admission suites\n");
 } catch {
   process.stderr.write(`ARCH-040-API-004/API-005 PostgreSQL failed while ${phase}.\n`);
   process.exitCode = 1;

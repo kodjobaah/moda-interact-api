@@ -3,9 +3,10 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../../auth/woo-installation/authenticator.js";
 import { sendNoStoreJson } from "../../../http/response.js";
 import { readHumanSendRequest } from "./request.js";
-import { POST_MESSAGE_PATH, SEND_STATUS_PATH, SendHttpError,
+import { POST_MESSAGE_PATH, SEND_STATUS_PATH, FOLLOW_UP_TEMPLATES_PATH, SendHttpError,
   isSendResponse, isSendStatusResponse, validIdentifier } from "./contract.js";
 import type { MerchantConversationMessageAdmissionService } from "./admission.service.js";
+import type { MerchantConversationFollowUpService } from "./follow-up.service.js";
 import type { MerchantConversationSendStatusService } from "./status.service.js";
 
 function headerHasBody(request: IncomingMessage): boolean {
@@ -23,6 +24,7 @@ export function createMerchantConversationMessageRoutes(input: {
   authenticator: WooInstallationAuthenticator;
   admission: MerchantConversationMessageAdmissionService;
   status: MerchantConversationSendStatusService;
+  followUp: MerchantConversationFollowUpService;
   logger: StructuredLogger;
 }) {
   return {
@@ -30,7 +32,8 @@ export function createMerchantConversationMessageRoutes(input: {
       const url = new URL(request.url ?? "/", "http://localhost");
       const post = url.pathname.match(POST_MESSAGE_PATH);
       const get = url.pathname.match(SEND_STATUS_PATH);
-      if (!(request.method === "POST" && post) && !(request.method === "GET" && get)) return false;
+      const catalogue = url.pathname.match(FOLLOW_UP_TEMPLATES_PATH);
+      if (!(request.method === "POST" && post) && !(request.method === "GET" && (get || catalogue))) return false;
       try {
         const principal = await input.authenticator.authenticate(request);
         if (url.search || (request.url?.length ?? 0) > 2048) throw new SendHttpError(400,"invalid_request");
@@ -46,6 +49,17 @@ export function createMerchantConversationMessageRoutes(input: {
             kind: result.response.kind, replay: result.code === 200,
           });
           sendNoStoreJson(response, result.code, result.response);
+        } else if (catalogue) {
+          const conversationId = catalogue[1]!;
+          if (!validIdentifier(conversationId) || headerHasBody(request))
+            throw new SendHttpError(400,"invalid_request");
+          const result = await input.followUp.read(principal, conversationId);
+          if (result.schemaVersion !== 1 || !Array.isArray(result.templates) || result.templates.length > 30 ||
+              result.templates.some((choice) => typeof choice.name !== "string" ||
+                !/^[a-z][a-z0-9_]{0,254}$/.test(choice.name) ||
+                typeof choice.language !== "string" || !/^[a-z]{2,3}(?:_[A-Z]{2})?$/.test(choice.language)))
+            throw new Error("invalid bounded follow-up catalogue response");
+          sendNoStoreJson(response, 200, result);
         } else if (get) {
           const conversationId = get[1]!; const commandId = get[2]!;
           if (!validIdentifier(conversationId) || !validIdentifier(commandId) || headerHasBody(request))
