@@ -64,13 +64,14 @@ async function projection(tx: Tx, principal: WooInstallationPrincipal, now: Date
   const override = await tx.shopRecoveryPolicyOverride.findUnique({ where: { shopId: principal.shopId } });
   const active = override && (override.expiresAt === null || override.expiresAt > now) ? override : null;
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     revision: settings?.updatedAt.toISOString() ?? "UNCONFIGURED",
     merchant: policyValues(settings ?? UNCONFIGURED_RECOVERY_POLICY, "MERCHANT"),
     effective: policyValues(active ?? settings ?? UNCONFIGURED_RECOVERY_POLICY, active ? "ADMIN_OVERRIDE" : "MERCHANT"),
     source: active ? "ADMIN_OVERRIDE" : "MERCHANT",
     overrideActive: Boolean(active),
     offerSelectionAvailable: false,
+    notifyOnInitialRecoveryOutreach: settings?.notifyOnInitialRecoveryOutreach ?? false,
   };
 }
 
@@ -79,7 +80,8 @@ function matches(settings: Settings | null, update: RecoveryPolicyUpdate): boole
   return current.recoveryOfferMode === "NONE" && current.fixedShopifyDiscountId === null &&
     current.recoveryDelayMinutes === update.recoveryDelayMinutes &&
     current.followUpEnabled === update.followUpEnabled &&
-    (current.followUpEnabled ? current.followUpDelayMinutes : null) === update.followUpDelayMinutes;
+    (current.followUpEnabled ? current.followUpDelayMinutes : null) === update.followUpDelayMinutes &&
+    (settings?.notifyOnInitialRecoveryOutreach ?? false) === update.notifyOnInitialRecoveryOutreach;
 }
 
 /** Merchant writes serialise on the same Shop row as Shopify policy writes; admin overrides remain untouched. */
@@ -110,7 +112,8 @@ export class MerchantRecoveryPolicyService {
         const time = this.now();
         const updatedAt = new Date(Math.max(time.getTime(), (current?.updatedAt.getTime() ?? 0) + 1));
         const data = { recoveryDelayMinutes: input.recoveryDelayMinutes, followUpEnabled: input.followUpEnabled,
-          followUpDelayMinutes: input.followUpDelayMinutes, updatedAt };
+          followUpDelayMinutes: input.followUpDelayMinutes,
+          notifyOnInitialRecoveryOutreach: input.notifyOnInitialRecoveryOutreach, updatedAt };
         const next = current
           ? await tx.shopSettings.update({ where: { shopId: principal.shopId }, data })
           : await tx.shopSettings.create({ data: { shopId: principal.shopId, onboardingCompleted: shop.onboardingCompleted,

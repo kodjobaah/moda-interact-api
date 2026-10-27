@@ -3,12 +3,15 @@ import test from "node:test";
 import { isRecoveryPolicyResponse, parseRecoveryPolicyUpdate, RecoveryPolicyRequestError } from "../../../../src/merchant/recovery-policy/contract.js";
 
 const valid = { expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 30,
-  followUpEnabled: false, followUpDelayMinutes: null };
+  followUpEnabled: false, followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: false };
 
-test("only four approved merchant fields may be written (no shopId, offer or override)", () => {
+test("only five approved merchant fields may be written (no shopId, offer or override)", () => {
   assert.deepEqual(parseRecoveryPolicyUpdate(valid), valid);
   for (const property of ["shopId", "recoveryOfferMode", "fixedShopifyDiscountId", "source", "reason", "platformAdminId"]) {
     assert.throws(() => parseRecoveryPolicyUpdate({ ...valid, [property]: "foreign" }), RecoveryPolicyRequestError);
+  }
+  for (const notifyOnInitialRecoveryOutreach of [undefined, "true", 1, null]) {
+    assert.throws(() => parseRecoveryPolicyUpdate({ ...valid, notifyOnInitialRecoveryOutreach }), RecoveryPolicyRequestError);
   }
 });
 
@@ -34,12 +37,15 @@ test("revision must be the previous canonical revision or UNCONFIGURED", () => {
 
 test("response validates exact DTO without leaking stored Shopify identifiers", () => {
   const base = { recoveryDelayMinutes: 30, recoveryOfferMode: "NONE", followUpEnabled: false, followUpDelayMinutes: null };
-  const good = { schemaVersion: 1, revision: "UNCONFIGURED", merchant: base, effective: base,
-    source: "MERCHANT", overrideActive: false, offerSelectionAvailable: false };
+  const good = { schemaVersion: 2, revision: "UNCONFIGURED", merchant: base, effective: base,
+    source: "MERCHANT", overrideActive: false, offerSelectionAvailable: false,
+    notifyOnInitialRecoveryOutreach: false };
   assert.equal(isRecoveryPolicyResponse(good), true);
   assert.equal(isRecoveryPolicyResponse({ ...good, secret: "private" }), false);
   assert.equal(isRecoveryPolicyResponse({ ...good, merchant: { ...base, fixedShopifyDiscountId: "private" } }), false);
   assert.equal(isRecoveryPolicyResponse({ ...good, source: "ADMIN_OVERRIDE" }), false);
+  assert.equal(isRecoveryPolicyResponse({ ...good, schemaVersion: 1 }), false);
+  assert.equal(isRecoveryPolicyResponse({ ...good, notifyOnInitialRecoveryOutreach: "false" }), false);
   assert.equal(isRecoveryPolicyResponse({ ...good, merchant: { ...base, recoveryDelayMinutes: 10081 } }), false);
   assert.equal(isRecoveryPolicyResponse({ ...good, effective: { ...base, recoveryOfferMode: "FIXED" }, source: "ADMIN_OVERRIDE", overrideActive: true }), true);
 });

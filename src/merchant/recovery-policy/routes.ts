@@ -27,22 +27,49 @@ export function createMerchantRecoveryPolicyRoute(options: {
         const result = request.method === "PUT"
           ? await service.update(principal, await readRecoveryPolicyUpdate(request))
           : await service.read(principal);
-        if (!isRecoveryPolicyResponse(result)) throw new RecoveryPolicyIntegrityError();
-        logger.info("merchant.recovery_policy.access", { shopId: principal.shopId,
-          operation: request.method === "PUT" ? "update" : "read", source: result.source,
-          durationMs: Math.max(0, now() - started) });
+        if (!isRecoveryPolicyResponse(result)) {
+          const error = new RecoveryPolicyIntegrityError();
+          try {
+            logger.error("merchant.recovery_policy.access.failed", {
+              operation: request.method === "PUT" ? "update" : "read",
+              reason: "internal",
+              error,
+            });
+          } catch {
+            // Logging must not change the sanitized response for an invalid service result.
+          }
+          sendJson(response, 500, { error: "internal_error" });
+          return true;
+        }
+        try {
+          logger.info("merchant.recovery_policy.access", { shopId: principal.shopId,
+            operation: request.method === "PUT" ? "update" : "read", source: result.source,
+            durationMs: Math.max(0, now() - started) });
+        } catch {
+          // Logging must not change the successful API response.
+        }
         sendJson(response, 200, result);
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) sendJson(response, 401, { error: "unauthorized" });
         else if (error instanceof RecoveryPolicyRequestError) sendJson(response, error.status, { error: error.code });
         else if (error instanceof RecoveryPolicyConflictError) {
-          logger.warn("merchant.recovery_policy.update.failed", { reason: error.code });
+          try { logger.warn("merchant.recovery_policy.update.failed", { reason: error.code }); }
+          catch { /* Preserve the established conflict response when logging fails. */ }
           sendJson(response, 409, { error: error.code });
         } else if (error instanceof RecoveryPolicyIntegrityError) {
-          logger.warn("merchant.recovery_policy.access.failed", { reason: "integrity" });
+          try { logger.warn("merchant.recovery_policy.access.failed", { reason: "integrity" }); }
+          catch { /* Preserve the established integrity response when logging fails. */ }
           sendJson(response, 409, { error: "recovery_policy_integrity_invalid" });
         } else {
-          logger.error("merchant.recovery_policy.access.failed", { reason: "internal" });
+          try {
+            logger.error("merchant.recovery_policy.access.failed", {
+              operation: request.method === "PUT" ? "update" : "read",
+              reason: "internal",
+              error,
+            });
+          } catch {
+            // Keep logging sink failures from changing the existing HTTP 500 mapping.
+          }
           sendJson(response, 500, { error: "internal_error" });
         }
       }

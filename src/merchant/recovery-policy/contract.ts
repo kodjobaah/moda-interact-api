@@ -11,13 +11,14 @@ export interface RecoveryPolicyValues {
 }
 
 export interface MerchantRecoveryPolicyResponse {
-  schemaVersion: 1;
+  schemaVersion: 2;
   revision: string;
   merchant: RecoveryPolicyValues;
   effective: RecoveryPolicyValues;
   source: "MERCHANT" | "ADMIN_OVERRIDE";
   overrideActive: boolean;
   offerSelectionAvailable: false;
+  notifyOnInitialRecoveryOutreach: boolean;
 }
 
 export interface RecoveryPolicyUpdate {
@@ -25,6 +26,7 @@ export interface RecoveryPolicyUpdate {
   recoveryDelayMinutes: number;
   followUpEnabled: boolean;
   followUpDelayMinutes: number | null;
+  notifyOnInitialRecoveryOutreach: boolean;
 }
 
 export class RecoveryPolicyRequestError extends Error {
@@ -52,13 +54,15 @@ export function parseRecoveryPolicyUpdate(input: unknown): RecoveryPolicyUpdate 
   if (!input || typeof input !== "object" || Array.isArray(input)) throw new RecoveryPolicyRequestError(400, "invalid_request");
   const body = input as Record<string, unknown>;
   const keys = Object.keys(body).sort();
-  if (keys.join(",") !== ["expectedRevision", "followUpDelayMinutes", "followUpEnabled", "recoveryDelayMinutes"].sort().join(",")) {
+  if (keys.join(",") !== ["expectedRevision", "followUpDelayMinutes", "followUpEnabled",
+    "notifyOnInitialRecoveryOutreach", "recoveryDelayMinutes"].sort().join(",")) {
     throw new RecoveryPolicyRequestError(400, "invalid_request");
   }
   if (typeof body.expectedRevision !== "string" || !revisionPattern.test(body.expectedRevision) ||
     (body.expectedRevision !== "UNCONFIGURED" && !Number.isFinite(Date.parse(body.expectedRevision))) ||
     !Number.isInteger(body.recoveryDelayMinutes) || (body.recoveryDelayMinutes as number) < 0 ||
-    (body.recoveryDelayMinutes as number) > 10080 || typeof body.followUpEnabled !== "boolean") {
+    (body.recoveryDelayMinutes as number) > 10080 || typeof body.followUpEnabled !== "boolean" ||
+    typeof body.notifyOnInitialRecoveryOutreach !== "boolean") {
     throw new RecoveryPolicyRequestError(400, "invalid_request");
   }
   if (body.followUpEnabled) {
@@ -72,6 +76,7 @@ export function parseRecoveryPolicyUpdate(input: unknown): RecoveryPolicyUpdate 
     recoveryDelayMinutes: body.recoveryDelayMinutes as number,
     followUpEnabled: body.followUpEnabled,
     followUpDelayMinutes: body.followUpDelayMinutes as number | null,
+    notifyOnInitialRecoveryOutreach: body.notifyOnInitialRecoveryOutreach,
   };
 }
 
@@ -81,10 +86,12 @@ export function isRecoveryPolicyResponse(input: unknown): input is MerchantRecov
   const value = input as Record<string, unknown>;
   const exact = (object: Record<string, unknown>, names: string[]) =>
     Object.keys(object).sort().join(",") === names.sort().join(",");
-  if (!exact(value, ["schemaVersion", "revision", "merchant", "effective", "source", "overrideActive", "offerSelectionAvailable"]) ||
-    value.schemaVersion !== 1 || typeof value.revision !== "string" || !revisionPattern.test(value.revision) ||
+  if (!exact(value, ["schemaVersion", "revision", "merchant", "effective", "source", "overrideActive",
+    "offerSelectionAvailable", "notifyOnInitialRecoveryOutreach"]) ||
+    value.schemaVersion !== 2 || typeof value.revision !== "string" || !revisionPattern.test(value.revision) ||
     !["MERCHANT", "ADMIN_OVERRIDE"].includes(String(value.source)) || typeof value.overrideActive !== "boolean" ||
-    value.overrideActive !== (value.source === "ADMIN_OVERRIDE") || value.offerSelectionAvailable !== false) return false;
+    value.overrideActive !== (value.source === "ADMIN_OVERRIDE") || value.offerSelectionAvailable !== false ||
+    typeof value.notifyOnInitialRecoveryOutreach !== "boolean") return false;
   for (const field of ["merchant", "effective"] as const) {
     const item = value[field];
     if (!item || typeof item !== "object" || Array.isArray(item)) return false;
