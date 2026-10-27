@@ -13,6 +13,7 @@ test("API-002 exposes only strictly bounded Woo installation read/update and no 
       properties: Record<string, unknown> }> };
   };
   assert.equal(spec.openapi, "3.1.0");
+  assert.equal((spec as unknown as { info: { version: string } }).info.version, "2.0.0");
   assert.deepEqual(Object.keys(spec.paths), [MERCHANT_RECOVERY_POLICY_ROUTE_PATH]);
   const path = spec.paths[MERCHANT_RECOVERY_POLICY_ROUTE_PATH];
   assert.ok(path);
@@ -32,10 +33,14 @@ test("API-002 exposes only strictly bounded Woo installation read/update and no 
   const update = spec.components.schemas.RecoveryPolicyUpdate;
   assert.ok(update);
   assert.equal(update.additionalProperties, false);
-  assert.deepEqual([...update.required].sort(), ["expectedRevision", "recoveryDelayMinutes", "followUpEnabled", "followUpDelayMinutes"].sort());
+  assert.deepEqual([...update.required].sort(), ["expectedRevision", "recoveryDelayMinutes", "followUpEnabled",
+    "followUpDelayMinutes", "notifyOnInitialRecoveryOutreach"].sort());
   assert.deepEqual(Object.keys(update.properties).sort(), [...update.required].sort());
   const response = spec.components.schemas.RecoveryPolicyResponse;
   assert.ok(response);
+  assert.deepEqual([...response.required].sort(), ["schemaVersion", "revision", "merchant", "effective", "source",
+    "overrideActive", "offerSelectionAvailable", "notifyOnInitialRecoveryOutreach"].sort());
+  assert.deepEqual(Object.keys(response.properties).sort(), [...response.required].sort());
   assert.equal(response.additionalProperties, false);
   assert.equal(spec.components.schemas.RecoveryPolicyValues?.additionalProperties, false);
   const publicInterface = JSON.stringify(spec);
