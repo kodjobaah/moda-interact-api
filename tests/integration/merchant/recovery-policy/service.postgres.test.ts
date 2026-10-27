@@ -34,10 +34,13 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
     const initial = await service.read(principal);
     assert.equal(initial.revision, "UNCONFIGURED");
     assert.equal(initial.merchant.recoveryDelayMinutes, 30);
+    assert.equal(initial.schemaVersion, 2);
+    assert.equal(initial.notifyOnInitialRecoveryOutreach, false);
     assert.equal(await db.shopSettings.count({ where: { shopId: persistedShopId } }), 0);
 
     const first = await service.update(principal, {
-      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true, followUpDelayMinutes: 50,
+      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,
+      followUpDelayMinutes: 50, notifyOnInitialRecoveryOutreach: true,
     });
     const row = await db.shopSettings.findUniqueOrThrow({ where: { shopId: persistedShopId } });
     assert.equal(row.recoveryOfferMode, "NONE");
@@ -45,20 +48,28 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
     assert.equal(row.recoveryDelayMinutes, 45);
     assert.equal(row.followUpEnabled, true);
     assert.equal(row.followUpDelayMinutes, 50);
+    assert.equal(row.notifyOnInitialRecoveryOutreach, true);
     assert.equal(first.merchant.recoveryDelayMinutes, 45);
     assert.equal(first.effective.recoveryDelayMinutes, 45);
+    assert.equal(first.notifyOnInitialRecoveryOutreach, true);
 
     // The identical request is an idempotent replay and must not create a new revision.
     const replay = await service.update(principal, {
-      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true, followUpDelayMinutes: 50,
+      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,
+      followUpDelayMinutes: 50, notifyOnInitialRecoveryOutreach: true,
     });
     assert.equal(replay.revision, first.revision);
 
+    await assert.rejects(() => service.update(principal, {
+      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,
+      followUpDelayMinutes: 50, notifyOnInitialRecoveryOutreach: false,
+    }), (error: unknown) => error instanceof RecoveryPolicyConflictError && error.code === "recovery_policy_conflict");
+
     const [one, two] = await Promise.allSettled([
       service.update(principal, { expectedRevision: first.revision, recoveryDelayMinutes: 55,
-        followUpEnabled: true, followUpDelayMinutes: 90 }),
+        followUpEnabled: true, followUpDelayMinutes: 90, notifyOnInitialRecoveryOutreach: true }),
       service.update(principal, { expectedRevision: first.revision, recoveryDelayMinutes: 65,
-        followUpEnabled: true, followUpDelayMinutes: 120 }),
+        followUpEnabled: true, followUpDelayMinutes: 120, notifyOnInitialRecoveryOutreach: true }),
     ]);
     assert.equal([one, two].filter((result) => result.status === "fulfilled").length, 1);
     const loser = [one, two].find((result) => result.status === "rejected");
@@ -78,19 +89,30 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
     assert.equal(override.effective.recoveryDelayMinutes, 90);
     assert.notEqual(override.merchant.recoveryDelayMinutes, 90);
     const changed = await service.update(principal, { expectedRevision: override.revision, recoveryDelayMinutes: 20,
-      followUpEnabled: false, followUpDelayMinutes: null });
+      followUpEnabled: false, followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: false });
     assert.equal(changed.merchant.recoveryDelayMinutes, 20);
     assert.equal(changed.effective.recoveryDelayMinutes, 90);
+    assert.equal(changed.notifyOnInitialRecoveryOutreach, false);
     assert.equal(await db.shopRecoveryPolicyOverride.count({ where: { shopId: persistedShopId } }), 1);
+
+    const notificationOnly = await service.update(principal, {
+      expectedRevision: changed.revision, recoveryDelayMinutes: 20, followUpEnabled: false,
+      followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: true,
+    });
+    assert.equal(notificationOnly.notifyOnInitialRecoveryOutreach, true);
+    assert.notEqual(notificationOnly.revision, changed.revision);
+    assert.equal(notificationOnly.effective.recoveryDelayMinutes, 90);
 
     await db.shopRecoveryPolicyOverride.update({ where: { shopId: persistedShopId }, data: { expiresAt: new Date("2000-01-01T00:00:00.000Z") } });
     const expired = await service.read(principal);
     assert.equal(expired.source, "MERCHANT");
     assert.equal(expired.effective.recoveryDelayMinutes, 20);
+    assert.equal(expired.notifyOnInitialRecoveryOutreach, true);
 
     await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { credentialVersion: { increment: 1 } } });
     await assert.rejects(() => service.update(principal, { expectedRevision: expired.revision,
-      recoveryDelayMinutes: 20, followUpEnabled: false, followUpDelayMinutes: null }), RecoveryPolicyIntegrityError);
+      recoveryDelayMinutes: 20, followUpEnabled: false, followUpDelayMinutes: null,
+      notifyOnInitialRecoveryOutreach: true }), RecoveryPolicyIntegrityError);
     await assert.rejects(() => service.read({ ...principal, shopId: randomUUID() }), RecoveryPolicyIntegrityError);
   } finally {
     if (shopId) await db.shop.delete({ where: { id: shopId } });

@@ -9,10 +9,10 @@ const principal: WooInstallationPrincipal = {
   shopId: "shop_woo", installationId: "woo_1", canonicalSiteUrl: "https://woo.example", credentialVersion: 2,
 };
 const defaultPolicy: Policy = { recoveryDelayMinutes: 30, recoveryOfferMode: "NONE", fixedShopifyDiscountId: null,
-  followUpEnabled: false, followUpDelayMinutes: null };
+  followUpEnabled: false, followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: false };
 const savedAt = new Date("2026-10-11T10:00:00.000Z");
 const update: RecoveryPolicyUpdate = { expectedRevision: savedAt.toISOString(), recoveryDelayMinutes: 45,
-  followUpEnabled: true, followUpDelayMinutes: 50 };
+  followUpEnabled: true, followUpDelayMinutes: 50, notifyOnInitialRecoveryOutreach: true };
 
 type Policy = {
   recoveryDelayMinutes: number;
@@ -20,6 +20,7 @@ type Policy = {
   fixedShopifyDiscountId: string | null;
   followUpEnabled: boolean;
   followUpDelayMinutes: number | null;
+  notifyOnInitialRecoveryOutreach: boolean;
 };
 type Stored = Policy & { updatedAt: Date; createdAt: Date; onboardingCompleted: boolean; shopId: string; id: string };
 type Override = Policy & { expiresAt: Date | null };
@@ -87,6 +88,8 @@ test("missing settings GET uses the Background defaults without creating rows", 
   assert.equal(result.revision, "UNCONFIGURED");
   assert.deepEqual(result.merchant, { recoveryDelayMinutes: 30, recoveryOfferMode: "NONE", followUpEnabled: false, followUpDelayMinutes: null });
   assert.deepEqual(result.merchant, result.effective);
+  assert.equal(result.schemaVersion, 2);
+  assert.equal(result.notifyOnInitialRecoveryOutreach, false);
   assert.equal(result.offerSelectionAvailable, false);
   assert.equal(state.current(), null);
   assert.equal(state.calls.includes("settings-create"), false);
@@ -97,9 +100,11 @@ test("first update creates only merchant settings with NONE and no Shopify disco
   const result = await state.service.update(principal, { ...update, expectedRevision: "UNCONFIGURED" });
   assert.equal(result.merchant.recoveryDelayMinutes, 45);
   assert.equal(result.merchant.followUpDelayMinutes, 50);
+  assert.equal(result.notifyOnInitialRecoveryOutreach, true);
   assert.equal(result.revision, now.toISOString());
   assert.equal(state.current()?.recoveryOfferMode, "NONE");
   assert.equal(state.current()?.fixedShopifyDiscountId, null);
+  assert.equal(state.current()?.notifyOnInitialRecoveryOutreach, true);
   assert.deepEqual(state.calls.filter((call) => call.startsWith("settings-")), ["settings-create"]);
   assert.ok(state.calls.indexOf("shop-lock") < state.calls.indexOf("settings-create"));
 });
@@ -113,6 +118,33 @@ test("merchant revision advances, reads reflect saved policy, and identical repl
   assert.deepEqual(replay, first);
   assert.deepEqual(after, first);
   assert.equal(state.calls.filter((call) => call === "settings-update").length, 1);
+});
+
+test("notification-only saves advance revision, persist ON/OFF, and replay as a no-op", async () => {
+  const state = fixture();
+  const on = await state.service.update(principal, {
+    expectedRevision: savedAt.toISOString(), recoveryDelayMinutes: 30, followUpEnabled: false,
+    followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: true,
+  });
+  assert.equal(on.notifyOnInitialRecoveryOutreach, true);
+  assert.equal(on.revision, now.toISOString());
+  assert.equal(state.current()?.notifyOnInitialRecoveryOutreach, true);
+
+  const onReplay = await state.service.update(principal, {
+    expectedRevision: savedAt.toISOString(), recoveryDelayMinutes: 30, followUpEnabled: false,
+    followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: true,
+  });
+  assert.deepEqual(onReplay, on);
+  assert.equal(state.calls.filter((call) => call === "settings-update").length, 1);
+
+  const off = await state.service.update(principal, {
+    expectedRevision: on.revision, recoveryDelayMinutes: 30, followUpEnabled: false,
+    followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: false,
+  });
+  assert.equal(off.notifyOnInitialRecoveryOutreach, false);
+  assert.equal(off.revision, "2026-10-12T10:00:00.001Z");
+  assert.equal(state.current()?.notifyOnInitialRecoveryOutreach, false);
+  assert.equal(state.calls.filter((call) => call === "settings-update").length, 2);
 });
 
 test("concurrent stale updates cannot lose a write and monotonic revisions survive rapid edits", async () => {
@@ -139,10 +171,12 @@ test("active and expired platform-admin overrides only change effective values",
   assert.equal(result.effective.recoveryDelayMinutes, 90);
   assert.equal(result.source, "ADMIN_OVERRIDE");
   assert.equal(result.overrideActive, true);
+  assert.equal(result.notifyOnInitialRecoveryOutreach, true);
   const expired = fixture({ override: { ...override, expiresAt: now } });
   const after = await expired.service.read(principal);
   assert.equal(after.source, "MERCHANT");
   assert.equal(after.effective.recoveryDelayMinutes, 30);
+  assert.equal(after.notifyOnInitialRecoveryOutreach, false);
 });
 
 test("GET does not conceal historical provider-specific mode; PUT fails closed", async () => {
@@ -169,7 +203,8 @@ test("wrong provider, revoked credentials, stale installation and inactive Shop 
 test("no-op UNCONFIGURED replay avoids manufacturing a row", async () => {
   const state = fixture({ settings: null });
   const result = await state.service.update(principal, { ...update, expectedRevision: "UNCONFIGURED",
-    recoveryDelayMinutes: 30, followUpEnabled: false, followUpDelayMinutes: null });
+    recoveryDelayMinutes: 30, followUpEnabled: false, followUpDelayMinutes: null,
+    notifyOnInitialRecoveryOutreach: false });
   assert.equal(result.revision, "UNCONFIGURED");
   assert.equal(state.current(), null);
 });
