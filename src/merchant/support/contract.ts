@@ -21,9 +21,9 @@ export type SupportMessage = {
   state: "PROCESSING" | "AVAILABLE" | "FAILED"; originalBody: string;
   displayBody: string | null; isTranslated: boolean; sourceLanguageTag: string;
   displayLanguageTag: string | null; systemCode: string | null; systemVersion: string | null;
-  createdAt: string; readAt: string | null;
+  createdAt: string; readAt: string | null; checkoutRecoveryId: string | null;
 };
-export type SupportPage = { schemaVersion: 1; page: number; pageSize: SupportPageSize;
+export type SupportPage = { schemaVersion: 2; page: number; pageSize: SupportPageSize;
   total: number; totalPages: number; unread: number; items: SupportMessage[] };
 export type SupportComposeResponse = { schemaVersion: 1; messageId: string; translationId: string | null };
 export type SupportReadResponse = { schemaVersion: 1; messageId: string; readAt: string };
@@ -51,7 +51,7 @@ function validItem(v: unknown): v is SupportMessage {
   if (!v || Array.isArray(v) || typeof v !== "object") return false;
   const m = v as Record<string, unknown>;
   return exact(m,["id","kind","state","originalBody","displayBody","isTranslated","sourceLanguageTag",
-    "displayLanguageTag","systemCode","systemVersion","createdAt","readAt"]) &&
+    "displayLanguageTag","systemCode","systemVersion","createdAt","readAt","checkoutRecoveryId"]) &&
     typeof m.id === "string" && validSupportMessageId(m.id) &&
     ["MERCHANT","ADMINISTRATIVE","SYSTEM"].includes(String(m.kind)) &&
     ["PROCESSING","AVAILABLE","FAILED"].includes(String(m.state)) &&
@@ -60,13 +60,14 @@ function validItem(v: unknown): v is SupportMessage {
     (m.displayLanguageTag === null || typeof m.displayLanguageTag === "string") &&
     (m.systemCode === null || typeof m.systemCode === "string") &&
     (m.systemVersion === null || typeof m.systemVersion === "string") &&
-    isDate(m.createdAt) && (m.readAt === null || isDate(m.readAt));
+    isDate(m.createdAt) && (m.readAt === null || isDate(m.readAt)) &&
+    (m.checkoutRecoveryId === null || typeof m.checkoutRecoveryId === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(m.checkoutRecoveryId));
 }
 export function validSupportPage(v: unknown): v is SupportPage {
   if (!v || typeof v !== "object" || Array.isArray(v)) return false;
   const x = v as Record<string, unknown>;
   return exact(x,["schemaVersion","page","pageSize","total","totalPages","unread","items"]) &&
-    x.schemaVersion === 1 && Number.isSafeInteger(x.page) && Number(x.page) > 0 &&
+    x.schemaVersion === 2 && Number.isSafeInteger(x.page) && Number(x.page) > 0 &&
     [10,25,50].includes(Number(x.pageSize)) && Number.isSafeInteger(x.total) && Number(x.total) >= 0 &&
     Number.isSafeInteger(x.totalPages) && Number(x.totalPages) >= 1 &&
     Number.isSafeInteger(x.unread) && Number(x.unread) >= 0 &&

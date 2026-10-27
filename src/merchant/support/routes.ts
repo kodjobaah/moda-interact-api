@@ -59,7 +59,11 @@ export function createMerchantSupportRoutes(options:{authenticator:WooInstallati
         logger.warn("merchant.support.conflict",{operation,reason:"idempotency_conflict"});
         sendNoStoreJson(response,409,{error:"idempotency_conflict"});
       } else {
-        logger.error("merchant.support.failed",{operation,reason:error instanceof SupportIntegrityError ? "integrity" : "internal"});
+        // Keep a failing logging sink from changing the sanitized HTTP failure semantics.
+        try {
+          logger.error("merchant.support.failed",{operation,
+            reason:error instanceof SupportIntegrityError ? "integrity" : "internal",error});
+        } catch { /* shared logging is best-effort; preserve the original 500 response */ }
         sendNoStoreJson(response,500,{error:"internal_error"});
       }
     }
