@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Moda Interact WooCommerce Merchant Support API
-  version: 1.0.0
+  version: 2.0.0
   description: >-
     Existing Support thread exposed only to authenticated WooCommerce installations.
     WordPress REST is responsible for browser merchant-admin authorisation;
@@ -115,7 +115,7 @@ components:
       additionalProperties: false
       required: [schemaVersion,page,pageSize,total,totalPages,unread,items]
       properties:
-        schemaVersion: { type: integer, const: 1 }
+        schemaVersion: { type: integer, const: 2 }
         page: { type: integer, minimum: 1, maximum: 999999 }
         pageSize: { type: integer, enum: [10,25,50] }
         total: { type: integer, minimum: 0 }
@@ -129,7 +129,7 @@ components:
       type: object
       additionalProperties: false
       required: [id,kind,state,originalBody,displayBody,isTranslated,sourceLanguageTag,
-        displayLanguageTag,systemCode,systemVersion,createdAt,readAt]
+        displayLanguageTag,systemCode,systemVersion,createdAt,readAt,checkoutRecoveryId]
       properties:
         id: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
         kind: { type: string, enum: [MERCHANT,ADMINISTRATIVE,SYSTEM] }
@@ -143,6 +143,7 @@ components:
         systemVersion: { type: [string, 'null'], maxLength: 64 }
         createdAt: { type: string, format: date-time }
         readAt: { type: [string, 'null'], format: date-time }
+        checkoutRecoveryId: { type: [string, 'null'], pattern: '^[A-Za-z0-9_-]{1,128}$' }
     Error:
       type: object
       additionalProperties: false

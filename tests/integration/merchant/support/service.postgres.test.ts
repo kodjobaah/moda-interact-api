@@ -63,11 +63,42 @@ test("ARCH-035-API-020: concurrent replay, tenant isolation, Support visibility,
       originalBody:"processing",sourceLanguageTag:"en-GB",displayLanguageTag:"fr-FR"}});
     const failed=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"ADMINISTRATIVE",state:"FAILED",
       originalBody:"failed",sourceLanguageTag:"en-GB",displayLanguageTag:"fr-FR"}});
-    const messages=await read.read(a,{page:1,pageSize:10});
-    assert.equal(messages.total,4);assert.equal(messages.unread,2);
+    const recovery=await db.checkoutRecovery.create({data:{shopId:aShop.id,checkoutToken:`recovery-${id}`,
+      lastExternalActivityAt:new Date()}});
+    const otherShopRecovery=await db.checkoutRecovery.create({data:{shopId:bShop.id,checkoutToken:`recovery-other-${id}`,
+      lastExternalActivityAt:new Date()}});
+    const recoveryNotice=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"SYSTEM",state:"AVAILABLE",
+      originalBody:"Initial outreach started",sourceLanguageTag:"en-GB",systemCode:"RECOVERY_INITIAL_OUTREACH_SENT",
+      systemVersion:"1",checkoutRecoveryId:recovery.id,readAt:new Date()}});
+    const crossShopNotice=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"SYSTEM",state:"AVAILABLE",
+      originalBody:"Forged recovery target",sourceLanguageTag:"en-GB",systemCode:"RECOVERY_INITIAL_OUTREACH_SENT",
+      systemVersion:"1",checkoutRecoveryId:otherShopRecovery.id,readAt:new Date()}});
+    const wrongVersionNotice=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"SYSTEM",state:"AVAILABLE",
+      originalBody:"Unexpected version",sourceLanguageTag:"en-GB",systemCode:"RECOVERY_INITIAL_OUTREACH_SENT",
+      systemVersion:"2",checkoutRecoveryId:recovery.id,readAt:new Date()}});
+    const malformedCodeNotice=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"SYSTEM",state:"AVAILABLE",
+      originalBody:"Malformed code",sourceLanguageTag:"en-GB",systemCode:"RECOVERY_INITIAL_OUTREACH_SENT!",
+      systemVersion:"1",checkoutRecoveryId:recovery.id,readAt:new Date()}});
+    const missingLinkNotice=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"SYSTEM",state:"AVAILABLE",
+      originalBody:"Missing recovery",sourceLanguageTag:"en-GB",systemCode:"RECOVERY_INITIAL_OUTREACH_SENT",
+      systemVersion:"1",checkoutRecoveryId:null,readAt:new Date()}});
+    const unrelatedLinkedMessage=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"ADMINISTRATIVE",state:"AVAILABLE",
+      originalBody:"Unrelated linked message",sourceLanguageTag:"en-GB",systemCode:"RECOVERY_INITIAL_OUTREACH_SENT",
+      systemVersion:"1",checkoutRecoveryId:recovery.id,readAt:new Date()}});
+    const deletedRecovery=await db.checkoutRecovery.create({data:{shopId:aShop.id,checkoutToken:`recovery-deleted-${id}`,
+      lastExternalActivityAt:new Date()}});
+    const deletedRecoveryNotice=await db.merchantSupportMessage.create({data:{threadId:thread.id,kind:"SYSTEM",state:"AVAILABLE",
+      originalBody:"Deleted recovery",sourceLanguageTag:"en-GB",systemCode:"RECOVERY_INITIAL_OUTREACH_SENT",
+      systemVersion:"1",checkoutRecoveryId:deletedRecovery.id,readAt:new Date()}});
+    await db.checkoutRecovery.delete({where:{id:deletedRecovery.id}});
+    const messages=await read.read(a,{page:1,pageSize:25});
+    assert.equal(messages.schemaVersion,2);assert.equal(messages.total,11);assert.equal(messages.unread,2);
     assert.equal(messages.items.find(x=>x.id===admin.id)?.displayBody,null);
     assert.equal(messages.items.find(x=>x.id===admin.id)?.originalBody,"");
     assert.equal(messages.items.find(x=>x.id===system.id)?.systemCode,"WHATSAPP_CONSENT_REQUIRED");
+    assert.equal(messages.items.find(x=>x.id===recoveryNotice.id)?.checkoutRecoveryId,recovery.id);
+    for(const notice of [crossShopNotice,wrongVersionNotice,malformedCodeNotice,missingLinkNotice,unrelatedLinkedMessage,deletedRecoveryNotice])
+      assert.equal(messages.items.find(x=>x.id===notice.id)?.checkoutRecoveryId,null);
     assert.equal(messages.items.some(x=>[pending.id,failed.id].includes(x.id)),false);
     await db.merchantMessageTranslation.create({data:{messageId:admin.id,direction:"ADMIN_TO_MERCHANT",
       sourceLanguageTag:"en-GB",targetLanguageTag:"fr-FR",status:"AVAILABLE",translatedBody:"Réponse"}});
