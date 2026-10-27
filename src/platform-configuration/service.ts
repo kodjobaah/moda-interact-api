@@ -40,6 +40,8 @@ export interface ApiPlatformConfigurationReader {
   requireMerchantKnowledgeR2Configuration(): Promise<MerchantKnowledgeR2Configuration>;
   requireCommerceConnectionSecurity(): Promise<CommerceConnectionSecurity>;
   requireMetaWebhookSecrets(): Promise<MetaWebhookSecrets>;
+  /** Current trusted sender WABA only, never the provider token or phone ID. */
+  readMessagingSenderWabaId(): Promise<string>;
 }
 
 export interface ApiPlatformConfigurationDependencies {
@@ -116,6 +118,18 @@ export function createApiPlatformConfigurationService(
       } catch {
         return configurationError(key, "INVALID_VALUE");
       }
+    },
+    async readMessagingSenderWabaId(): Promise<string> {
+      const key: ApiConfigurationKey = "messaging.sender";
+      const value = await readSecret(key);
+      if (!isClosedObject(value, ["accessToken", "phoneNumberId", "businessAccountId"]) ||
+          !requiredSecret(value.accessToken, 1, 8192) ||
+          !requiredSecret(value.phoneNumberId, 1, 191) ||
+          typeof value.businessAccountId !== "string" ||
+          !/^\d{4,32}$/.test(value.businessAccountId)) {
+        configurationError(key, "INVALID_VALUE");
+      }
+      return value.businessAccountId as string;
     },
     async requireMetaWebhookSecrets(): Promise<MetaWebhookSecrets> {
       const key: ApiConfigurationKey = "messaging.meta";

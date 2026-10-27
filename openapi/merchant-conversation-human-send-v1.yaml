@@ -9,6 +9,30 @@ info:
 servers:
   - url: /
 paths:
+  /v1/merchant/conversations/{conversationId}/follow-up-templates:
+    get:
+      operationId: listWooHumanFollowUpTemplates
+      summary: Read current eligible Moda-authored post-window follow-up templates
+      description: >-
+        Installation-authenticated shop/conversation read, no provider calls. Returns
+        an empty array when the HUMAN sequence-two follow-up is not due/available,
+        when the current sender WABA is unknown, or when no fresh approved,
+        linked, published NO_OFFER assignment is safe. Positive-offer variants
+        require a separately verified customer-specific offer and are not exposed.
+        The response is a preview only; Background performs final send admission.
+      security: [{InstallationBearer: [], InstallationId: []}]
+      parameters:
+        - $ref: '#/components/parameters/ConversationId'
+      responses:
+        '200':
+          description: No-store bounded choices, zero to 30 entries
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FollowUpTemplates' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '500': { description: Bounded internal_error }
   /v1/merchant/conversations/{conversationId}/messages:
     post:
       operationId: acceptWooHumanConversationMessage
@@ -120,11 +144,27 @@ components:
         templateParameters:
           oneOf:
             - type: array
-              maxItems: 16
-              items: { type: string, maxLength: 256 }
+              maxItems: 0
+              items: { type: string }
             - type: object
               maxProperties: 0
               additionalProperties: false
+    FollowUpTemplates:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, templates]
+      properties:
+        schemaVersion: { type: integer, const: 1 }
+        templates:
+          type: array
+          maxItems: 30
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, language]
+            properties:
+              name: { type: string, pattern: '^[a-z][a-z0-9_]{0,254}$' }
+              language: { type: string, pattern: '^[a-z]{2,3}(_[A-Z]{2})?$' }
     Admission:
       type: object
       additionalProperties: false

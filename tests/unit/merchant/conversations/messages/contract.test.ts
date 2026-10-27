@@ -31,6 +31,8 @@ test("invalid content, foreign fields, dynamic media and ambiguous JSON fail bef
     { ...followUp, textBody: "hello" }, { ...followUp, templateName: "Not Allowed!" },
     { ...followUp, templateParameters: { image: "https://example.invalid" } },
     { ...followUp, templateParameters: Array(17).fill("a") },
+    { ...followUp, templateParameters: ["injected"] },
+    { ...followUp, templateParameters: { body: "secret" } },
   ];
   for (const input of malformed) assert.throws(() => parseHumanSendInput(input), SendHttpError);
   for (const input of [
@@ -45,13 +47,10 @@ test("wire text and template parameters preserve the accepted C0/DEL boundary", 
   for (let code = 0; code <= 0x7f; code++) {
     const candidate = `a${String.fromCharCode(code)}b`;
     const forbidden = code === 0x7f || (code < 0x20 && ![0x09, 0x0a, 0x0d].includes(code));
-    for (const body of [
-      { ...text, textBody: candidate },
-      { ...followUp, templateParameters: [candidate] },
-    ]) {
-      if (forbidden) assert.throws(() => parseHumanSendInput(body), SendHttpError);
-      else assert.doesNotThrow(() => parseHumanSendInput(body));
-    }
+    const body = { ...text, textBody: candidate };
+    if (forbidden) assert.throws(() => parseHumanSendInput(body), SendHttpError);
+    else assert.doesNotThrow(() => parseHumanSendInput(body));
+    assert.throws(() => parseHumanSendInput({ ...followUp, templateParameters: [candidate] }), SendHttpError);
   }
 });
 test("verified customer window is [inbound, inbound + 24h), with exact expiry", () => {

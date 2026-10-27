@@ -24,6 +24,7 @@ const directRunners = [
 const delegatedRunners = [
   { npmScript: "test:arch040-conversation-control:postgres", runner: "scripts/test-arch040-woo-conversation-control-postgres.mjs" },
   { npmScript: "test:arch040-human-send:postgres", runner: "scripts/test-arch040-woo-human-send-postgres.mjs" },
+  { npmScript: "test:arch046-woo-consent:postgres", runner: "scripts/test-arch046-woo-consent-postgres.mjs" },
   { npmScript: "test:arch035-woo-activity:redis", runner: "scripts/test-arch035-woo-activity-redis.mjs" },
 ] as const;
 

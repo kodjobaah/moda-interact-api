@@ -34,6 +34,8 @@ function instance(failure?: Error) {
       return principal; } } as never,
     admission: { async admit() { calls.push("admit"); if (failure) throw failure; return { code: 202, response: accepted }; } } as never,
     status: { async read() { calls.push("read"); if (failure) throw failure; return status; } } as never,
+    followUp: { async read() { calls.push("choices"); if (failure) throw failure;
+      return { schemaVersion: 1, templates: [{ name: "moda_follow_up_no_offer", language: "en" }] }; } } as never,
     logger: { info() {}, warn() {}, error() {} } as never,
   });
   return { route, calls };
@@ -78,5 +80,30 @@ test("rejection/error envelopes are safe, bounded and do not reveal connection s
   ]) {
     const t = instance(), out = output(); await t.route.handle(bad, out.response);
     assert.ok([400,413].includes(out.result().statusCode)); assert.deepEqual(t.calls, ["auth"]);
+  }
+});
+
+test("follow-up GET shares installation authentication, no-store and bounded read validation", async () => {
+  const path = "/v1/merchant/conversations/conv-1/follow-up-templates";
+  const ok = instance(), result = output();
+  assert.equal(await ok.route.handle(request("GET", "", path), result.response), true);
+  assert.equal(result.result().statusCode, 200);
+  assert.deepEqual(result.result().data, { schemaVersion: 1,
+    templates: [{ name: "moda_follow_up_no_offer", language: "en" }] });
+  assert.equal(result.result().headers["cache-control"], "no-store");
+  assert.deepEqual(ok.calls, ["auth", "choices"]);
+  const unauthorized = instance(new WooUnauthenticatedError()), out = output();
+  await unauthorized.route.handle(request("GET", "", path), out.response);
+  assert.equal(out.result().statusCode, 401);
+  assert.deepEqual(unauthorized.calls, ["auth"]);
+  for (const r of [
+    request("GET", "", path + "?shop=other"),
+    request("GET", "", path, ["content-length", "2"]),
+    request("GET", "", "/v1/merchant/conversations/%2F/follow-up-templates"),
+  ]) {
+    const service = instance(), outputValue = output();
+    await service.route.handle(r, outputValue.response);
+    assert.equal(outputValue.result().statusCode, 400);
+    assert.deepEqual(service.calls, ["auth"]);
   }
 });

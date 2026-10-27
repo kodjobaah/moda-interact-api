@@ -3,6 +3,7 @@ export type ApiConfigurationKey =
   | "merchant.knowledge.r2"
   | "commerce.connectionKeys"
   | "messaging.meta"
+  | "messaging.sender"
   | "woocommerce.billing";
 
 export type ApiConfigurationErrorCode =

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 /** API-local v1 wire schema; command/credit persistence remains owned by DATABASE-001. */
 export const POST_MESSAGE_PATH = /^\/v1\/merchant\/conversations\/([^/]+)\/messages$/;
+export const FOLLOW_UP_TEMPLATES_PATH = /^\/v1\/merchant\/conversations\/([^/]+)\/follow-up-templates$/;
 export const SEND_STATUS_PATH = /^\/v1\/merchant\/conversations\/([^/]+)\/send-commands\/([^/]+)$/;
 export const MAX_SEND_BODY_BYTES = 6_144;
 const idPattern = /^[A-Za-z0-9_-]{1,191}$/;
@@ -49,14 +50,14 @@ export function validIdentifier(input: string): boolean { return idPattern.test(
 const validRevision = (n: unknown): n is number => Number.isSafeInteger(n) && (n as number) >= 0 && (n as number) <= 2147483647;
 const fail = (): never => { throw new SendHttpError(400, "invalid_request"); };
 
-/** Only template body strings are supported by BG002's sender. {} is an empty-parameter synonym.
- * Reject nonempty object maps/images/buttons rather than silently dropping them at dispatch.
+/** No client-supplied provider variables. BG007 binds trusted checkout and
+ * offer values after its final entitlement, consent and provider-state checks.
+ * {} is retained as the empty legacy-wire synonym; nonempty shapes fail.
  */
 function parameters(input: unknown): readonly string[] | Readonly<Record<string, never>> {
+  if (Array.isArray(input) && input.length === 0) return [];
   if (input && typeof input === "object" && !Array.isArray(input) && Object.keys(input).length === 0) return {};
-  if (!Array.isArray(input) || input.length > 16 || !input.every((v) =>
-    typeof v === "string" && v.length <= 256 && !hasForbiddenControls(v))) return fail();
-  return input as string[];
+  return fail();
 }
 export function parseHumanSendInput(raw: unknown): HumanSendInput {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return fail();
