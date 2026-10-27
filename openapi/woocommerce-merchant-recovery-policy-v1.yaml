@@ -1,12 +1,12 @@
 openapi: 3.1.0
 info:
   title: Moda WooCommerce Merchant Recovery Policy
-  version: 1.0.0
+  version: 2.0.0
 paths:
   /v1/merchant/recovery-policy:
     get:
       operationId: readMerchantRecoveryPolicy
-      summary: Read saved merchant policy and its effective values
+      summary: Read saved merchant policy, effective values, and initial outreach notice preference
       description: Installation-scoped read; honours active platform-admin overrides. No merchant-provided shop ID.
       security:
         - installationBearer: []
@@ -25,11 +25,12 @@ paths:
           description: Unexpected error
     put:
       operationId: updateMerchantRecoveryPolicy
-      summary: Save recovery-start delay and no-response follow-up only
+      summary: Save recovery policy and initial outreach notice preference
       description: >-
         Requires exactly the saved merchant revision; stale writes return 409.
         Identical replays are read-only. Woo coupon modes cannot be selected or
-        changed through this endpoint. Overrides remain platform-admin-owned.
+        changed through this endpoint. Overrides remain platform-admin-owned; the
+        notice preference is independent of admin recovery-policy overrides.
       security:
         - installationBearer: []
       parameters:
@@ -94,11 +95,11 @@ components:
     RecoveryPolicyResponse:
       type: object
       additionalProperties: false
-      required: [schemaVersion, revision, merchant, effective, source, overrideActive, offerSelectionAvailable]
+      required: [schemaVersion, revision, merchant, effective, source, overrideActive, offerSelectionAvailable, notifyOnInitialRecoveryOutreach]
       properties:
         schemaVersion:
           type: integer
-          const: 1
+          const: 2
         revision:
           type: string
           description: ISO update timestamp or UNCONFIGURED (no ShopSettings record)
@@ -114,10 +115,12 @@ components:
         offerSelectionAvailable:
           type: boolean
           const: false
+        notifyOnInitialRecoveryOutreach:
+          type: boolean
     RecoveryPolicyUpdate:
       type: object
       additionalProperties: false
-      required: [expectedRevision, recoveryDelayMinutes, followUpEnabled, followUpDelayMinutes]
+      required: [expectedRevision, recoveryDelayMinutes, followUpEnabled, followUpDelayMinutes, notifyOnInitialRecoveryOutreach]
       properties:
         expectedRevision:
           type: string
@@ -137,6 +140,8 @@ components:
               maximum: 10080
             - type: 'null'
           description: Required when enabled; must be null when disabled
+        notifyOnInitialRecoveryOutreach:
+          type: boolean
   responses:
     PolicySuccess:
       description: Current merchant policy and effective policy after override precedence
