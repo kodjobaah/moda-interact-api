@@ -52,7 +52,7 @@ export function createUploadR2(config: UploadR2Configuration, injectedClient?: S
         if (url.protocol !== "https:" || url.origin !== new URL(config.endpoint).origin || url.username || url.password ||
           url.hash || !url.searchParams.has("X-Amz-Signature")) throw unavailable();
         return signed;
-      } catch { throw unavailable(); }
+      } catch (error) { throw unavailable(error); }
     },
     async verify({ key, contentType, sha256, sizeBytes }, timings) {
       if (sizeBytes < 1 || sizeBytes > config.maxUploadBytes) throw integrity();
@@ -84,7 +84,7 @@ export function createUploadR2(config: UploadR2Configuration, injectedClient?: S
         });
       } catch (error) {
         if (error instanceof Error && error.message === "knowledge_upload_integrity_mismatch") throw error;
-        throw unavailable();
+        throw unavailable(error);
       }
     },
   };

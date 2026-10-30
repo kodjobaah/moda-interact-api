@@ -44,6 +44,10 @@ export function createMerchantBootstrapRoute(options: {
         } else {
           logger.error("merchant.bootstrap.read.failed", {
             reason: error instanceof MerchantBootstrapIntegrityError ? "integrity" : "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
           });
           sendError(response, 500, "internal_error");
         }

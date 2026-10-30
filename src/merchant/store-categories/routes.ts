@@ -37,10 +37,20 @@ export function createStoreCategoriesRoute(options: {
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) sendJson(response, 401, { error: "unauthorized" });
         else if (error instanceof StoreCategoryReadError) {
-          if (error.code !== "invalid_locale") logger.warn("merchant.store_categories.read.failed", { reason: error.code });
+          if (error.code !== "invalid_locale") logger.warn("merchant.store_categories.read.failed", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response, error.code === "invalid_locale" ? 400 : 409, { error: error.code });
         } else {
-          logger.error("merchant.store_categories.read.failed", { reason: "internal" });
+          logger.error("merchant.store_categories.read.failed", { reason: "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response, 500, { error: "internal_error" });
         }
       }

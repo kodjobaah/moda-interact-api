@@ -81,10 +81,20 @@ export function createMerchantRecoveryDetailRoute(options: {
         if (error instanceof WooUnauthenticatedError) send(response, 401, { error: "unauthorized" });
         else if (error instanceof InvalidRecoveryDetailRequest) send(response, 400, { error: "invalid_request" });
         else if (error instanceof RecoveryDetailIntegrityError) {
-          logger.warn("merchant.recoveries.detail.failed", { reason: "integrity", section });
+          logger.warn("merchant.recoveries.detail.failed", { reason: "integrity", section,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           send(response, 409, { error: "recovery_detail_integrity_invalid" });
         } else {
-          logger.error("merchant.recoveries.detail.failed", { reason: "internal", section });
+          logger.error("merchant.recoveries.detail.failed", { reason: "internal", section,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           send(response, 500, { error: "internal_error" });
         }
       }

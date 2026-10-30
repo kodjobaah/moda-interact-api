@@ -163,10 +163,13 @@ test("unexpected read/write failures log the original error and safe operation c
     assert.equal(out.result().status, 500);
     assert.deepEqual(out.result().body, { error: "internal_error" });
     assert.equal(out.result().headers["cache-control"], "no-store");
-    assert.deepEqual(t.logs.filter((entry) => entry.level === "error").map(({ event, fields }) => ({ event, fields })), [{
-      event: "merchant.recovery_policy.access.failed",
-      fields: { operation: method === "PUT" ? "update" : "read", reason: "internal", error },
-    }]);
+    const failure = t.logs.find((entry) => entry.level === "error");
+    assert.equal(failure?.event, "merchant.recovery_policy.access.failed");
+    assert.equal(failure?.fields.operation, method === "PUT" ? "update" : "read");
+    assert.equal(failure?.fields.reason, "internal");
+    assert.equal(failure?.fields.error, error);
+    assert.equal(failure?.fields.errorMessage, "database persistence failed");
+    assert.match(String(failure?.fields.errorStack), /database persistence failed/);
   }
 });
 

@@ -1,4 +1,4 @@
-/** Safe errors: never include a database payload, envelope, cause or key material. */
+/** Keep a generic public error message while retaining the original cause for server-side diagnostics. */
 export type ApiConfigurationKey =
   | "merchant.knowledge.r2"
   | "commerce.connectionKeys"
@@ -17,12 +17,12 @@ export type ApiConfigurationErrorCode =
   | "UNSEAL_FAILED";
 
 export class ApiPlatformConfigurationError extends Error {
-  constructor(readonly key: ApiConfigurationKey, readonly code: ApiConfigurationErrorCode) {
-    super(`API platform configuration ${key}: ${code}`);
+  constructor(readonly key: ApiConfigurationKey, readonly code: ApiConfigurationErrorCode, cause?: unknown) {
+    super(`API platform configuration ${key}: ${code}`, { cause });
     this.name = "ApiPlatformConfigurationError";
   }
 }
 
-export function configurationError(key: ApiConfigurationKey, code: ApiConfigurationErrorCode): never {
-  throw new ApiPlatformConfigurationError(key, code);
+export function configurationError(key: ApiConfigurationKey, code: ApiConfigurationErrorCode, cause?: unknown): never {
+  throw new ApiPlatformConfigurationError(key, code, cause);
 }

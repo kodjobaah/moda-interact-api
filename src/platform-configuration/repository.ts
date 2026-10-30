@@ -37,8 +37,8 @@ export async function readApiPlatformConfiguration(
       where: { environment_key: { environment, key } },
       select: { environment: true, key: true, version: true, value: true },
     });
-  } catch {
-    return configurationError(key, "DATABASE_UNAVAILABLE");
+  } catch (error) {
+    return configurationError(key, "DATABASE_UNAVAILABLE", error);
   }
   if (!row) configurationError(key, "MISSING");
   if (

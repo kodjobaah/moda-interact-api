@@ -70,13 +70,28 @@ export function createMerchantKnowledgeCommandRoute(options: {
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) sendNoStoreJson(response, 401, { error: "unauthorized" });
         else if (error instanceof KnowledgeCommandError) {
-          if (error.status >= 403) logger.warn("merchant.knowledge.command.denied", { operation: command.operation, reason: error.code });
+          if (error.status >= 403) logger.warn("merchant.knowledge.command.denied", { operation: command.operation, reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else if (error instanceof MerchantKnowledgeReadError) {
-          logger.warn("merchant.knowledge.command.failed", { operation: command.operation, reason: error.code });
+          logger.warn("merchant.knowledge.command.failed", { operation: command.operation, reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
-          logger.error("merchant.knowledge.command.failed", { operation: command.operation, reason: "internal" });
+          logger.error("merchant.knowledge.command.failed", { operation: command.operation, reason: "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 503, { error: "merchant_knowledge_unavailable" });
         }
       }

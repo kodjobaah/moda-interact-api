@@ -82,8 +82,13 @@ export class MerchantSupportCommandService {
     },{isolationLevel:Prisma.TransactionIsolationLevel.ReadCommitted});
     if (outcome.created && outcome.response.translationId) {
       try { await this.translation.enqueue(outcome.response.translationId); }
-      catch { this.logger.warn("merchant.support.translation_dispatch.deferred",{
-        shopId:principal.shopId,reason:"queue_unavailable"}); }
+      catch (error) { this.logger.warn("merchant.support.translation_dispatch.deferred",{
+        shopId:principal.shopId,reason:"queue_unavailable",
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorCause: error instanceof Error ? error.cause : undefined,
+      }); }
     }
     return outcome;
   }

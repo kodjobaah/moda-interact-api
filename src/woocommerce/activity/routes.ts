@@ -41,11 +41,21 @@ export function createWooCheckoutActivityRoute(options: {
         } else if (error instanceof WooActivityRequestError) {
           sendNoStoreJson(response, error.status, { error: error.code });
         } else if (error instanceof WooCheckoutReplayConflict) {
-          options.logger.warn("woocommerce.activity.replay.rejected", { reason: "retained_replay_conflict" });
+          options.logger.warn("woocommerce.activity.replay.rejected", { reason: "retained_replay_conflict",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 409, { error: "event_replay_conflict" });
         } else {
-          // Redis/queue errors are retryable; never log the exception (may contain a URL/secret).
-          options.logger.warn("woocommerce.activity.queue.unavailable", { reason: "enqueue_failed" });
+          // Preserve the queue error for diagnosis; the client retains a retryable 503.
+          options.logger.warn("woocommerce.activity.queue.unavailable", { reason: "enqueue_failed",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 503, { error: "queue_unavailable" });
         }
       }

@@ -53,13 +53,28 @@ export function createMerchantSupportRoutes(options:{authenticator:WooInstallati
       else if (error instanceof SupportRequestError) sendNoStoreJson(response,error.status,{error:error.code});
       else if (error instanceof SupportNotFoundError) sendNoStoreJson(response,404,{error:"not_found"});
       else if (error instanceof SupportUnavailableError) {
-        logger.warn("merchant.support.denied",{operation,reason:"support_unavailable"});
+        logger.warn("merchant.support.denied",{operation,reason:"support_unavailable",
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined,
+        });
         sendNoStoreJson(response,403,{error:"support_unavailable"});
       } else if (error instanceof SupportConflictError) {
-        logger.warn("merchant.support.conflict",{operation,reason:"idempotency_conflict"});
+        logger.warn("merchant.support.conflict",{operation,reason:"idempotency_conflict",
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined,
+        });
         sendNoStoreJson(response,409,{error:"idempotency_conflict"});
       } else {
-        logger.error("merchant.support.failed",{operation,reason:error instanceof SupportIntegrityError ? "integrity" : "internal"});
+        logger.error("merchant.support.failed",{operation,reason:error instanceof SupportIntegrityError ? "integrity" : "internal",
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined,
+        });
         sendNoStoreJson(response,500,{error:"internal_error"});
       }
     }

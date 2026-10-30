@@ -36,10 +36,20 @@ export function createMerchantRecoverySummaryRoute(options: {
         if (error instanceof WooUnauthenticatedError) {
           sendJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof RecoverySummaryIntegrityError) {
-          logger.warn("merchant.recovery_summary.read.failed", { reason: "integrity" });
+          logger.warn("merchant.recovery_summary.read.failed", { reason: "integrity",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response, 409, { error: "recovery_summary_integrity_invalid" });
         } else {
-          logger.error("merchant.recovery_summary.read.failed", { reason: "internal" });
+          logger.error("merchant.recovery_summary.read.failed", { reason: "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response, 500, { error: "internal_error" });
         }
       }

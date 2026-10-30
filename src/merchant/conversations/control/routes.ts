@@ -42,16 +42,36 @@ export function createMerchantConversationControlRoute(input: {
         else if (error instanceof ConversationControlRequestError) sendNoStoreJson(response, error.status, { error: error.code });
         else if (error instanceof ConversationControlNotFoundError) sendNoStoreJson(response, 404, { error: "not_found" });
         else if (error instanceof ConversationControlSuspendedError) {
-          input.logger.warn("merchant.conversation.control.denied", { reason: "human_messaging_suspended" });
+          input.logger.warn("merchant.conversation.control.denied", { reason: "human_messaging_suspended",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 403, { error: "human_messaging_suspended" });
         } else if (error instanceof ConversationControlConflictError) {
-          input.logger.warn("merchant.conversation.control.conflict", { reason: error.code });
+          input.logger.warn("merchant.conversation.control.conflict", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 409, { error: error.code, ...error.current });
         } else if (error instanceof ConversationControlIntegrityError) {
-          input.logger.warn("merchant.conversation.control.failed", { reason: "integrity" });
+          input.logger.warn("merchant.conversation.control.failed", { reason: "integrity",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 409, { error: "conversation_control_integrity_invalid" });
         } else {
-          input.logger.error("merchant.conversation.control.failed", { reason: "internal" });
+          input.logger.error("merchant.conversation.control.failed", { reason: "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 500, { error: "internal_error" });
         }
       }

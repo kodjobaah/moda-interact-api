@@ -169,7 +169,7 @@ test("bootstrap rejects missing or revoked authentication before query validatio
   }
 });
 
-test("bootstrap maps tenant-integrity rejection to a bounded 500 without leaking details", async () => {
+test("bootstrap maps tenant-integrity rejection to a generic 500 and logs the actual error", async () => {
   for (const options of [
     { shop: { ...shopRow, id: "another-shop" } },
     { readFailure: new MerchantBootstrapIntegrityError() },
@@ -181,20 +181,28 @@ test("bootstrap maps tenant-integrity rejection to a bounded 500 without leaking
       assert.deepEqual(await response.json(), { error: "internal_error" });
     });
     assert.deepEqual(f.calls, ["authenticate", "read-shop"]);
-    assert.deepEqual(f.events, [{ level: "error", name: "merchant.bootstrap.read.failed", data: { reason: "integrity" } }]);
+    assert.equal(f.events.length, 1);
+    assert.equal(f.events[0]?.level, "error");
+    assert.equal(f.events[0]?.name, "merchant.bootstrap.read.failed");
+    assert.equal(f.events[0]?.data?.reason, "integrity");
+    assert.equal(f.events[0]?.data?.errorName, "MerchantBootstrapIntegrityError");
+    assert.equal(typeof f.events[0]?.data?.errorMessage, "string");
     assert.equal(f.writes, 0);
   }
 });
 
-test("bootstrap logs unexpected read failures as internal without exposing exception messages", async () => {
+test("bootstrap logs the original exception while keeping its HTTP response generic", async () => {
   const f = fixture({ readFailure: new Error("do not leak database connection string") });
   await withRoute(f.route, async (origin) => {
     const response = await fetch(`${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}`, { headers: authHeaders });
     assert.equal(response.status, 500);
     assert.deepEqual(await response.json(), { error: "internal_error" });
   });
-  assert.deepEqual(f.events, [{ level: "error", name: "merchant.bootstrap.read.failed", data: { reason: "internal" } }]);
-  assert.equal(JSON.stringify(f.events).includes("connection string"), false);
+  assert.equal(f.events.length, 1);
+  assert.equal(f.events[0]?.data?.reason, "internal");
+  assert.equal(f.events[0]?.data?.errorName, "Error");
+  assert.equal(f.events[0]?.data?.errorMessage, "do not leak database connection string");
+  assert.match(String(f.events[0]?.data?.errorStack), /connection string/);
 });
 
 test("bootstrap leaves unrelated endpoints and wrong methods to the next router", async () => {

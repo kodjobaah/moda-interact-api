@@ -57,7 +57,7 @@ export function decodeMerchantKnowledgeR2Configuration(value: unknown): Merchant
   }
   let endpoint: URL;
   try { endpoint = new URL(value.endpoint); }
-  catch { return configurationError(key, "INVALID_VALUE"); }
+  catch (error) { return configurationError(key, "INVALID_VALUE", error); }
   // Preserve the existing API's Cloudflare R2 allowlist and SSRF controls.
   if (endpoint.protocol !== "https:" || endpoint.port || endpoint.username || endpoint.password ||
       endpoint.search || endpoint.hash || endpoint.pathname !== "/" ||

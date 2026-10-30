@@ -51,10 +51,20 @@ export function createBillingReadRoutes({
           } else if (error instanceof HttpFailure) {
             sendError(response, error.statusCode, error.code);
           } else if (error instanceof BillingPresentationError) {
-            logger.warn("billing.presentation.read.failed", { reason: error.code });
+            logger.warn("billing.presentation.read.failed", { reason: error.code,
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
             sendError(response, 409, error.code);
           } else {
-            logger.error("billing.presentation.read.failed", { reason: "internal" });
+            logger.error("billing.presentation.read.failed", { reason: "internal",
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
             sendError(response, 500, "internal_error");
           }
         }
@@ -86,14 +96,29 @@ export function createBillingReadRoutes({
             sendError(response, error.statusCode, error.code);
           } else if (error instanceof BillingCatalogueError) {
             if (error.code !== "billing_locale_invalid") {
-              logger.warn("billing.plans.read.failed", { reason: error.code });
+              logger.warn("billing.plans.read.failed", { reason: error.code,
+                errorName: error instanceof Error ? error.name : typeof error,
+                errorMessage: error instanceof Error ? error.message : String(error),
+                errorStack: error instanceof Error ? error.stack : undefined,
+                errorCause: error instanceof Error ? error.cause : undefined,
+              });
             }
             sendError(response, error.code === "billing_locale_invalid" ? 400 : 409, error.code);
           } else if (error instanceof BillingPresentationError) {
-            logger.warn("billing.plans.read.failed", { reason: error.code });
+            logger.warn("billing.plans.read.failed", { reason: error.code,
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
             sendError(response, 409, error.code);
           } else {
-            logger.error("billing.plans.read.failed", { reason: "internal" });
+            logger.error("billing.plans.read.failed", { reason: "internal",
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
             sendError(response, 500, "internal_error");
           }
         }

@@ -68,6 +68,10 @@ function createHttpServer({
               error instanceof Error && error.message === "readiness_timeout"
                 ? "timeout"
                 : "database_unavailable",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
           });
           if (!response.destroyed) {
             sendJson(response, 503, { status: "not_ready" });
@@ -83,7 +87,15 @@ function createHttpServer({
           sendJson(response, 404, { error: "not_found" });
         }
       },
-      () => {
+      (error: unknown) => {
+        logger.error("api.request.unhandled", {
+          method: request.method,
+          path: requestUrl.pathname,
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined,
+        });
         if (!response.destroyed && !response.headersSent) {
           sendJson(response, 500, { error: "internal_error" });
         }
@@ -136,32 +148,47 @@ export function createApiRuntime(
     shutdown() {
       shutdownPromise ??= (async () => {
         logger.info("api.shutdown.started");
-        let closeError: Error | undefined;
-        if (server.listening) {
-          await new Promise<void>((resolve) => {
-            server.close((error) => {
-              closeError = error;
-              resolve();
-            });
-          });
-        }
+        // Capture the close error as the Promise result so TypeScript can track its type.
+        const closeError = server.listening
+          ? await new Promise<Error | undefined>((resolve) => {
+            server.close((error) => resolve(error));
+          })
+          : undefined;
 
         let resourceError = false;
         if (closeAdditionalResources) {
           try { await closeAdditionalResources(); }
-          catch { logger.error("api.shutdown.additional_resource_failed"); resourceError = true; }
+          catch (error) {
+            logger.error("api.shutdown.additional_resource_failed", {
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
+            resourceError = true;
+          }
         }
         try {
           await database.disconnect();
-        } catch {
-          logger.error("api.shutdown.database_disconnect_failed");
-          throw new Error("database disconnect failed");
+        } catch (error) {
+          logger.error("api.shutdown.database_disconnect_failed", {
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
+          throw new Error("database disconnect failed", { cause: error });
         }
         if (resourceError) throw new Error("additional resource disconnect failed");
 
         if (closeError) {
-          logger.error("api.shutdown.server_close_failed");
-          throw new Error("HTTP server close failed");
+          logger.error("api.shutdown.server_close_failed", {
+            errorName: closeError.name,
+            errorMessage: closeError.message,
+            errorStack: closeError.stack,
+            errorCause: closeError.cause,
+          });
+          throw new Error("HTTP server close failed", { cause: closeError });
         }
         logger.info("api.shutdown.completed");
       })();

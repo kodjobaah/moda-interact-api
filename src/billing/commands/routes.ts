@@ -75,6 +75,10 @@ export function createBillingCommandRoutes({
               reason: error.code,
               operationId: error.operationId ?? null,
               durationMs: Math.max(0, now() - startedAt),
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
             });
             sendError(
               response,
@@ -85,7 +89,12 @@ export function createBillingCommandRoutes({
               error.purchaseId,
             );
           } else {
-            logger.error("billing.recovery_credit_purchase.command.failed", { reason: "internal" });
+            logger.error("billing.recovery_credit_purchase.command.failed", { reason: "internal",
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
             sendError(response, 500, "internal_error");
           }
         }
@@ -140,10 +149,19 @@ export function createBillingCommandRoutes({
               reason: error.code,
               operationId: error.operationId ?? null,
               durationMs: Math.max(0, now() - startedAt),
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
             });
             sendError(response, error.statusCode, error.code, error.operationId, error.safeProviderCode);
           } else {
-            logger.error("billing.recurring.command.failed", { reason: "internal" });
+            logger.error("billing.recurring.command.failed", { reason: "internal",
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
             sendError(response, 500, "internal_error");
           }
         }

@@ -116,7 +116,14 @@ export class WooProductReadService implements WooProductReadPort {
           shopId, installationId: installation.id, authorizationAttemptId: grant.authorizationAttemptId,
           credentialVersionSnapshot: grant.credentialVersionSnapshot,
         }, this.config);
-      } catch {
+      } catch (error) {
+        this.logger.warn("woocommerce.rest_read.product.failed", {
+          shopId, operation: name, stage: "credential_decryption",
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined,
+        });
         // Missing keyring versions or corrupted envelopes are operational problems,
         // not proof that the merchant revoked the provider key.
         return this.finish(shopId, name, "provider_unavailable");
@@ -133,6 +140,13 @@ export class WooProductReadService implements WooProductReadPort {
             await this.transport.verify(site, credential);
             return this.finish(shopId, name, "provider_forbidden");
           } catch (verificationError) {
+            this.logger.warn("woocommerce.rest_read.product.failed", {
+              shopId, operation: name, stage: "credential_verification",
+              errorName: verificationError instanceof Error ? verificationError.name : typeof verificationError,
+              errorMessage: verificationError instanceof Error ? verificationError.message : String(verificationError),
+              errorStack: verificationError instanceof Error ? verificationError.stack : undefined,
+              errorCause: verificationError instanceof Error ? verificationError.cause : undefined,
+            });
             if (verificationError instanceof WooReadVerificationError &&
                 verificationError.reason === "rejected_credentials") {
               await this.invalidateIfCurrent(grant);
@@ -141,6 +155,13 @@ export class WooProductReadService implements WooProductReadPort {
             return this.finish(shopId, name, "provider_unavailable");
           }
         }
+        this.logger.warn("woocommerce.rest_read.product.failed", {
+          shopId, operation: name, stage: "provider_transport",
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined,
+        });
         return this.finish(shopId, name, classifyTransportFailure(error));
       }
 
@@ -149,6 +170,13 @@ export class WooProductReadService implements WooProductReadPort {
         product = projectWooProducts(payload, prepared);
       } catch (error) {
         if (!(error instanceof WooProductResponseError)) throw error;
+        this.logger.warn("woocommerce.rest_read.product.failed", {
+          shopId, operation: name, stage: "provider_response",
+          errorName: error.name,
+          errorMessage: error.message,
+          errorStack: error.stack,
+          errorCause: error.cause,
+        });
         return this.finish(shopId, name, "invalid_response");
       }
       // A grant/installation revoked or rotated during network I/O must not yield data.
@@ -180,8 +208,14 @@ export class WooProductReadService implements WooProductReadPort {
       return name === "products.list"
         ? { ok: true, operation: "products.list", products: product as WooProductView[] }
         : { ok: true, operation: "products.retrieve", product: product as WooProductView };
-    } catch {
-      // Never surface provider errors, Prisma diagnostics, hostnames or secrets.
+    } catch (error) {
+      this.logger.warn("woocommerce.rest_read.product.failed", {
+        shopId, operation: name, stage: "database_or_state",
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorCause: error instanceof Error ? error.cause : undefined,
+      });
       return this.finish(shopId, name, "provider_unavailable");
     }
   }
@@ -197,9 +231,15 @@ export class WooProductReadService implements WooProductReadPort {
         },
         data: { status: "INVALID", invalidatedAt: this.now() },
       });
-    } catch {
+    } catch (error) {
       // A failed status update is never permission to retry with stale credentials.
-      this.logger.warn("woocommerce.rest_read.invalidate.failed", { shopId: grant.shopId, reason: "update_failed" });
+      this.logger.warn("woocommerce.rest_read.invalidate.failed", {
+        shopId: grant.shopId, reason: "update_failed",
+        errorName: error instanceof Error ? error.name : typeof error,
+        errorMessage: error instanceof Error ? error.message : String(error),
+        errorStack: error instanceof Error ? error.stack : undefined,
+        errorCause: error instanceof Error ? error.cause : undefined,
+      });
     }
   }
 

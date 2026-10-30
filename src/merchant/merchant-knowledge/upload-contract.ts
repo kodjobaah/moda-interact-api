@@ -12,14 +12,15 @@ export type UploadFormat = "CSV" | "XLSX";
 export class KnowledgeUploadError extends Error {
   constructor(readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 503,
     readonly code: "invalid_request" | "request_too_large" | "knowledge_upload_denied" | "knowledge_upload_conflict" |
-      "knowledge_upload_expired" | "knowledge_upload_not_found" | "knowledge_upload_integrity_mismatch" | "knowledge_upload_unavailable") {
-    super(code);
+      "knowledge_upload_expired" | "knowledge_upload_not_found" | "knowledge_upload_integrity_mismatch" | "knowledge_upload_unavailable",
+    cause?: unknown) {
+    super(code, { cause });
   }
 }
 export const invalid = () => new KnowledgeUploadError(400, "invalid_request");
 export const denied = () => new KnowledgeUploadError(403, "knowledge_upload_denied");
 export const conflict = () => new KnowledgeUploadError(409, "knowledge_upload_conflict");
-export const unavailable = () => new KnowledgeUploadError(503, "knowledge_upload_unavailable");
+export const unavailable = (cause?: unknown) => new KnowledgeUploadError(503, "knowledge_upload_unavailable", cause);
 export const integrity = () => new KnowledgeUploadError(409, "knowledge_upload_integrity_mismatch");
 
 function exactObject(input: unknown, keys: readonly string[], required: readonly string[]): Record<string, unknown> {

@@ -45,6 +45,10 @@ export function createMerchantStoreContextRoute(options: {
         const metadata = {
           ...(installationId && shopId ? { installationId, shopId } : {}),
           reason, durationMs: Math.max(0, now() - startedAt),
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined,
         };
         if (reason === "internal") logger.error("merchant.store_context.sync.failed", metadata);
         else logger.warn("merchant.store_context.sync.failed", metadata);

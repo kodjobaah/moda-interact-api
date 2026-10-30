@@ -105,10 +105,10 @@ export class MerchantKnowledgeUploadService {
           maxUploadBytes: snapshot.maxUploadBytes };
       } else if (this.options.config) config = this.options.config;
       else throw unavailable();
-    } catch { throw unavailable(); }
+    } catch (error) { throw unavailable(error); }
     let r2: UploadR2;
     try { r2 = this.options.r2 ?? createUploadR2(config); }
-    catch { throw unavailable(); }
+    catch (error) { throw unavailable(error); }
     const environment = this.options.environment ?? process.env.NODE_ENV ?? "development";
     return { config, r2, environment };
   }
@@ -304,5 +304,5 @@ export function normaliseUploadError(error: unknown): KnowledgeUploadError {
   const knownRequestError = Prisma.PrismaClientKnownRequestError;
   if (typeof knownRequestError === "function" && error instanceof knownRequestError &&
       ["P2002", "P2034"].includes(error.code)) return conflict();
-  return unavailable();
+  return unavailable(error);
 }

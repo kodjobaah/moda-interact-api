@@ -72,6 +72,10 @@ export function createWooInstallationRoutes({
               errorCode: "FREE_PLAN_CONFIGURATION_UNAVAILABLE",
               configurationReason: error.reason,
               durationMs: Math.max(0, now() - startedAt),
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
             });
             sendError(response, 503, "FREE_PLAN_CONFIGURATION_UNAVAILABLE");
           } else if (error instanceof InitialFreeActivationConflictError) {
@@ -84,6 +88,9 @@ export function createWooInstallationRoutes({
               errorName: error instanceof Error ? error.name : "unknown",
               ...(error instanceof Prisma.PrismaClientKnownRequestError ? { prismaCode: error.code } : {}),
               durationMs: Math.max(0, now() - startedAt),
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
             });
             sendError(response, 500, "internal_error");
           }
@@ -99,7 +106,12 @@ export function createWooInstallationRoutes({
           if (error instanceof WooUnauthenticatedError) {
             sendError(response, 401, "unauthorized");
           } else {
-            logger.error("woocommerce.installation.authentication.failed", { reason: "internal" });
+            logger.error("woocommerce.installation.authentication.failed", { reason: "internal",
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
             sendError(response, 500, "internal_error");
           }
         }

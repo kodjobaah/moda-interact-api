@@ -67,11 +67,11 @@ export function createApiPlatformConfigurationService(
         keyring: deps.unsealKeyring, envelope,
         aad: apiPlatformConfigurationAad(row.environment, key, row.version),
       });
-    } catch {
-      return configurationError(key, "UNSEAL_FAILED");
+    } catch (error) {
+      return configurationError(key, "UNSEAL_FAILED", error);
     }
     try { return JSON.parse(plaintext) as unknown; }
-    catch { return configurationError(key, "INVALID_VALUE"); }
+    catch (error) { return configurationError(key, "INVALID_VALUE", error); }
   }
 
   return Object.freeze({
@@ -115,8 +115,8 @@ export function createApiPlatformConfigurationService(
         return Object.freeze({ keyring, activeKeyId,
           ...(withHmac ? { commandHmacKey: value.commandHmacKey as string } : {}),
         });
-      } catch {
-        return configurationError(key, "INVALID_VALUE");
+      } catch (error) {
+        return configurationError(key, "INVALID_VALUE", error);
       }
     },
     async readMessagingSenderWabaId(): Promise<string> {

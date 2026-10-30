@@ -31,11 +31,21 @@ export function createWooShopBrandRoute(options: {
         if (error instanceof WooUnauthenticatedError) {
           sendNoStoreJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof WooShopBrandHttpError) {
-          options.logger.warn("woocommerce.shop_brand.rejected", { reason: error.code });
+          options.logger.warn("woocommerce.shop_brand.rejected", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
-          // SQL/provider error messages can contain PII, source URLs or secrets.
-          options.logger.warn("woocommerce.shop_brand.unavailable", { reason: "database_unavailable" });
+          // Log the original exception so the root cause is visible alongside the 503 classification.
+          options.logger.warn("woocommerce.shop_brand.unavailable", { reason: "database_unavailable",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 503, { error: "shop_brand_unavailable" });
         }
       }
