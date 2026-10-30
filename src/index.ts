@@ -53,7 +53,12 @@ async function main(): Promise<void> {
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch (error) {
-    logger.error("api.startup.failed", { error });
+    logger.error("api.startup.failed", { error,
+      errorName: error instanceof Error ? error.name : typeof error,
+      errorMessage: error instanceof Error ? error.message : String(error),
+      errorStack: error instanceof Error ? error.stack : undefined,
+      errorCause: error instanceof Error ? error.cause : undefined,
+    });
     process.exitCode = 1;
   }
 }

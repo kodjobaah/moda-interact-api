@@ -47,10 +47,20 @@ export function createMerchantPromotionsRoutes(options: {
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) respond(response, 401, { error: "unauthorized" });
         else if (error instanceof PromotionRequestError || error instanceof PromotionDomainError) {
-          logger.warn("merchant.promotions.access.denied", { reason: error.code });
+          logger.warn("merchant.promotions.access.denied", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           respond(response, error.status, { error: error.code });
         } else {
-          logger.error("merchant.promotions.access.failed", { reason: "internal" });
+          logger.error("merchant.promotions.access.failed", { reason: "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           respond(response, 500, { error: "internal_error" });
         }
       }

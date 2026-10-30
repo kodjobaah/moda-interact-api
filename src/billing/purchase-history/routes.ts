@@ -71,10 +71,20 @@ export function createWooPurchaseHistoryRoute(input: {
         if (error instanceof WooUnauthenticatedError) writeJson(response, 401, { error: "unauthorized" });
         else if (error instanceof InvalidPurchaseHistoryQuery) writeJson(response, 400, { error: "invalid_request" });
         else if (error instanceof PurchaseHistoryError) {
-          input.logger.warn("billing.purchase_history.read.failed", { reason: error.code });
+          input.logger.warn("billing.purchase_history.read.failed", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           writeJson(response, 409, { error: error.code });
         } else {
-          input.logger.error("billing.purchase_history.read.failed", { reason: "internal" });
+          input.logger.error("billing.purchase_history.read.failed", { reason: "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           writeJson(response, 500, { error: "internal_error" });
         }
       }

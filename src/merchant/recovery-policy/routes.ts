@@ -53,11 +53,21 @@ export function createMerchantRecoveryPolicyRoute(options: {
         if (error instanceof WooUnauthenticatedError) sendJson(response, 401, { error: "unauthorized" });
         else if (error instanceof RecoveryPolicyRequestError) sendJson(response, error.status, { error: error.code });
         else if (error instanceof RecoveryPolicyConflictError) {
-          try { logger.warn("merchant.recovery_policy.update.failed", { reason: error.code }); }
+          try { logger.warn("merchant.recovery_policy.update.failed", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          }); }
           catch { /* Preserve the established conflict response when logging fails. */ }
           sendJson(response, 409, { error: error.code });
         } else if (error instanceof RecoveryPolicyIntegrityError) {
-          try { logger.warn("merchant.recovery_policy.access.failed", { reason: "integrity" }); }
+          try { logger.warn("merchant.recovery_policy.access.failed", { reason: "integrity",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          }); }
           catch { /* Preserve the established integrity response when logging fails. */ }
           sendJson(response, 409, { error: "recovery_policy_integrity_invalid" });
         } else {
@@ -66,6 +76,10 @@ export function createMerchantRecoveryPolicyRoute(options: {
               operation: request.method === "PUT" ? "update" : "read",
               reason: "internal",
               error,
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
             });
           } catch {
             // Keep logging sink failures from changing the existing HTTP 500 mapping.

@@ -49,17 +49,30 @@ export function createStoreCategorySelectionRoute(options: {
         if (error instanceof WooUnauthenticatedError) sendJson(response, 401, { error: "unauthorized" });
         else if (error instanceof CategoryRequestError) sendJson(response, error.status, { error: error.code });
         else if (error instanceof StoreCategorySelectionError) {
-          logger.warn("merchant.store_category.select.failed", { reason: error.code, durationMs: Math.max(0, now() - startedAt) });
+          logger.warn("merchant.store_category.select.failed", { reason: error.code, durationMs: Math.max(0, now() - startedAt),
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response, error.code === "category_unavailable" ? 422 : 409, { error: error.code });
         } else if (error instanceof Prisma.PrismaClientKnownRequestError &&
           ["P2002", "P2034"].includes(error.code)) {
-          logger.warn("merchant.store_category.select.failed", { reason: "store_category_conflict" });
+          logger.warn("merchant.store_category.select.failed", { reason: "store_category_conflict",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response, 409, { error: "store_category_conflict" });
         } else {
           logger.error("merchant.store_category.select.failed", {
             reason: "internal",
             errorName: error instanceof Error ? error.name : "UnknownError",
             prismaCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
           });
           sendJson(response, 500, { error: "internal_error" });
         }

@@ -110,7 +110,7 @@ test("unauthorized request fails before any write", async () => {
   }, { auth: "deny" });
 });
 
-test("Shop/installation conflict fails with 409; unexpected errors with bounded 500", async () => {
+test("Shop/installation conflict is 409 and internal errors are logged but remain HTTP 500", async () => {
   for (const [failure, status, code, reason] of [
     ["conflict", 409, "store_context_conflict", "tenant_conflict"],
     ["internal", 500, "internal_error", "internal"],
@@ -121,7 +121,9 @@ test("Shop/installation conflict fails with 409; unexpected errors with bounded 
       assert.deepEqual(await response.json(), { error: code });
       assert.equal(calls.length, 1);
       assert.equal(errorRecords(logs)[0]?.data?.reason, reason);
-      assert.equal(logs.join("\n").includes("sensitive DB secret"), false);
+      if (failure === "internal") {
+        assert.equal(errorRecords(logs)[0]?.data?.errorMessage, "sensitive DB secret");
+      }
     }, { failure });
   }
 });

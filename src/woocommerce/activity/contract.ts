@@ -1,11 +1,10 @@
 import { normalizeRecipientPhone } from "@modainteract/moda-interact-shared/identity";
+import { WooCartRestoreSnapshotV1Schema, type WooCartRestoreSnapshotV1 } from "@modainteract/moda-interact-shared/woocommerce";
 /** API-owned capture-only v1 contract; intentionally separate from Shopify recovery events. */
 export const WOO_ACTIVITY_PATH = "/v1/woocommerce/activity";
 export const WOO_CHECKOUT_QUEUE = "woo-checkout-capture-v1";
 export const WOO_ORDER_QUEUE = "woo-order-capture-v1";
 export const WOO_ACTIVITY_VERSION = "woo.activity.v1";
-/** HTTP-only v2: canonicalises checkout recipient into the existing v1 queue job. */
-export const WOO_ACTIVITY_PHONE_VERSION = "woo.activity.v2";
 export const MAX_WOO_ACTIVITY_BYTES = 65_536;
 
 export interface WooCheckoutItem {
@@ -28,6 +27,7 @@ export interface WooCheckoutSnapshot {
   total: string;
   items?: WooCheckoutItem[];
   contact?: WooCheckoutContact;
+  restoration?: WooCartRestoreSnapshotV1;
 }
 export interface WooCheckoutEvent {
   schemaVersion: typeof WOO_ACTIVITY_VERSION;
@@ -110,11 +110,25 @@ function parseItem(value: unknown): WooCheckoutItem {
   };
 }
 function parseContact(value: unknown): WooCheckoutContact {
-  const input = object(value, [], ["email", "phone", "firstName", "lastName"]);
+  const input = object(value, [], ["email", "phone", "firstName", "lastName", "canonicalPhone", "verifiedCountryCode"]);
   const email = optionalString(input, "email", 254);
   if (email && (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || email.includes("<"))) throw invalid();
-  const phone = optionalString(input, "phone", 32);
-  if (phone && !/^\+?[0-9 ()-]{5,32}$/.test(phone)) throw invalid();
+  const hasPhone = Object.hasOwn(input, "phone");
+  const hasCanonical = Object.hasOwn(input, "canonicalPhone");
+  const hasCountry = Object.hasOwn(input, "verifiedCountryCode");
+  if (!hasPhone && (hasCanonical || hasCountry)) throw invalid();
+  let phone: string | undefined;
+  if (hasPhone) {
+    const observed = text(input.phone, 32);
+    const canonical = text(input.canonicalPhone, 15);
+    const country = hasCountry ? text(input.verifiedCountryCode, 2, 2) : undefined;
+    if (!/^[1-9][0-9]{1,14}$/.test(canonical) || (country !== undefined && !/^[A-Z]{2}$/.test(country))) throw invalid();
+    const normalized = normalizeRecipientPhone(observed, {
+      ...(country !== undefined ? { verifiedCountryCode: country } : {}),
+    });
+    if (!normalized.ok || normalized.e164.slice(1) !== canonical) throw invalid();
+    phone = normalized.e164;
+  }
   return {
     ...(email !== undefined ? { email } : {}),
     ...(phone !== undefined ? { phone } : {}),
@@ -149,7 +163,7 @@ export function parseWooCheckoutEvent(value: unknown): WooCheckoutEvent {
     throw invalid();
   }
   if (!Object.hasOwn(input, "checkout") || Object.hasOwn(input, "order")) throw invalid();
-  const checkout = object(input.checkout, ["currency", "total"], ["currency", "total", "items", "contact"]);
+  const checkout = object(input.checkout, ["currency", "total"], ["currency", "total", "items", "contact", "restoration"]);
   const currency = text(checkout.currency, 3, 3);
   if (!/^[A-Z]{3}$/.test(currency)) throw invalid();
   const items = checkout.items;
@@ -165,8 +179,15 @@ export function parseWooCheckoutEvent(value: unknown): WooCheckoutEvent {
       total: money(checkout.total),
       ...(items !== undefined ? { items: (items as unknown[]).map(parseItem) } : {}),
       ...(Object.hasOwn(checkout, "contact") ? { contact: parseContact(checkout.contact) } : {}),
+      ...(Object.hasOwn(checkout, "restoration") ? { restoration: parseRestoration(checkout.restoration) } : {}),
     },
   };
+}
+
+function parseRestoration(value: unknown): WooCartRestoreSnapshotV1 {
+  const result = WooCartRestoreSnapshotV1Schema.safeParse(value);
+  if (!result.success) throw invalid();
+  return result.data;
 }
 
 /** A Woo order event is capture-only and may arrive before its checkout snapshot. */
@@ -187,45 +208,8 @@ export function parseWooOrderEvent(value: unknown): WooOrderEvent {
   };
 }
 
-/** v2 changes only authenticated HTTP checkout contact capture. Projecting into
- * the unchanged v1 job keeps Background's existing capture-only validator safe
- * during a rolling Woo plugin rollout. Contact text is NEVER marketing consent. */
-export function parseWooCheckoutPhoneEvent(value: unknown): WooCheckoutEvent {
-  const input = object(value, ["schemaVersion", "eventId", "eventType", "checkoutKey", "occurredAt", "checkout"],
-    ["schemaVersion", "eventId", "eventType", "checkoutKey", "occurredAt", "checkout"]);
-  if (input.schemaVersion !== WOO_ACTIVITY_PHONE_VERSION || input.eventType !== "CHECKOUT_UPDATED") throw invalid();
-  const checkout = object(input.checkout, ["currency", "total"], ["currency", "total", "items", "contact"]);
-  let contact: Record<string, unknown> | undefined;
-  if (Object.hasOwn(checkout, "contact")) {
-    const observed = object(checkout.contact, [],
-      ["email", "phone", "firstName", "lastName", "canonicalPhone", "verifiedCountryCode"]);
-    const hasPhone = Object.hasOwn(observed, "phone");
-    const hasCanonical = Object.hasOwn(observed, "canonicalPhone");
-    if (hasPhone !== hasCanonical) throw invalid();
-    contact = Object.fromEntries(Object.entries(observed).filter(([key]) =>
-      !["canonicalPhone", "verifiedCountryCode"].includes(key)));
-    if (hasPhone) {
-      const canonical = text(observed.canonicalPhone, 15);
-      const country = observed.verifiedCountryCode;
-      if (!/^[1-9][0-9]{1,14}$/.test(canonical) ||
-        (country != null && (typeof country !== "string" || !/^[A-Z]{2}$/.test(country)))) throw invalid();
-      const normalized = normalizeRecipientPhone(observed.phone, {
-        ...(typeof country === "string" ? { verifiedCountryCode: country } : {}),
-      });
-      if (!normalized.ok || normalized.e164.slice(1) !== canonical) throw invalid();
-      contact.phone = normalized.e164;
-    } else if (Object.hasOwn(observed, "verifiedCountryCode")) throw invalid();
-  }
-  return parseWooCheckoutEvent({ ...input, schemaVersion: WOO_ACTIVITY_VERSION,
-    checkout: { ...checkout, ...(contact ? { contact } : {}) } });
-}
-
 /** One strict envelope for the existing authenticated activity route. */
 export function parseWooActivityEvent(value: unknown): WooActivityEvent {
-  if (value && typeof value === "object" && !Array.isArray(value) &&
-    (value as Record<string, unknown>).schemaVersion === WOO_ACTIVITY_PHONE_VERSION) {
-    return parseWooCheckoutPhoneEvent(value);
-  }
   const kind = value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>).eventType : undefined;
   if (kind === "ORDER_PLACED" || kind === "ORDER_PAID" || kind === "ORDER_CANCELLED") {

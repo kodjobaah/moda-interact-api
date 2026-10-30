@@ -30,11 +30,21 @@ export function createWooConsentRoute(options: {
         if (error instanceof WooUnauthenticatedError) {
           sendNoStoreJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof WooConsentHttpError) {
-          options.logger.warn("woocommerce.consent.rejected", { reason: error.code });
+          options.logger.warn("woocommerce.consent.rejected", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
-          // Database failure may contain customer contact/SQL arguments: don't log the exception.
-          options.logger.warn("woocommerce.consent.unavailable", { reason: "database_unavailable" });
+          // Log the underlying error for diagnosis; the client response remains generic.
+          options.logger.warn("woocommerce.consent.unavailable", { reason: "database_unavailable",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 503, { error: "consent_unavailable" });
         }
       }

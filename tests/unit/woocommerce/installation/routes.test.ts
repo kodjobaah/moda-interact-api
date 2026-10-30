@@ -412,7 +412,7 @@ test("connect returns stable bounded errors for Free configuration and activatio
   }, undefined, undefined, undefined, new InitialFreeActivationConflictError());
 });
 
-test("unexpected connection errors log bounded exception identity and Prisma code without leaking details", async () => {
+test("unexpected connection errors log Prisma code and readable exception details", async () => {
   const sensitiveDetails = "sensitive request body and credential must not be logged";
   const failure = new Prisma.PrismaClientKnownRequestError(sensitiveDetails, {
     code: "P2022",
@@ -437,13 +437,13 @@ test("unexpected connection errors log bounded exception identity and Prisma cod
     assert.equal(failures[0]?.data?.errorName, "PrismaClientKnownRequestError");
     assert.equal(failures[0]?.data?.prismaCode, "P2022");
     assert.ok(typeof failures[0]?.data?.durationMs === "number");
-    assert.equal(logs.join("\n").includes(sensitiveDetails), false);
+    assert.equal(failures[0]?.data?.errorMessage, sensitiveDetails);
     assert.equal(logs.join("\n").includes(bootstrapSecret), false);
     assert.equal(logs.join("\n").includes(installationCredential), false);
   }, undefined, undefined, undefined, failure);
 });
 
-test("non-Prisma connection errors do not expose exception messages", async () => {
+test("non-Prisma connection errors log the original message for diagnosis", async () => {
   const sensitiveDetails = "never log the sensitive internal error message";
   await withApi(async (baseUrl, logs) => {
     const response = await fetch(`${baseUrl}/v1/woocommerce/installations/connect`, {
@@ -459,7 +459,7 @@ test("non-Prisma connection errors do not expose exception messages", async () =
     assert.equal(failures.length, 1);
     assert.equal(failures[0]?.data?.errorName, "Error");
     assert.equal(failures[0]?.data?.prismaCode, undefined);
-    assert.equal(logs.join("\n").includes(sensitiveDetails), false);
+    assert.equal(failures[0]?.data?.errorMessage, sensitiveDetails);
   }, undefined, undefined, undefined, new Error(sensitiveDetails));
 });
 
@@ -495,7 +495,9 @@ test("authentication probe maps unexpected authenticator failures to internal er
     });
     assert.equal(response.status, 500);
     assert.deepEqual(await response.json(), { error: "internal_error" });
-    assert.equal(logs.join("\n").includes("database details"), false);
+    const failure = logs.map((line) => JSON.parse(line) as { event: string; data?: Record<string, unknown> })
+      .find((entry) => entry.event === "woocommerce.installation.authentication.failed");
+    assert.equal(failure?.data?.errorMessage, "database details must not be logged");
   }, new Error("database details must not be logged"));
 });
 
@@ -560,7 +562,7 @@ test("merchant bootstrap authentication and integrity failures stay bounded", as
     });
     assert.equal(response.status, 500);
     assert.deepEqual(await response.json(), { error: "internal_error" });
-    assert.equal(logs.join("\n").includes("merchant bootstrap integrity failure"), false);
+    assert.equal(logs.join("\n").includes("merchant bootstrap integrity failure"), true);
   }, undefined, new MerchantBootstrapIntegrityError());
 });
 

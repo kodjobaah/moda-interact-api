@@ -67,14 +67,19 @@ export function createMerchantKnowledgeUploadRoutes(options: {
         else {
           const failure = normaliseUploadError(error);
           if (failure.status !== 400 && failure.status !== 413) {
-            // Only bounded error categories/codes are logged; Prisma messages can contain SQL and parameters.
+            // Preserve the underlying diagnostic alongside the stable domain error classification.
             const possibleCode = error && typeof error === "object" && "code" in error ? error.code : undefined;
             const prismaCode = typeof possibleCode === "string" && /^P[0-9]{4}$/.test(possibleCode)
               ? possibleCode : undefined;
             const cause = error instanceof KnowledgeUploadError ? "domain" : prismaCode ? "prisma" :
               error instanceof TypeError ? "type_error" : "unexpected";
             logger.warn("merchant.knowledge.upload.failed", { operation, reason: failure.code, cause,
-              ...(prismaCode ? { prismaCode } : {}), ...timings, durationMs: elapsedMs(startedAt) });
+              ...(prismaCode ? { prismaCode } : {}), ...timings, durationMs: elapsedMs(startedAt),
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
           }
           sendNoStoreJson(response, failure.status, { error: failure.code });
         }

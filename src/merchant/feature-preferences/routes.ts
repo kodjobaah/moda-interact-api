@@ -38,13 +38,28 @@ export function createMerchantFeaturePreferencesRoute(options: {
         if (error instanceof WooUnauthenticatedError) sendNoStoreJson(response, 401, { error: "unauthorized" });
         else if (error instanceof FeaturePreferencesRequestError) sendNoStoreJson(response, error.status, { error: error.code });
         else if (error instanceof FeaturePreferencesConflictError) {
-          logger.warn("merchant.feature_preferences.access.failed", { reason: error.code });
+          logger.warn("merchant.feature_preferences.access.failed", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 409, { error: error.code });
         } else if (error instanceof FeaturePreferencesIntegrityError) {
-          logger.warn("merchant.feature_preferences.access.failed", { reason: "integrity" });
+          logger.warn("merchant.feature_preferences.access.failed", { reason: "integrity",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 409, { error: "feature_preferences_integrity_invalid" });
         } else {
-          logger.error("merchant.feature_preferences.access.failed", { reason: "internal" });
+          logger.error("merchant.feature_preferences.access.failed", { reason: "internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 500, { error: "internal_error" });
         }
       }

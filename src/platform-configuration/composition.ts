@@ -30,8 +30,8 @@ export function createApiPlatformConfigurationReader(input: {
       environment: input.environment, ...(unsealKeyring ? { unsealKeyring } : {}),
     });
   };
-  /** Log only the fixed purpose and bounded outcome: no values, URLs, key IDs or exception text. */
-  function logRead(level: "info" | "warn" | "error", fields: Record<string, string>): void {
+  /** Use the shared logger for operation outcomes and original failure diagnostics. */
+  function logRead(level: "info" | "warn" | "error", fields: Record<string, unknown>): void {
     try {
       input.logger?.[level]("api.platform_configuration.read", fields);
     } catch { /* Logging is diagnostic and must not affect configuration reads. */ }
@@ -44,9 +44,14 @@ export function createApiPlatformConfigurationReader(input: {
       return result;
     } catch (error) {
       if (error instanceof ApiPlatformConfigurationError) {
-        logRead("warn", { key, operation, outcome: "failed", reasonCode: error.code });
+        logRead("warn", { key, operation, outcome: "failed", reasonCode: error.code,
+          errorName: error.name, errorMessage: error.message, errorStack: error.stack, errorCause: error.cause });
       } else {
-        logRead("error", { key, operation, outcome: "failed", reasonCode: "UNEXPECTED" });
+        logRead("error", { key, operation, outcome: "failed", reasonCode: "UNEXPECTED",
+          errorName: error instanceof Error ? error.name : typeof error,
+          errorMessage: error instanceof Error ? error.message : String(error),
+          errorStack: error instanceof Error ? error.stack : undefined,
+          errorCause: error instanceof Error ? error.cause : undefined });
       }
       throw error;
     }

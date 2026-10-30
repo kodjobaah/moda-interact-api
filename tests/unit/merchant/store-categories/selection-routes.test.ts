@@ -111,7 +111,7 @@ test("invalid, oversized and tampered bodies never call the selection service", 
   });
 });
 
-test("bounded category, generation, billing and internal failures have no sensitive payload", async () => {
+test("category, generation and billing failures retain stable HTTP codes and include underlying diagnostics", async () => {
   for (const [kind, status, code] of [
     ["unavailable", 422, "category_unavailable"], ["conflict", 409, "store_category_conflict"],
     ["inactive", 409, "subscription_not_active"], ["revoked", 409, "store_category_conflict"],
@@ -122,7 +122,9 @@ test("bounded category, generation, billing and internal failures have no sensit
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), { error: code });
       assert.equal(calls.filter((call) => call.startsWith("select:")).length, 1);
-      assert.equal(logs.join(" ").includes("secret connection details"), false);
+      if (kind === "internal") {
+        assert.equal(logs.join(" ").includes("secret connection details"), true);
+      }
     }, kind);
   }
 });

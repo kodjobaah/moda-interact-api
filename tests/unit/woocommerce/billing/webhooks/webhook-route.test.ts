@@ -255,7 +255,7 @@ test("deduplicates exact signed deliveries and persists byte-distinct raw bodies
   });
 });
 
-test("maps receipt persistence failure to retryable 503 without logging body, signature or database details", async () => {
+test("maps receipt persistence failure to retryable 503 and logs the database cause", async () => {
   const rawBody = Buffer.from(basePayload);
   await withWebhookApi(async (baseUrl, receipts, logs) => {
     const result = await post(baseUrl, rawBody, validHeaders(rawBody));
@@ -265,7 +265,7 @@ test("maps receipt persistence failure to retryable 503 without logging body, si
     assert.equal(logs.join("\n").includes(secret), false);
     assert.equal(logs.join("\n").includes(signature(rawBody)), false);
     assert.equal(logs.join("\n").includes("must-not-persist"), false);
-    assert.equal(logs.join("\n").includes("private"), false);
+    assert.equal(logs.join("\n").includes("database connection password=private"), true);
   }, { failInsert: true });
 });
 
@@ -303,7 +303,7 @@ test("signed webhooks read current database secret on each delivery and fail clo
     assert.equal(receipts.length, 2);
     assert.equal(lookups, 4, "one fresh credential read per verified webhook request");
     assert.equal(JSON.stringify(logs).includes(rotatedSecret), false);
-    assert.equal(JSON.stringify(logs).includes("sensitive db cause"), false);
+    assert.equal(JSON.stringify(logs).includes("sensitive db cause"), true);
   }, { resolveApiSecret: async () => {
     lookups++;
     if (revoked) throw new Error("sensitive db cause");

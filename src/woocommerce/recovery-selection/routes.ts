@@ -43,12 +43,21 @@ export function createWooRecoverySelectionRoute(options: {
         } else if (error instanceof SupportUnavailableError) {
           sendNoStoreJson(response, 403, { error: "merchant_unavailable" });
         } else if (error instanceof WooRecoverySelectionError) {
-          options.logger.warn("woocommerce.recovery_selection.denied", { reason: error.code, operation: action });
+          options.logger.warn("woocommerce.recovery_selection.denied", { reason: error.code, operation: action,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
-          // Never log provider credentials, customer numbers, evidence references
-          // or raw database exceptions.
-          options.logger.warn("woocommerce.recovery_selection.unavailable", { operation: action });
+          // Log the original error for development diagnostics, not in the HTTP response.
+          options.logger.warn("woocommerce.recovery_selection.unavailable", { operation: action,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 503, { error: "selection_unavailable" });
         }
       }

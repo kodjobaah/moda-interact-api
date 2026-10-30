@@ -39,9 +39,9 @@ export function createWooBillingWebhookRoute({
         let signingSecret: string | undefined;
         try {
           signingSecret = await resolveApiSecret?.();
-        } catch {
-          // A revoked, corrupt or unavailable sealed credential must not accept receipts.
-          throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable");
+        } catch (error) {
+          // Preserve the cause for diagnostics while keeping the response and fail-closed behaviour unchanged.
+          throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable", error);
         }
         if (!signingSecret) throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable");
 
@@ -66,7 +66,12 @@ export function createWooBillingWebhookRoute({
           ? error
           : new WooBillingWebhookError(422, "invalid_webhook_payload");
         if (failure.code === "webhook_acceptance_unavailable" || failure.code === "webhook_receipt_integrity_error") {
-          logger.error("billing.woocommerce_webhook.failed", { reason: failure.code });
+          logger.error("billing.woocommerce_webhook.failed", { reason: failure.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
         }
         sendError(response, failure.statusCode, failure.code);
       }

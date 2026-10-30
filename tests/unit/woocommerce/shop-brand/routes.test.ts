@@ -85,8 +85,25 @@ test("awaits durable commit, responds 503 without leaking raw DB exceptions", as
       throw new Error("PG URL=https://private.example/secret bearer-credential");
     } } }, JSON.stringify(snapshot));
     assert.deepEqual([failure.status, failure.body], [503, { error: "shop_brand_unavailable" }]);
-    assert.equal(JSON.stringify(events).includes("private.example"), false);
+    const unavailable = events.find((item) => item.level === "warn" && item.metadata?.reason === "database_unavailable");
+    assert.equal(unavailable?.metadata?.errorName, "Error");
+    assert.equal(unavailable?.metadata?.errorMessage,
+      "PG URL=https://private.example/secret bearer-credential");
+    assert.match(String(unavailable?.metadata?.errorStack), /private\.example/);
   } finally { commit(); await new Promise<void>(resolve => server.close(() => resolve())); }
+});
+
+test("validation rejections retain the response contract and log their original message", async () => {
+  events.length = 0;
+  const result = await post({
+    authenticator: { authenticate: async () => principal }, logger,
+    service: { record: async () => ({ status: "updated" }) },
+  }, JSON.stringify({ ...snapshot, observedAt: "2026-10-28T12:00:01.123456Z" }));
+  assert.equal(result.status, 400);
+  assert.deepEqual(result.body, { error: "invalid_request" });
+  const failure = events.find((event) => event.level === "warn" && event.metadata?.reason === "invalid_request");
+  assert.equal(failure?.metadata?.errorMessage, "invalid_request");
+  assert.equal(failure?.metadata?.errorName, "Error");
 });
 
 test("route participates in the Woo composition before merchant fallbacks", async () => {

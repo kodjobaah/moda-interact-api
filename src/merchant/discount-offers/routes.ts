@@ -75,12 +75,22 @@ export function createMerchantDiscountOffersRoutes(options: {
       } catch(error) {
         if (error instanceof WooUnauthenticatedError) sendJson(response,401,{error:"unauthorized"});
         else if (error instanceof DiscountOffersError) {
-          logger.warn("merchant.discount_offers.access.denied",{reason:error.code});
+          logger.warn("merchant.discount_offers.access.denied",{reason:error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response,error.status,{error:error.code});
         } else if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002","P2034"].includes(error.code)) {
           sendJson(response,409,{error:"offers_conflict"});
         } else {
-          logger.error("merchant.discount_offers.access.failed",{reason:"internal"});
+          logger.error("merchant.discount_offers.access.failed",{reason:"internal",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendJson(response,500,{error:"internal_error"});
         }
       }

@@ -56,11 +56,19 @@ export function createMerchantKnowledgeRoute(options: {
         } else if (error instanceof MerchantKnowledgeReadError) {
           if (error.status !== 400) logger.warn("merchant.knowledge.read.failed", {
             reason: error.code, ...timings, durationMs: Math.max(0, now() - started),
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
           });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
           logger.error("merchant.knowledge.read.failed", {
             reason: "internal", ...timings, durationMs: Math.max(0, now() - started),
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
           });
           sendNoStoreJson(response, 503, { error: "merchant_knowledge_unavailable" });
         }

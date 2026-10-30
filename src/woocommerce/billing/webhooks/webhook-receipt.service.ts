@@ -35,7 +35,7 @@ export class WooBillingWebhookReceiptService {
       return { receiptId: receipt.id, duplicate: false };
     } catch (error) {
       if (!isExactReceiptUniqueConflict(error)) {
-        throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable");
+        throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable", error);
       }
 
       try {
@@ -49,7 +49,7 @@ export class WooBillingWebhookReceiptService {
         return { receiptId: existing.id, duplicate: true };
       } catch (readError) {
         if (readError instanceof WooBillingWebhookError) throw readError;
-        throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable");
+        throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable", readError);
       }
     }
   }

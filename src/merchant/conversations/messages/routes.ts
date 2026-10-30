@@ -72,10 +72,20 @@ export function createMerchantConversationMessageRoutes(input: {
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) sendNoStoreJson(response, 401, { error: "unauthorized" });
         else if (error instanceof SendHttpError) {
-          if (error.status !== 404) input.logger.warn("merchant.conversations.human_send.denied", { reason: error.code });
+          if (error.status !== 404) input.logger.warn("merchant.conversations.human_send.denied", { reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
-          input.logger.error("merchant.conversations.human_send.failed", { reason: "internal_error" });
+          input.logger.error("merchant.conversations.human_send.failed", { reason: "internal_error",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 500, { error: "internal_error" });
         }
       }

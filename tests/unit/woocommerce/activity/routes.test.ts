@@ -54,10 +54,11 @@ test("authenticated shop identity, no-store 202 and no payload/PII logging", asy
   await withRoute({ publish: async (shopId, checkout) => {
     assert.equal(shopId, "server-shop");
     assert.equal(checkout.eventId, "evt-001");
+    assert.deepEqual(checkout.checkout.contact, { phone: "+447777777777", email: "client@example.org" });
     return { duplicate: false, jobId: "opaque" };
   } }, async (origin, calls) => {
     const response = await send(origin, { ...event, checkout: {
-      ...event.checkout, contact: { phone: "+447777777777", email: "client@example.org" },
+      ...event.checkout, contact: { phone: "+447777777777", canonicalPhone: "447777777777", email: "client@example.org" },
     } });
     assert.equal(response.status, 202);
     assert.deepEqual(await response.json(), { status: "accepted" });
@@ -65,6 +66,25 @@ test("authenticated shop identity, no-store 202 and no payload/PII logging", asy
     assert.equal(calls.publish, 1);
     const logged = JSON.stringify(calls.logs);
     assert.doesNotMatch(logged, /client@example|777777|29\.99|secret/i);
+  });
+});
+
+test("phone-free v1 checkout with restoration reaches the authenticated publisher", async () => {
+  const restoration = {
+    schemaVersion: "woo.cart-restore.v1", kind: "supported", appliedCouponCodes: ["Original-Code"],
+    lines: [{ productId: "101", quantity: 2 }],
+  } as const;
+  await withRoute({ publish: async (shopId, checkout) => {
+    assert.equal(shopId, "server-shop");
+    assert.deepEqual(checkout.checkout.restoration, restoration);
+    assert.deepEqual(checkout.checkout.contact, { email: "customer@example.com" });
+    return { duplicate: false, jobId: "opaque" };
+  } }, async (origin, calls) => {
+    const response = await send(origin, { ...event, checkout: { ...event.checkout,
+      contact: { email: "customer@example.com" }, restoration,
+    } });
+    assert.equal(response.status, 202);
+    assert.equal(calls.publish, 1);
   });
 });
 
@@ -82,6 +102,12 @@ test("invalid body, header, query, spoofing and event family never enqueue", asy
     for (const [payload, expected] of [
       [{ ...event, shopId: "spoof" }, 400],
       [{ ...event, checkout: { ...event.checkout, contact: { consent: true } } }, 400],
+      [{ ...event, schemaVersion: "woo.activity.v2" }, 400],
+      [{ ...event, schemaVersion: "woo.activity.v3" }, 400],
+      [{ ...event, checkout: { ...event.checkout, contact: { phone: "+447777777777" } } }, 400],
+      [{ ...event, checkout: { ...event.checkout, restoration: {
+        schemaVersion: "woo.cart-restore.v1", kind: "supported", appliedCouponCodes: [], lines: [],
+      } } }, 400],
       [{ ...orderPaid, order: { ...orderPaid.order, checkoutKey: "foreign-cart" } }, 400],
     ] as const) {
       const response = await send(origin, payload);
@@ -110,6 +136,14 @@ test("retained conflict is bounded 409; enqueue failure is retryable 503", async
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), { error: code });
       assert.doesNotMatch(JSON.stringify(calls.logs), /secret|password|29\.99/);
+      if (status === 503) {
+        const warning = calls.logs.find((entry) => Array.isArray(entry) && entry[0] === "woocommerce.activity.queue.unavailable");
+        assert.ok(warning && Array.isArray(warning));
+        const fields = warning[1] as { error?: Error };
+        assert.ok(fields.error instanceof Error);
+        assert.equal(fields.error.name, "Error");
+        assert.equal(fields.error.message, "Woo activity queue operation failed");
+      }
     });
   }
 });

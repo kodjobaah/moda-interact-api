@@ -13,8 +13,9 @@ export class WooBillingWebhookError extends Error {
   constructor(
     readonly statusCode: number,
     readonly code: WooBillingWebhookErrorCode,
+    cause?: unknown,
   ) {
-    super(code);
+    super(code, { cause });
     this.name = "WooBillingWebhookError";
   }
 }

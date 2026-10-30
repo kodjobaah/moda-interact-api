@@ -36,9 +36,15 @@ export function createWooRestReadAuthorizationRoutes(options: {
           locale = await options.service.returnLocale(
             url.searchParams.get("user_id"), url.searchParams.get("display_locale"), url.searchParams.get("display_proof"),
           );
-        } catch {
+        } catch (error) {
           // Return is informational; keep it available even if the locale lookup fails.
-          options.logger.warn("woocommerce.rest_read.return_locale.unavailable", { reason: "lookup_failed" });
+          options.logger.warn("woocommerce.rest_read.return_locale.unavailable", {
+            reason: "lookup_failed",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
         }
         sendReturnPage(response, locale, url.searchParams.get("success") === "0");
         return true;
@@ -207,9 +213,21 @@ function handleFailure(error: unknown, response: ServerResponse, logger: Structu
   if (error instanceof WooUnauthenticatedError) return sendJson(response, 401, { error: "unauthorized" });
   if (error instanceof InvalidCallback) return sendJson(response, error.status, { error: error.code });
   if (error instanceof WooReadAuthorizationError) {
-    logger.warn("woocommerce.rest_read.authorization.failed", { action, reason: error.code });
+    logger.warn("woocommerce.rest_read.authorization.failed", {
+      action, reason: error.code,
+      errorName: error.name,
+      errorMessage: error.message,
+      errorStack: error.stack,
+      errorCause: error.cause,
+    });
     return sendJson(response, error.status, { error: error.code });
   }
-  logger.error("woocommerce.rest_read.authorization.failed", { action, reason: "internal" });
+  logger.error("woocommerce.rest_read.authorization.failed", {
+    action, reason: "internal",
+    errorName: error instanceof Error ? error.name : typeof error,
+    errorMessage: error instanceof Error ? error.message : String(error),
+    errorStack: error instanceof Error ? error.stack : undefined,
+    errorCause: error instanceof Error ? error.cause : undefined,
+  });
   sendJson(response, 500, { error: "internal_error" });
 }

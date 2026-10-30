@@ -194,7 +194,7 @@ test("bodyless reprocess accepts harmless transport headers but rejects actual r
   assert.deepEqual(state.calls, [{ operation: "reprocess", shopId: principal.shopId }]);
 });
 
-test("unexpected reprocess failure logs a bounded Prisma code without exposing exception details", async () => {
+test("unexpected reprocess failure logs the original Prisma diagnostic", async () => {
   const state = setup({ reprocessFailure: true });
   await withRoutes(state.routes, async (base) => {
     const response = await fetch(`${base}/v1/merchant/merchant-knowledge/uploads/file_1/reprocess`, {
@@ -211,6 +211,6 @@ test("unexpected reprocess failure logs a bounded Prisma code without exposing e
   assert.equal(details.cause, "prisma");
   assert.equal(details.prismaCode, "P2028");
   assert.equal(typeof details.durationMs, "number");
-  assert.equal(JSON.stringify(state.logs).includes("X-Amz-Signature"), false);
-  assert.equal(JSON.stringify(state.logs).includes("private="), false);
+  assert.match(String(details.errorMessage), /private=/);
+  assert.equal(details.errorName, "Error");
 });

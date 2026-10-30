@@ -58,16 +58,36 @@ export function createMerchantUsageHistoryRoute(input: {
         // logging sink failures from the HTTP response.
         const context = { ...(shopId ? { shopId } : {}), durationMs: Math.max(0, now() - started) };
         if (error instanceof WooUnauthenticatedError) {
-          logger.warn("merchant.usage_history.denied", { ...context, reason: "unauthorized" });
+          logger.warn("merchant.usage_history.denied", { ...context, reason: "unauthorized",
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof UsageHistoryRequestError) {
-          logger.warn("merchant.usage_history.denied", { ...context, reason: error.code });
+          logger.warn("merchant.usage_history.denied", { ...context, reason: error.code,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, error.code === "invalid_request" ? 400 : 409, { error: error.code });
         } else if (error instanceof UsageHistoryIntegrityError) {
-          logger.error("merchant.usage_history.failed", { ...context, reason: "integrity", error });
+          logger.error("merchant.usage_history.failed", { ...context, reason: "integrity", error,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 409, { error: "usage_history_integrity_invalid" });
         } else {
-          logger.error("merchant.usage_history.failed", { ...context, reason: "internal", error });
+          logger.error("merchant.usage_history.failed", { ...context, reason: "internal", error,
+            errorName: error instanceof Error ? error.name : typeof error,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            errorStack: error instanceof Error ? error.stack : undefined,
+            errorCause: error instanceof Error ? error.cause : undefined,
+          });
           sendNoStoreJson(response, 500, { error: "internal_error" });
         }
       }

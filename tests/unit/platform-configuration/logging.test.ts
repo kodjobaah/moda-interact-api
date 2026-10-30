@@ -50,18 +50,18 @@ function fixture() {
   };
 }
 
-test("the shared logger receives no startup event and a bounded failure for an absent row", async () => {
+test("the shared logger includes the original error message for an absent row", async () => {
   const state = fixture();
   assert.equal(state.calls, 0);
-  assert.deepEqual(state.events, []);
+  assert.equal(state.events.length, 0);
   await assert.rejects(state.reader.readMerchantKnowledgeUploadPolicy(), { code: "MISSING" });
   assert.equal(state.calls, 1);
-  assert.deepEqual(state.events, [{
-    level: "warn", event: "api.platform_configuration.read", data: {
-      key: "merchant.knowledge.r2", operation: "read_upload_policy",
-      outcome: "failed", reasonCode: "MISSING",
-    },
-  }]);
+  assert.equal(state.events.length, 1);
+  assert.equal(state.events[0]?.level, "warn");
+  assert.equal(state.events[0]?.event, "api.platform_configuration.read");
+  assert.equal(state.events[0]?.data.reasonCode, "MISSING");
+  assert.match(String(state.events[0]?.data.errorMessage), /MISSING/);
+  assert.equal(state.events[0]?.data.errorName, "ApiPlatformConfigurationError");
 });
 
 test("a successful policy-only or full R2 read logs no credential, payload, endpoint or root material", async () => {
@@ -82,17 +82,17 @@ test("a successful policy-only or full R2 read logs no credential, payload, endp
   }
 });
 
-test("database failures are logged by bounded reason code, with no raw cause and no fallback", async () => {
+test("database failures retain reason code and expose a readable exception message", async () => {
   const state = fixture();
   state.setDatabaseFailure(true);
   await assert.rejects(state.reader.requireCommerceConnectionSecurity(), { code: "DATABASE_UNAVAILABLE" });
-  assert.deepEqual(state.events, [{
-    level: "warn", event: "api.platform_configuration.read", data: {
-      key: "commerce.connectionKeys", operation: "require_connection_security",
-      outcome: "failed", reasonCode: "DATABASE_UNAVAILABLE",
-    },
-  }]);
-  assert.equal(JSON.stringify(state.events).includes("sensitive database error"), false);
+  assert.equal(state.events.length, 1);
+  assert.equal(state.events[0]?.level, "warn");
+  assert.equal(state.events[0]?.data.reasonCode, "DATABASE_UNAVAILABLE");
+  assert.match(String(state.events[0]?.data.errorMessage), /DATABASE_UNAVAILABLE/);
+  assert.equal(state.events[0]?.data.errorName, "ApiPlatformConfigurationError");
+  assert.ok(state.events[0]?.data.errorCause instanceof Error);
+  assert.equal((state.events[0]?.data.errorCause as Error).message, "sensitive database error");
 });
 
 test("logger sink failures do not change read success or configuration failure", async () => {
@@ -126,7 +126,7 @@ test("Woo billing reader logs only purpose and bounded outcome, not the sealed p
   const credentials = { apiKey: "billing-provider-api-key", apiSecret: "billing-provider-secret" };
   state.seal(key, credentials);
   assert.deepEqual(await state.reader.requireWooBillingCredentials(), credentials);
-  assert.deepEqual(state.events, [{
+  assert.deepEqual([...state.events], [{
     level: "info", event: "api.platform_configuration.read", data: {
       key, operation: "require_billing_credentials", outcome: "success",
     },
@@ -137,7 +137,6 @@ test("Woo billing reader logs only purpose and bounded outcome, not the sealed p
   assert.equal(text.includes(state.rootMaterial), false);
   state.setDatabaseFailure(true);
   await assert.rejects(state.reader.requireWooBillingCredentials(), { code: "DATABASE_UNAVAILABLE" });
-  assert.deepEqual(state.events[1]?.data, {
-    key, operation: "require_billing_credentials", outcome: "failed", reasonCode: "DATABASE_UNAVAILABLE",
-  });
+  assert.equal(state.events[1]?.data.reasonCode, "DATABASE_UNAVAILABLE");
+  assert.match(String(state.events[1]?.data.errorMessage), /DATABASE_UNAVAILABLE/);
 });

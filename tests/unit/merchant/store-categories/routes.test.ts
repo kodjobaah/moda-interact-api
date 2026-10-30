@@ -102,7 +102,7 @@ test("query tampering, duplicate locale, request body and non-GET methods cannot
   });
 });
 
-test("integrity conflict is 409 and unexpected exceptions are redacted as 500", async () => {
+test("integrity conflict is 409 and unexpected exception message is logged with a generic 500", async () => {
   for (const [kind, status, code] of [
     ["conflict", 409, "store_category_integrity_invalid"],
     ["internal", 500, "internal_error"],
@@ -112,7 +112,9 @@ test("integrity conflict is 409 and unexpected exceptions are redacted as 500", 
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), { error: code });
       assert.equal(calls.filter((call) => call.startsWith("read:")).length, 1);
-      assert.equal(logs.join("\n").includes("sensitive database details"), false);
+      if (kind === "internal") {
+        assert.equal(logs.join("\n").includes("sensitive database details"), true);
+      }
     }, { serviceFailure: kind });
   }
 });
