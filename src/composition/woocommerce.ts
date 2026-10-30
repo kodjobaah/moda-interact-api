@@ -21,6 +21,8 @@ import { createWooShopBrandRoute } from "../woocommerce/shop-brand/routes.js";
 import { WooShopBrandService } from "../woocommerce/shop-brand/service.js";
 import { createWooRecoverySelectionRoute } from "../woocommerce/recovery-selection/routes.js";
 import { WooRecoverySelectionService } from "../woocommerce/recovery-selection/service.js";
+import { createWooRecoveryRestoreRoute } from "../woocommerce/recovery-restore/routes.js";
+import { WooRecoveryRestoreService } from "../woocommerce/recovery-restore/service.js";
 
 /** The Woo routes each retain their distinct connect, signed-webhook and callback trust boundaries. */
 export function createWooRoutes(options: {
@@ -31,7 +33,7 @@ export function createWooRoutes(options: {
   platformConfiguration?: ApiPlatformConfigurationReader;
   checkoutPublisher?: WooCheckoutPublisher;
   orderPublisher?: WooOrderPublisher;
-}): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; consent: ApiRouteHandler; shopBrand: ApiRouteHandler; recoverySelection: ApiRouteHandler; restRead?: ApiRouteHandler } {
+}): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; consent: ApiRouteHandler; shopBrand: ApiRouteHandler; recoverySelection: ApiRouteHandler; recoveryRestore: ApiRouteHandler; restRead?: ApiRouteHandler } {
   const { prisma, config, authenticator, logger } = options;
   const installation = createWooInstallationRoutes({
     mode: config.woocommerceConnectionMode,
@@ -80,6 +82,9 @@ export function createWooRoutes(options: {
     shopBrand: createWooShopBrandRoute({ authenticator, service: new WooShopBrandService(prisma), logger }),
     recoverySelection: createWooRecoverySelectionRoute({
       authenticator, service: new WooRecoverySelectionService(prisma), logger,
+    }),
+    recoveryRestore: createWooRecoveryRestoreRoute({
+      authenticator, service: new WooRecoveryRestoreService(prisma), logger,
     }),
     billingWebhook,
     ...(restRead ? { restRead } : {}),

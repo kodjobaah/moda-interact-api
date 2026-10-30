@@ -42,6 +42,7 @@ async function main(): Promise<void> {
       wooConsent: woo.consent,
       wooShopBrand: woo.shopBrand,
       wooRecoverySelection: woo.recoverySelection,
+      wooRecoveryRestore: woo.recoveryRestore,
       merchant,
       billing,
       wooInstallation: woo.installation,

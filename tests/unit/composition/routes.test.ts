@@ -56,9 +56,11 @@ test("registers callbacks, webhook, merchant, billing and finally installation",
   const billing = [route("billing-1", [], calls), route("billing-2", [], calls)];
   const install = route("installation", [], calls);
   const activity = route("woo-activity", [], calls);
+  const restore = route("woo-recovery-restore", [], calls);
   assert.deepEqual(composeApiRoutes({
-    wooRestRead: rest, wooBillingWebhook: webhook, wooActivity: activity, merchant, billing, wooInstallation: install,
-  }), [rest, webhook, activity, ...merchant, ...billing, install]);
+    wooRestRead: rest, wooBillingWebhook: webhook, wooActivity: activity, wooRecoveryRestore: restore,
+    merchant, billing, wooInstallation: install,
+  }), [rest, webhook, activity, restore, ...merchant, ...billing, install]);
   assert.deepEqual(composeApiRoutes({
     wooBillingWebhook: webhook, merchant, billing, wooInstallation: install,
   }), [webhook, ...merchant, ...billing, install]);
@@ -91,6 +93,7 @@ test("all currently implemented route families remain individually reachable", a
       ["/v1/woocommerce/read-authorizations/return", "GET"],
       [`/v1/woocommerce/read-authorizations/callback/${"a".repeat(43)}`, "POST"]]],
     ["billing-webhook", [["/v1/billing/webhooks/woocommerce", "POST"]]],
+    ["recovery-restore", [["/v1/woocommerce/recovery-restore/resolve", "POST"]]],
     ["installation", [["/v1/woocommerce/installations/connect", "POST"],
       ["/v1/woocommerce/installation", "GET"]]],
   ];
@@ -98,9 +101,10 @@ test("all currently implemented route families remain individually reachable", a
   const handlers = composeApiRoutes({
     wooRestRead: route("rest-read", wooDefinitions[0]![1], calls),
     wooBillingWebhook: route("billing-webhook", wooDefinitions[1]![1], calls),
+    wooRecoveryRestore: route("recovery-restore", wooDefinitions[2]![1], calls),
     merchant: merchantDefinitions.map(([name, matches]) => route(name, matches, calls)),
     billing: billingDefinitions.map(([name, matches]) => route(name, matches, calls)),
-    wooInstallation: route("installation", wooDefinitions[2]![1], calls),
+    wooInstallation: route("installation", wooDefinitions[3]![1], calls),
   });
   await withRuntime(handlers, async (origin) => {
     for (const [name, matches] of definitions) {
