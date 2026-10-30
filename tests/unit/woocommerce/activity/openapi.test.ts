@@ -38,6 +38,12 @@ test("OpenAPI documents all four capture-only event types and Redis failure", ()
   assert.deepEqual(orderObject.required, ["orderId", "checkoutKey", "status"]);
   assert.equal(orderObject.additionalProperties, false);
   assert.equal(snapshot.additionalProperties, false);
+  assert.ok("restoration" in (snapshot.properties as Record<string, unknown>));
+  assert.equal("WooCartRestoreSnapshotV1" in openapi.components.schemas, true);
+  const contact = openapi.components.schemas.CheckoutContact;
+  assert.ok(contact);
+  assert.ok("canonicalPhone" in (contact.properties as Record<string, unknown>));
+  assert.ok("verifiedCountryCode" in (contact.properties as Record<string, unknown>));
   assert.ok(JSON.stringify(openapi).includes("job is retained"));
   assert.equal(JSON.stringify(openapi).includes("permanent replay ledger"), true);
 });

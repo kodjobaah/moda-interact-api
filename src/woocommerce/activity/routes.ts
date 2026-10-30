@@ -8,6 +8,13 @@ import type { WooOrderPublisher } from "./order-producer.js";
 import { WooCheckoutReplayConflict } from "./producer.js";
 import { readWooActivityRequest } from "./request.js";
 
+function boundedError(error: unknown): Error {
+  const safe = new Error("Woo activity queue operation failed");
+  safe.name = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,31}$/.test(error.name)
+    ? error.name : "UnknownError";
+  return safe;
+}
+
 export function createWooCheckoutActivityRoute(options: {
   authenticator: Pick<WooInstallationAuthenticator, "authenticate">;
   publisher: WooCheckoutPublisher;
@@ -44,8 +51,11 @@ export function createWooCheckoutActivityRoute(options: {
           options.logger.warn("woocommerce.activity.replay.rejected", { reason: "retained_replay_conflict" });
           sendNoStoreJson(response, 409, { error: "event_replay_conflict" });
         } else {
-          // Redis/queue errors are retryable; never log the exception (may contain a URL/secret).
-          options.logger.warn("woocommerce.activity.queue.unavailable", { reason: "enqueue_failed" });
+          // The shared logger serialises this bounded summary; never pass the
+          // original exception, whose message may contain a URL or secret.
+          options.logger.warn("woocommerce.activity.queue.unavailable", {
+            reason: "enqueue_failed", error: boundedError(error),
+          });
           sendNoStoreJson(response, 503, { error: "queue_unavailable" });
         }
       }

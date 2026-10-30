@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { WOO_CHECKOUT_QUEUE, type WooCheckoutJob } from "../../../../src/woocommerce/activity/contract.js";
+import { WOO_CHECKOUT_QUEUE, parseWooActivityEvent, type WooCheckoutJob } from "../../../../src/woocommerce/activity/contract.js";
 import {
   WooCheckoutQueueProducer, WooCheckoutReplayConflict, wooCheckoutJobId, wooCheckoutContentDigest,
   type WooCheckoutQueueClient,
@@ -53,6 +53,41 @@ test("race with conflicting retained job is detected after add, no accidental ov
     queue.jobs.set(opts.jobId, { ...data, contentDigest: "conflicting" });
   };
   await assert.rejects(producer.publish("shop-a", event), WooCheckoutReplayConflict);
+});
+
+test("restoration is retained in the v1 queue job, digest, and replay conflict check", async () => {
+  const queue = new InMemoryQueue();
+  const producer = new WooCheckoutQueueProducer(queue);
+  const request = {
+    ...event,
+    checkout: {
+      ...event.checkout,
+      contact: { phone: "+447400123456", canonicalPhone: "447400123456", verifiedCountryCode: "GB" },
+      restoration: {
+        schemaVersion: "woo.cart-restore.v1",
+        kind: "supported",
+        appliedCouponCodes: ["Original-Code", "FREESHIP"],
+        lines: [{ productId: "101", quantity: 2, attributes: { attribute_pa_color: "navy" } }],
+      },
+    },
+  };
+  const normalized = parseWooActivityEvent(request);
+  if (normalized.eventType !== "CHECKOUT_UPDATED") throw new Error("expected checkout");
+  const accepted = await producer.publish("shop-a", normalized);
+  const job = queue.jobs.get(accepted.jobId);
+  assert.ok(job);
+  assert.equal(job.schemaVersion, "woo.activity.v1");
+  assert.deepEqual(job.checkout.restoration, request.checkout.restoration);
+  assert.deepEqual(job.checkout.contact, { phone: "+447400123456" });
+  assert.equal(job.contentDigest, wooCheckoutContentDigest(normalized));
+  assert.equal((await producer.publish("shop-a", normalized)).duplicate, true);
+
+  const changed = parseWooActivityEvent({ ...request, checkout: { ...request.checkout,
+    restoration: { ...request.checkout.restoration, appliedCouponCodes: ["Changed-Code"] },
+  } });
+  if (changed.eventType !== "CHECKOUT_UPDATED") throw new Error("expected checkout");
+  await assert.rejects(producer.publish("shop-a", changed), WooCheckoutReplayConflict);
+  assert.equal(queue.adds, 1);
 });
 
 test("queue unavailable rejects rather than acknowledging and retry can then succeed", async () => {
