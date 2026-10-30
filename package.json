@@ -15,7 +15,7 @@
     "lint": "eslint . --max-warnings=0",
     "pretest": "npm run prisma:generate",
     "test": "tsx --test \"tests/unit/**/*.test.ts\"",
-    "test:integration": "node scripts/test-arch049-shop-brand-postgres.mjs && node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs && node scripts/test-arch036-discount-offers-postgres.mjs && node scripts/test-arch041-cross-domain-postgres.mjs && node scripts/test-arch035-merchant-knowledge-postgres.mjs && node scripts/test-arch035-feature-preferences-postgres.mjs && node scripts/test-arch035-promotions-postgres.mjs && node scripts/test-arch035-woo-support-postgres.mjs && node scripts/test-arch035-usage-history-postgres.mjs && node scripts/test-arch035-knowledge-upload-postgres.mjs && node scripts/run-arch043-platform-configuration-postgres.mjs && npm run test:arch040-conversation-control:postgres && npm run test:arch040-human-send:postgres && npm run test:arch035-woo-activity:redis && npm run test:arch046-woo-consent:postgres",
+    "test:integration": "node scripts/test-arch049-shop-brand-postgres.mjs && node scripts/test-woocommerce-installation-postgres.mjs && node scripts/test-woocommerce-rest-read-authorization-postgres.mjs && node scripts/test-arch041-billing-postgres.mjs && node scripts/test-arch036-discount-offers-postgres.mjs && node scripts/test-arch041-cross-domain-postgres.mjs && node scripts/test-arch035-merchant-knowledge-postgres.mjs && node scripts/test-arch035-feature-preferences-postgres.mjs && node scripts/test-arch035-promotions-postgres.mjs && node scripts/test-arch035-woo-support-postgres.mjs && node scripts/test-arch035-usage-history-postgres.mjs && node scripts/test-arch035-knowledge-upload-postgres.mjs && node scripts/run-arch043-platform-configuration-postgres.mjs && npm run test:arch040-conversation-control:postgres && npm run test:arch040-human-send:postgres && npm run test:arch035-woo-activity:redis && npm run test:arch046-woo-consent:postgres && node scripts/test-arch053-recovery-restore-postgres.mjs",
     "prisma:generate": "prisma generate --schema database/prisma/schema.prisma",
     "test:arch026-woo-rest-read:postgres": "node scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
     "test:arch036-discount-offers:postgres": "node scripts/test-arch036-discount-offers-postgres.mjs",
@@ -39,12 +39,13 @@
     "test:arch046-woo-selection:unit": "tsx --test \"tests/unit/woocommerce/recovery-selection/*.test.ts\"",
     "test:arch046-woo-selection:postgres": "node scripts/test-arch046-woo-consent-postgres.mjs",
     "test:arch049-shop-brand:unit": "tsx --test \"tests/unit/woocommerce/shop-brand/*.test.ts\"",
-    "test:arch049-shop-brand:postgres": "node scripts/test-arch049-shop-brand-postgres.mjs"
+    "test:arch049-shop-brand:postgres": "node scripts/test-arch049-shop-brand-postgres.mjs",
+    "test:arch053-recovery-restore:postgres": "node scripts/test-arch053-recovery-restore-postgres.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1144.0",
     "@aws-sdk/s3-request-presigner": "^3.1144.0",
-    "@modainteract/moda-interact-shared": "2.5.0",
+    "@modainteract/moda-interact-shared": "2.7.2",
     "@prisma/client": "6.19.3",
     "bullmq": "^6.2.0",
     "ioredis": "^6.0.0"

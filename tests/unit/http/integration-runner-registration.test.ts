@@ -6,6 +6,7 @@ import test from "node:test";
 
 const root = fileURLToPath(new URL("../../../", import.meta.url));
 const directRunners = [
+  "scripts/test-arch049-shop-brand-postgres.mjs",
   "scripts/test-woocommerce-installation-postgres.mjs",
   "scripts/test-woocommerce-rest-read-authorization-postgres.mjs",
   "scripts/test-arch041-billing-postgres.mjs",
@@ -18,6 +19,7 @@ const directRunners = [
   "scripts/test-arch035-usage-history-postgres.mjs",
   "scripts/test-arch035-knowledge-upload-postgres.mjs",
   "scripts/run-arch043-platform-configuration-postgres.mjs",
+  "scripts/test-arch053-recovery-restore-postgres.mjs",
 ] as const;
 
 // These disposable runners are included transitively through npm scripts.

@@ -8,6 +8,7 @@ export function composeApiRoutes(input: {
   wooConsent?: ApiRouteHandler;
   wooShopBrand?: ApiRouteHandler;
   wooRecoverySelection?: ApiRouteHandler;
+  wooRecoveryRestore?: ApiRouteHandler;
   merchant: readonly ApiRouteHandler[];
   billing: readonly ApiRouteHandler[];
   wooInstallation: ApiRouteHandler;
@@ -19,6 +20,7 @@ export function composeApiRoutes(input: {
     ...(input.wooConsent ? [input.wooConsent] : []),
     ...(input.wooShopBrand ? [input.wooShopBrand] : []),
     ...(input.wooRecoverySelection ? [input.wooRecoverySelection] : []),
+    ...(input.wooRecoveryRestore ? [input.wooRecoveryRestore] : []),
     ...input.merchant,
     ...input.billing,
     input.wooInstallation,
