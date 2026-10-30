@@ -8,6 +8,13 @@ import type { WooOrderPublisher } from "./order-producer.js";
 import { WooCheckoutReplayConflict } from "./producer.js";
 import { readWooActivityRequest } from "./request.js";
 
+function boundedError(error: unknown): Error {
+  const safe = new Error("Woo activity queue operation failed");
+  safe.name = error instanceof Error && /^[A-Za-z][A-Za-z0-9]{0,31}$/.test(error.name)
+    ? error.name : "UnknownError";
+  return safe;
+}
+
 export function createWooCheckoutActivityRoute(options: {
   authenticator: Pick<WooInstallationAuthenticator, "authenticate">;
   publisher: WooCheckoutPublisher;
@@ -49,12 +56,8 @@ export function createWooCheckoutActivityRoute(options: {
           });
           sendNoStoreJson(response, 409, { error: "event_replay_conflict" });
         } else {
-          // Preserve the queue error for diagnosis; the client retains a retryable 503.
-          options.logger.warn("woocommerce.activity.queue.unavailable", { reason: "enqueue_failed",
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+          options.logger.warn("woocommerce.activity.queue.unavailable", {
+            reason: "enqueue_failed", error: boundedError(error),
           });
           sendNoStoreJson(response, 503, { error: "queue_unavailable" });
         }

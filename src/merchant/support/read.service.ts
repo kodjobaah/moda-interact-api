@@ -7,7 +7,8 @@ import { assertSupportInstallation, type SupportDatabase } from "./installation.
 type Row = { id: string; kind: SupportMessage["kind"]; state: SupportMessage["state"];
   originalBody: string; sourceLanguageTag: string; displayLanguageTag: string | null;
   systemCode: string | null; systemVersion: string | null; translatedBody: string | null;
-  translationStatus: "AVAILABLE" | null; createdAt: Date; readAt: Date | null };
+  translationStatus: "AVAILABLE" | null; createdAt: Date; readAt: Date | null;
+  checkoutRecoveryId: string | null };
 const VISIBLE = Prisma.sql`(m."kind" = 'MERCHANT' OR
   (m."kind" IN ('ADMINISTRATIVE', 'SYSTEM') AND m."state" = 'AVAILABLE'))`;
 function safeCount(value: bigint) {
@@ -28,9 +29,14 @@ export class MerchantSupportReadService {
       const rows = await tx.$queryRaw<Row[]>(Prisma.sql`
         SELECT m."id",m."kind",m."state",m."originalBody",m."sourceLanguageTag",
           m."displayLanguageTag",m."systemCode",m."systemVersion",m."createdAt",m."readAt",
+          CASE WHEN m."kind" = 'SYSTEM' AND m."state" = 'AVAILABLE'
+            AND m."systemCode" = 'RECOVERY_INITIAL_OUTREACH_SENT' AND m."systemVersion" = '1'
+            THEN r."id" ELSE NULL END AS "checkoutRecoveryId",
           tr."translatedBody",tr."status" AS "translationStatus"
         FROM "support"."MerchantSupportMessage" m
         INNER JOIN "support"."MerchantSupportThread" t ON t."id" = m."threadId"
+        LEFT JOIN "commerce"."CheckoutRecovery" r
+          ON r."id" = m."checkoutRecoveryId" AND r."shopId" = t."shopId"
         LEFT JOIN LATERAL (
           SELECT "translatedBody","status" FROM "support"."MerchantMessageTranslation"
           WHERE "messageId" = m."id" AND "targetLanguageTag" = m."displayLanguageTag"
@@ -49,7 +55,7 @@ export class MerchantSupportReadService {
         WHERE t."shopId" = ${principal.shopId}
       `);
       const total = safeCount(counts[0]?.total ?? 0n);
-      return { schemaVersion: 1, page: query.page, pageSize: query.pageSize, total,
+      return { schemaVersion: 2, page: query.page, pageSize: query.pageSize, total,
         totalPages: Math.max(1,Math.ceil(total/query.pageSize)), unread: safeCount(counts[0]?.unread ?? 0n),
         items: rows.map((row): SupportMessage => {
           const translationRequired = row.displayLanguageTag !== null &&
@@ -62,7 +68,10 @@ export class MerchantSupportReadService {
             displayLanguageTag: row.displayLanguageTag,
             systemCode: row.kind === "SYSTEM" ? safeCode(row.systemCode,128) : null,
             systemVersion: row.kind === "SYSTEM" ? safeCode(row.systemVersion,64) : null,
-            createdAt: row.createdAt.toISOString(), readAt: row.readAt?.toISOString() ?? null };
+            createdAt: row.createdAt.toISOString(), readAt: row.readAt?.toISOString() ?? null,
+            checkoutRecoveryId: row.kind === "SYSTEM" && row.state === "AVAILABLE" &&
+              row.systemCode === "RECOVERY_INITIAL_OUTREACH_SENT" && row.systemVersion === "1"
+              ? row.checkoutRecoveryId : null };
         }) };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
   }

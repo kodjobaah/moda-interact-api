@@ -69,12 +69,10 @@ export function createMerchantSupportRoutes(options:{authenticator:WooInstallati
         });
         sendNoStoreJson(response,409,{error:"idempotency_conflict"});
       } else {
-        logger.error("merchant.support.failed",{operation,reason:error instanceof SupportIntegrityError ? "integrity" : "internal",
-          errorName: error instanceof Error ? error.name : typeof error,
-          errorMessage: error instanceof Error ? error.message : String(error),
-          errorStack: error instanceof Error ? error.stack : undefined,
-          errorCause: error instanceof Error ? error.cause : undefined,
-        });
+        try {
+          logger.error("merchant.support.failed",{operation,
+            reason:error instanceof SupportIntegrityError ? "integrity" : "internal",error});
+        } catch {}
         sendNoStoreJson(response,500,{error:"internal_error"});
       }
     }

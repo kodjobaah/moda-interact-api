@@ -21,6 +21,10 @@ test("ARCH-035-API-020 OpenAPI describes all runtime paths, schemas and Woo-only
   assert.deepEqual(spec.components.schemas.ComposeReceipt?.required,["schemaVersion","messageId","translationId"]);
   assert.deepEqual(spec.components.schemas.ReadReceipt?.required,["schemaVersion","messageId","readAt"]);
   assert.deepEqual(spec.components.schemas.SupportPage?.required,["schemaVersion","page","pageSize","total","totalPages","unread","items"]);
+  assert.equal((spec.components.schemas.SupportPage?.properties?.schemaVersion as {const:number}).const,2);
+  assert.ok((spec.components.schemas.SupportMessage?.required as string[]).includes("checkoutRecoveryId"));
+  assert.deepEqual(spec.components.schemas.ComposeReceipt?.properties?.schemaVersion,{type:"integer",const:1});
+  assert.deepEqual(spec.components.schemas.ReadReceipt?.properties?.schemaVersion,{type:"integer",const:1});
   assert.ok(spec.components.schemas.ComposeCommand?.description?.includes(String(MAX_SUPPORT_BODY_BYTES)));
   assert.deepEqual(parseSupportQuery(new URLSearchParams("pageSize=50")),{page:1,pageSize:50});
   assert.equal(parseSupportCompose({body:"Hi",actionId:"one"}).body,"Hi");

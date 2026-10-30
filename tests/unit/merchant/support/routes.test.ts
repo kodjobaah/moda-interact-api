@@ -3,12 +3,12 @@ import { Readable } from "node:stream";
 import test from "node:test";
 import type { IncomingMessage,ServerResponse } from "node:http";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
-import { SupportConflictError,SupportNotFoundError,SupportUnavailableError } from "../../../../src/merchant/support/contract.js";
+import { SupportConflictError,SupportIntegrityError,SupportNotFoundError,SupportUnavailableError } from "../../../../src/merchant/support/contract.js";
 import { createMerchantSupportRoutes } from "../../../../src/merchant/support/routes.js";
 
 const principal={shopId:"shop-a",installationId:"woo-a",canonicalSiteUrl:"https://a.invalid",credentialVersion:1};
 const send=JSON.stringify({body:"Hello",actionId:"a1"});
-const page={schemaVersion:1,page:1,pageSize:25,total:0,totalPages:1,unread:0,items:[]};
+const page={schemaVersion:2,page:1,pageSize:25,total:0,totalPages:1,unread:0,items:[]};
 const receipt={schemaVersion:1,messageId:"msg-1",translationId:null};
 const marked={schemaVersion:1,messageId:"msg-1",readAt:"2026-10-21T12:00:00.000Z"};
 function request(method:string,url:string,body="",headers:string[]=[]):IncomingMessage {
@@ -19,16 +19,16 @@ function response(){ let code=0;let body="";let headers:Record<string,string>={}
   const out={destroyed:false,headersSent:false,writeHead(c:number,h:Record<string,string>){code=c;headers=h;},
     end(value:string){body=value;}} as unknown as ServerResponse;
   return {out,get:()=>({code,headers,payload:JSON.parse(body) as unknown})}; }
-function make(error?:Error){const calls:string[]=[],logs:string[]=[];
+function make(error?:Error,loggerThrows=false,readResult:unknown=page){const calls:string[]=[],logs:unknown[][]=[];
   const route=createMerchantSupportRoutes({
     authenticator:{async authenticate(_req:unknown,options:unknown){calls.push(`auth:${JSON.stringify(options)}`);
       if(error instanceof WooUnauthenticatedError)throw error;return principal;}} as never,
-    read:{async read(){calls.push("list");if(error)throw error;return page;}} as never,
+    read:{async read(){calls.push("list");if(error)throw error;return readResult;}} as never,
     commands:{async compose(){calls.push("compose");if(error)throw error;return {response:receipt,created:true};},
       async markRead(){calls.push("mark");if(error)throw error;return marked;}} as never,
-    logger:{info(...args:unknown[]){logs.push(JSON.stringify(args));},
-      warn(...args:unknown[]){logs.push(JSON.stringify(args));},
-      error(...args:unknown[]){logs.push(JSON.stringify(args));}} as never});return {route,calls,logs}; }
+    logger:{info(...args:unknown[]){logs.push(args);},
+      warn(...args:unknown[]){logs.push(args);},
+      error(...args:unknown[]){logs.push(args);if(loggerThrows)throw new Error("logging sink failed");}} as never});return {route,calls,logs}; }
 test("GET, compose and mark-read are Woo-authenticated and cache-disabled",async()=>{
   const a=make(),out=response();
   assert.equal(await a.route.handle(request("GET","/v1/merchant/support/messages"),out.out),true);
@@ -68,4 +68,27 @@ test("safe errors distinguish auth, not-found, suspended write, conflict and int
     assert.equal(out.get().code,status);assert.deepEqual(out.get().payload,{error:code});
     assert.doesNotMatch(JSON.stringify(out.get())+JSON.stringify(api.logs),/password@host/);
   }
+});
+test("unexpected history persistence failure is logged with its error and remains a sanitized 500 when logging throws",async()=>{
+  const failure=Object.assign(new Error("private database detail"),{code:"PERSISTENCE_FAILURE"});
+  for(const loggerThrows of [false,true]){
+    const api=make(failure,loggerThrows),out=response();
+    await api.route.handle(request("GET","/v1/merchant/support/messages"),out.out);
+    assert.equal(out.get().code,500);
+    assert.deepEqual(out.get().payload,{error:"internal_error"});
+    assert.equal(api.logs[0]?.[0],"merchant.support.failed");
+    assert.deepEqual(api.logs[0]?.[1],{operation:"list",reason:"internal",error:failure});
+    assert.doesNotMatch(JSON.stringify(out.get()),/private database detail|PERSISTENCE_FAILURE/);
+  }
+});
+test("unexpected invalid v2 DTO is logged as an integrity failure and returned as 500",async()=>{
+  const api=make(undefined,false,{...page,schemaVersion:1}),out=response();
+  await api.route.handle(request("GET","/v1/merchant/support/messages"),out.out);
+  assert.equal(out.get().code,500);
+  assert.deepEqual(out.get().payload,{error:"internal_error"});
+  assert.equal(api.logs[0]?.[0],"merchant.support.failed");
+  const fields=api.logs[0]?.[1] as {operation:string;reason:string;error:unknown};
+  assert.equal(fields.operation,"list");
+  assert.equal(fields.reason,"integrity");
+  assert.ok(fields.error instanceof SupportIntegrityError);
 });

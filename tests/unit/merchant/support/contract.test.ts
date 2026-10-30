@@ -28,9 +28,16 @@ test("action IDs are stable and tenant separated without storing raw tenant IDs"
   assert.notEqual(key,supportSourceKey("shop-b","action-1"));
   assert.notEqual(key,supportSourceKey("shop-a","action-2"));
 });
-test("strict schemaVersion 1 response guards reject unexpected fields", () => {
-  const page={schemaVersion:1,page:1,pageSize:25,total:0,totalPages:1,unread:0,items:[]};
+test("strict schemaVersion 2 history requires a nullable recovery reference", () => {
+  const item={id:"msg-1",kind:"SYSTEM",state:"AVAILABLE",originalBody:"Hello",displayBody:"Hello",
+    isTranslated:false,sourceLanguageTag:"en-GB",displayLanguageTag:null,systemCode:null,systemVersion:null,
+    createdAt:new Date().toISOString(),readAt:null,checkoutRecoveryId:null};
+  const page={schemaVersion:2,page:1,pageSize:25,total:1,totalPages:1,unread:0,items:[item]};
   assert.equal(validSupportPage(page),true);
+  assert.equal(validSupportPage({...page,schemaVersion:1}),false);
+  assert.equal(validSupportPage({...page,items:[{...item,checkoutRecoveryId:"recovery_123"}]}),true);
+  assert.equal(validSupportPage({...page,items:[{...item,checkoutRecoveryId:"bad:id"}]}),false);
+  assert.equal(validSupportPage({...page,items:[Object.fromEntries(Object.entries(item).filter(([key])=>key!=="checkoutRecoveryId"))]}),false);
   assert.equal(validSupportPage({...page,shopId:"other"}),false);
   assert.equal(validSupportPage({...page,pageSize:9}),false);
   assert.equal(validComposeResponse({schemaVersion:1,messageId:"msg-1",translationId:null}),true);
