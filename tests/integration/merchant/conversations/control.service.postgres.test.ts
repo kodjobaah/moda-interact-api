@@ -21,6 +21,22 @@ const pending = () => {
   const promise = new Promise<void>((resolve) => { release = resolve; });
   return { promise, release };
 };
+const pendingTurn = (inboundVersion: number, controlRevision: number, startedAt: Date) => ({
+  inboundVersion, lastProcessedVersion: Math.max(0, inboundVersion - 1), pendingTurnStartedAt: startedAt,
+  pendingAiNotBeforeAt: new Date(startedAt.getTime() + 7 * 60_000),
+  pendingAiControlRevision: controlRevision, pendingAiDelayMinutes: 7,
+  processingInboundVersion: inboundVersion, processingStartedAt: startedAt,
+});
+async function assertPendingInvalidated(db: PrismaClient, conversationId: string, inboundVersion: number) {
+  const row = await db.conversation.findUniqueOrThrow({ where: { id: conversationId } });
+  assert.equal(row.lastProcessedVersion, inboundVersion);
+  assert.equal(row.pendingTurnStartedAt, null);
+  assert.equal(row.pendingAiNotBeforeAt, null);
+  assert.equal(row.pendingAiControlRevision, null);
+  assert.equal(row.pendingAiDelayMinutes, null);
+  assert.equal(row.processingInboundVersion, null);
+  assert.equal(row.processingStartedAt, null);
+}
 
 /** This suite runs only on the runner's brand-new PostgreSQL instance and schema. */
 test("ARCH-040-API-003 PostgreSQL CAS, immutable audit, Woo auth and restriction ordering", {
@@ -51,10 +67,16 @@ test("ARCH-040-API-003 PostgreSQL CAS, immutable audit, Woo auth and restriction
     const firstRecovery = await db.checkoutRecovery.create({ data: {
       shopId: first.id, checkoutToken: randomUUID(), lastExternalActivityAt: new Date(),
     } });
+    const concurrentRecovery = await db.checkoutRecovery.create({ data: {
+      shopId: first.id, checkoutToken: randomUUID(), lastExternalActivityAt: new Date(),
+    } });
     const otherRecovery = await db.checkoutRecovery.create({ data: {
       shopId: other.id, checkoutToken: randomUUID(), lastExternalActivityAt: new Date(),
     } });
     const conversation = await db.conversation.create({ data: { checkoutRecoveryId: firstRecovery.id, type: "RECOVERY" } });
+    const concurrentConversation = await db.conversation.create({ data: {
+      checkoutRecoveryId: concurrentRecovery.id, type: "RECOVERY",
+    } });
     const foreign = await db.conversation.create({ data: { checkoutRecoveryId: otherRecovery.id, type: "RECOVERY" } });
     const standalone = await db.conversation.create({ data: { shopId: first.id, type: "PRODUCT_SUPPORT" } });
     assert.equal(conversation.shopId, null, "recovery conversation may have null direct shopId");
@@ -62,6 +84,7 @@ test("ARCH-040-API-003 PostgreSQL CAS, immutable audit, Woo auth and restriction
     const initialMessages = await db.conversationMessage.count({ where: { conversationId: conversation.id } });
     const initialAttempts = await db.recoveryOutreachAttempt.count({ where: { checkoutRecoveryId: firstRecovery.id } });
 
+    await db.conversation.update({ where: { id: conversation.id }, data: pendingTurn(4, 0, new Date()) });
     // The authenticated route resolves its Shop solely from the actual installation
     // bearer and installation ID, never from a supplied shop ID.
     const auth = new WooInstallationAuthenticator(db);
@@ -87,19 +110,27 @@ test("ARCH-040-API-003 PostgreSQL CAS, immutable audit, Woo auth and restriction
     await route.handle(request(allowed("HUMAN", 0)), firstHttp.output);
     assert.equal(firstHttp.result().status, 200);
     assert.equal(firstHttp.result().body.controlRevision, 1);
-    assert.equal((await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } })).controlMode, "HUMAN");
+    const firstTransition = await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } });
+    assert.equal(firstTransition.controlMode, "HUMAN");
+    assert.equal(firstTransition.inboundVersion, 4);
+    await assertPendingInvalidated(db, conversation.id, 4);
 
     // Correct-revision same-mode is a read-only no-op; stale replay ALWAYS 409.
     const again = await service.change(principal, conversation.id, allowed("HUMAN", 1));
     assert.equal(again.controlRevision, 1);
+    await assertPendingInvalidated(db, conversation.id, 4);
     assert.equal(await db.conversationControlEvent.count({ where: { conversationId: conversation.id } }), 1);
     await assert.rejects(() => service.change(principal, conversation.id, allowed("HUMAN", 0)),
       (error: unknown) => error instanceof ConversationControlConflictError &&
         error.code === "stale_control_revision" && error.current?.controlRevision === 1);
 
     // Resume AI -> takeover and a second resume, preserving contiguous audit history.
+    await db.conversation.update({ where: { id: conversation.id }, data: pendingTurn(5, 0, new Date()) });
     const ai2 = await service.change(principal, conversation.id, allowed("AI", 1));
+    await assertPendingInvalidated(db, conversation.id, 5);
+    await db.conversation.update({ where: { id: conversation.id }, data: pendingTurn(6, 2, new Date()) });
     const human3 = await service.change(principal, conversation.id, allowed("HUMAN", 2));
+    await assertPendingInvalidated(db, conversation.id, 6);
     assert.deepEqual([ai2.controlRevision, human3.controlRevision], [2, 3]);
     const events = await db.conversationControlEvent.findMany({ where: { conversationId: conversation.id },
       orderBy: { toRevision: "asc" } });
@@ -121,6 +152,36 @@ test("ARCH-040-API-003 PostgreSQL CAS, immutable audit, Woo auth and restriction
     assert.ok(loser?.status === "rejected" && loser.reason instanceof ConversationControlConflictError);
     assert.equal(loser.reason.code, "stale_control_revision");
     assert.equal(await db.conversationControlEvent.count({ where: { conversationId: conversation.id } }), 4);
+
+    // If inbound processing holds the row first, takeover consumes its newest
+    // version and clears the pending turn and processing claim after that commit.
+    await db.conversation.update({ where: { id: concurrentConversation.id }, data: pendingTurn(1, 0, new Date()) });
+    const inboundEntered = pending(); const releaseInbound = pending();
+    const inboundAt = new Date();
+    const inboundTransaction = db.$transaction(async (tx) => {
+      await tx.$queryRaw`SELECT "id" FROM "whatsapp"."Conversation" WHERE "id"=${concurrentConversation.id} FOR UPDATE`;
+      inboundEntered.release();
+      await releaseInbound.promise;
+      await tx.conversation.update({ where: { id: concurrentConversation.id }, data: {
+        inboundVersion: { increment: 1 }, processingInboundVersion: 2, processingStartedAt: inboundAt,
+      } });
+    });
+    await inboundEntered.promise;
+    const concurrentTakeover = service.change(principal, concurrentConversation.id, allowed("HUMAN", 0));
+    let observedInboundLock = false;
+    for (let i = 0; i < 40; i++) {
+      const waiting = await db.$queryRaw<Array<{ count: number }>>`SELECT count(*)::int AS "count"
+        FROM pg_stat_activity WHERE datname=current_database()
+          AND pid<>pg_backend_pid() AND wait_event_type='Lock'`;
+      if ((waiting[0]?.count ?? 0) > 0) { observedInboundLock = true; break; }
+      await delay(50);
+    }
+    releaseInbound.release();
+    await inboundTransaction;
+    const concurrentResult = await concurrentTakeover;
+    assert.equal(observedInboundLock, true, "takeover must wait for the in-flight inbound/claim transaction");
+    assert.equal(concurrentResult.controlRevision, 1);
+    await assertPendingInvalidated(db, concurrentConversation.id, 2);
 
     await assert.rejects(() => service.change(principal, foreign.id, allowed("HUMAN", 0)), ConversationControlNotFoundError);
     await assert.rejects(() => service.change(principal, standalone.id, allowed("HUMAN", 0)), ConversationControlNotFoundError);

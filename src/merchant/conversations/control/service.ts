@@ -18,7 +18,7 @@ interface InstallationRow {
 interface ConversationRow {
   id: string; shopId: string | null; checkoutRecoveryId: string;
   type: string; controlMode: ConversationControlTarget;
-  controlRevision: number; controlChangedAt: Date | null;
+  controlRevision: number; controlChangedAt: Date | null; inboundVersion: number;
 }
 
 /** Short transaction: Shop -> installation -> recovery conversation -> event.
@@ -60,7 +60,7 @@ export class MerchantConversationControlService {
         // optional Conversation.shopId. Both rows stay locked through commit.
         const rows = await tx.$queryRaw<ConversationRow[]>`SELECT c."id", c."shopId", c."checkoutRecoveryId",
           c."type"::text AS "type", c."controlMode"::text AS "controlMode",
-          c."controlRevision", c."controlChangedAt"
+          c."controlRevision", c."controlChangedAt", c."inboundVersion"
           FROM "whatsapp"."Conversation" c
           INNER JOIN "commerce"."CheckoutRecovery" r ON r."id"=c."checkoutRecoveryId"
           WHERE c."id"=${conversationId} AND r."shopId"=${principal.shopId}
@@ -95,7 +95,12 @@ export class MerchantConversationControlService {
         const changed = await tx.conversation.updateMany({
           where: { id: current.id, checkoutRecoveryId: current.checkoutRecoveryId,
             controlMode: current.controlMode, controlRevision: current.controlRevision },
-          data: { controlMode: input.targetMode, controlRevision: { increment: 1 }, controlChangedAt: occurredAt },
+          data: {
+            controlMode: input.targetMode, controlRevision: { increment: 1 }, controlChangedAt: occurredAt,
+            pendingTurnStartedAt: null, pendingAiNotBeforeAt: null, pendingAiControlRevision: null,
+            pendingAiDelayMinutes: null, processingInboundVersion: null, processingStartedAt: null,
+            lastProcessedVersion: current.inboundVersion,
+          },
         });
         if (changed.count !== 1) throw new ConversationControlConflictError("conversation_control_conflict");
         await tx.conversationControlEvent.create({ data: {
