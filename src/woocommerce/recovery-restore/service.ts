@@ -12,6 +12,7 @@ type Database = Pick<PrismaClient, "$queryRaw">;
 type ResolvePrincipal = Pick<WooInstallationPrincipal, "installationId" | "shopId" | "canonicalSiteUrl" | "credentialVersion">;
 
 interface RecoveryRow {
+  checkoutRecoveryLifetimeDays: number | null;
   id: string;
   shopId: string;
   checkoutToken: string;
@@ -32,8 +33,6 @@ interface RecoveryRow {
   installationRevokedAt: Date | null;
 }
 
-const MAX_RECOVERY_AGE_MS = 7 * 24 * 60 * 60 * 1000;
-
 export class WooRecoveryRestoreService {
   constructor(private readonly database: Database, private readonly now: () => Date = () => new Date()) {}
 
@@ -43,7 +42,8 @@ export class WooRecoveryRestoreService {
   ): Promise<WooRestoreResolveResponseV1 | null> {
     const now = this.now();
     const rows = await this.database.$queryRaw<RecoveryRow[]>(Prisma.sql`
-      SELECT cr."id", cr."shopId", cr."checkoutToken", cr."generation",
+      SELECT config."checkoutRecoveryLifetimeDays" AS "checkoutRecoveryLifetimeDays",
+        cr."id", cr."shopId", cr."checkoutToken", cr."generation",
         cr."status"::text AS "status", cr."completedAt", cr."expiredAt",
         cr."lastExternalActivityAt", cr."checkoutUrl", cr."wooRestoreSnapshot",
         s."domain" AS "shopDomain", s."status"::text AS "shopStatus",
@@ -51,21 +51,25 @@ export class WooRecoveryRestoreService {
         i."canonicalSiteUrl" AS "installationCanonicalSiteUrl",
         i."status"::text AS "installationStatus", i."credentialVersion" AS "installationCredentialVersion",
         i."revokedAt" AS "installationRevokedAt"
-      FROM "commerce"."CheckoutRecovery" cr
-      JOIN "commerce"."Shop" s ON s."id" = cr."shopId"
-      JOIN "woocommerce"."WooCommerceInstallation" i ON i."shopId" = s."id"
-      WHERE cr."id" = ${request.recoveryId}
+      FROM (VALUES (1)) AS request_context("singleton")
+      LEFT JOIN "public"."BackgroundRuntimeConfig" config ON config."id" = 'default'
+      LEFT JOIN "commerce"."CheckoutRecovery" cr
+        ON cr."id" = ${request.recoveryId}
         AND cr."shopId" = ${principal.shopId}
-        AND i."id" = ${principal.installationId}
         AND cr."generation" = (
           SELECT MAX(latest."generation")
           FROM "commerce"."CheckoutRecovery" latest
           WHERE latest."shopId" = cr."shopId" AND latest."checkoutToken" = cr."checkoutToken"
         )
+      LEFT JOIN "commerce"."Shop" s ON s."id" = cr."shopId"
+      LEFT JOIN "woocommerce"."WooCommerceInstallation" i
+        ON i."shopId" = s."id" AND i."id" = ${principal.installationId}
       LIMIT 1
     `);
     const recovery = rows[0];
-    if (!recovery || !this.isEligible(recovery, principal, request.token, now)) return null;
+    if (!recovery) throw new Error("Checkout recovery resolver query returned no configuration row.");
+    const lifetimeDays = validateRecoveryLifetimeDays(recovery.checkoutRecoveryLifetimeDays);
+    if (!recovery.id || !this.isEligible(recovery, principal, request.token, now, lifetimeDays)) return null;
 
     const snapshot = WooCartRestoreSnapshotV1Schema.safeParse(recovery.wooRestoreSnapshot);
     if (!snapshot.success || snapshot.data.kind !== "supported") return null;
@@ -85,14 +89,13 @@ export class WooRecoveryRestoreService {
     principal: ResolvePrincipal,
     token: string,
     now: Date,
+    lifetimeDays: number,
   ): boolean {
-    const activityAt = recovery.lastExternalActivityAt.getTime();
-    const nowAt = now.getTime();
     return recovery.shopId === principal.shopId &&
       recovery.status !== "COMPLETED" && recovery.status !== "EXPIRED" && recovery.status !== "CANCELLED" &&
       ["DETECTED", "MESSAGE_SENT", "ENGAGED"].includes(recovery.status) &&
       recovery.completedAt === null && recovery.expiredAt === null &&
-      Number.isFinite(activityAt) && activityAt <= nowAt && activityAt >= nowAt - MAX_RECOVERY_AGE_MS &&
+      isWithinRecoveryLifetime(recovery.lastExternalActivityAt, now, lifetimeDays) &&
       recovery.shopStatus === "ACTIVE" && recovery.shopPlatform === "WOOCOMMERCE" &&
       recovery.shopifyShopId === null && recovery.installationStatus === "ACTIVE" &&
       recovery.installationRevokedAt === null &&
@@ -101,6 +104,23 @@ export class WooRecoveryRestoreService {
       recovery.shopDomain === principal.canonicalSiteUrl &&
       tokenMatchesStoredUrl(token, recovery.checkoutUrl, recovery.id, principal.canonicalSiteUrl);
   }
+}
+
+function validateRecoveryLifetimeDays(value: number | null): number {
+  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 2_147_483_647) {
+    throw new Error("Invalid checkout recovery lifetime configuration.");
+  }
+  return value;
+}
+
+function isWithinRecoveryLifetime(activityAt: Date, now: Date, lifetimeDays: number): boolean {
+  const activityMs = activityAt.getTime();
+  const nowMs = now.getTime();
+  if (!Number.isFinite(activityMs) || !Number.isFinite(nowMs)) return false;
+
+  const ageMs = BigInt(nowMs) - BigInt(activityMs);
+  const permittedMs = BigInt(lifetimeDays) * 86_400_000n;
+  return ageMs >= 0n && ageMs < permittedMs;
 }
 
 function tokenMatchesStoredUrl(
