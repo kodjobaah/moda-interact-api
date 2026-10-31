@@ -104,7 +104,7 @@ test("unauthenticated requests are rejected before resolver access; recovery den
 
 test("unexpected dependency errors return bounded 503 and logs omit token, URL, coupon and exception content", async () => {
   const logLines: string[] = [];
-  const secretError = new Error(`bad token ${token} https://merchant.example/?t=${token} OLD10`);
+  const secretError = new Error(`database request failed ${token} https://merchant.example/?t=${token} customer@example.com +1 (415) 555-0132 OLD10`);
   const result = await exercise({
     authenticator: { async authenticate() { return principal; } },
     service: { async resolve() { throw secretError; } },
@@ -116,8 +116,10 @@ test("unexpected dependency errors return bounded 503 and logs omit token, URL, 
   }, JSON.stringify(payload));
   assert.equal(result.status, 503);
   assert.deepEqual(result.json, { error: "restore_unavailable" });
+  assert.equal(logLines.join("\n").includes("database request failed"), true);
   assert.equal(logLines.join("\n").includes(token), false);
   assert.equal(logLines.join("\n").includes("merchant.example"), false);
+  assert.equal(logLines.join("\n").includes("customer@example.com"), false);
+  assert.equal(logLines.join("\n").includes("415"), false);
   assert.equal(logLines.join("\n").includes("OLD10"), false);
-  assert.equal(logLines.join("\n").includes("bad token"), false);
 });

@@ -42,6 +42,15 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
   await prisma.$executeRawUnsafe(`CREATE SCHEMA "commerce"`);
   await prisma.$executeRawUnsafe(`CREATE SCHEMA "woocommerce"`);
   await prisma.$executeRawUnsafe(`
+    CREATE TABLE "public"."BackgroundRuntimeConfig" (
+      "id" text PRIMARY KEY, "checkoutRecoveryLifetimeDays" integer NOT NULL
+    )
+  `);
+  await prisma.$executeRaw`
+    INSERT INTO "public"."BackgroundRuntimeConfig" ("id", "checkoutRecoveryLifetimeDays")
+    VALUES ('default', 21)
+  `;
+  await prisma.$executeRawUnsafe(`
     CREATE TABLE "commerce"."Shop" (
       "id" text PRIMARY KEY, "domain" text NOT NULL, "status" text NOT NULL,
       "platform" text NOT NULL, "shopifyShopId" text
@@ -88,6 +97,7 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
   const currentToken = token(2);
   const unsupportedToken = token(3);
   const staleToken = token(4);
+  const eightDaysToken = token(6);
   await insertRecovery({ id: "restore_old_generation", token: priorToken, checkoutToken,
     generation: 1, status: "COMPLETED", completedAt: now, lastActivityAt: now, snapshot: originalSnapshot });
   await insertRecovery({ id: "restore_current_generation", token: currentToken, checkoutToken,
@@ -98,6 +108,9 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
     snapshot: { schemaVersion: "woo.cart-restore.v1", kind: "unsupported", reason: "ITEMS_UNAVAILABLE",
       appliedCouponCodes: ["EXPIRED10"] } });
   await insertRecovery({ id: "restore_stale", token: staleToken, checkoutToken: "stale_checkout",
+    generation: 1, status: "DETECTED", lastActivityAt: new Date(now.getTime() - 22 * 24 * 60 * 60 * 1000),
+    snapshot: originalSnapshot });
+  await insertRecovery({ id: "restore_eight_days", token: eightDaysToken, checkoutToken: "eight_days_checkout",
     generation: 1, status: "DETECTED", lastActivityAt: new Date(now.getTime() - 8 * 24 * 60 * 60 * 1000),
     snapshot: originalSnapshot });
   await prisma.$executeRaw`
@@ -116,6 +129,9 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
   assert.ok(current);
   assert.deepEqual(current.snapshot, originalSnapshot);
   assert.deepEqual(current.outreachOffer, { kind: "NONE", reason: "NO_CONFIRMED_OFFER" });
+  assert.ok(await resolver.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_eight_days", token: eightDaysToken,
+  }));
   assert.equal(await resolver.resolve(principal, {
     schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_old_generation", token: priorToken,
   }), null);
@@ -128,4 +144,52 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
   assert.equal(await resolver.resolve(principal, {
     schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_other_shop", token: token(5),
   }), null);
+
+  for (const lifetimeDays of [1, 21, 91, 180, 365, 2_147_483_647]) {
+    await prisma.$executeRaw`
+      UPDATE "public"."BackgroundRuntimeConfig"
+      SET "checkoutRecoveryLifetimeDays" = ${lifetimeDays} WHERE "id" = 'default'
+    `;
+    assert.ok(await resolver.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_current_generation", token: currentToken,
+    }));
+  }
+
+  const beforeCutoffToken = token(7);
+  const atCutoffToken = token(8);
+  await insertRecovery({ id: "restore_before_cutoff", token: beforeCutoffToken, checkoutToken: "before_cutoff",
+    generation: 1, status: "DETECTED", lastActivityAt: new Date(now.getTime() - 86_400_000 + 1),
+    snapshot: originalSnapshot });
+  await insertRecovery({ id: "restore_at_cutoff", token: atCutoffToken, checkoutToken: "at_cutoff",
+    generation: 1, status: "DETECTED", lastActivityAt: new Date(now.getTime() - 86_400_000),
+    snapshot: originalSnapshot });
+  await prisma.$executeRaw`
+    UPDATE "public"."BackgroundRuntimeConfig"
+    SET "checkoutRecoveryLifetimeDays" = 1 WHERE "id" = 'default'
+  `;
+  assert.ok(await resolver.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_before_cutoff", token: beforeCutoffToken,
+  }));
+  assert.equal(await resolver.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_at_cutoff", token: atCutoffToken,
+  }), null);
+
+  await prisma.$executeRaw`
+    UPDATE "public"."BackgroundRuntimeConfig"
+    SET "checkoutRecoveryLifetimeDays" = 0 WHERE "id" = 'default'
+  `;
+  assert.equal(await resolver.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_current_generation", token: currentToken,
+  }), null);
+  await prisma.$executeRaw`
+    UPDATE "public"."BackgroundRuntimeConfig"
+    SET "checkoutRecoveryLifetimeDays" = -1 WHERE "id" = 'default'
+  `;
+  await assert.rejects(resolver.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_current_generation", token: currentToken,
+  }), /Invalid checkout recovery lifetime configuration/);
+  await prisma.$executeRaw`DELETE FROM "public"."BackgroundRuntimeConfig" WHERE "id" = 'default'`;
+  await assert.rejects(resolver.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId: "missing_recovery", token: currentToken,
+  }), /Invalid checkout recovery lifetime configuration/);
 });
