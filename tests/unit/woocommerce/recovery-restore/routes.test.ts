@@ -102,7 +102,7 @@ test("unauthenticated requests are rejected before resolver access; recovery den
   assert.deepEqual(denied.json, { error: "restore_unavailable" });
 });
 
-test("unexpected dependency errors return bounded 503 and logs omit token, URL, coupon and exception content", async () => {
+test("unexpected dependency errors return bounded 503 and logs retain only redacted error details", async () => {
   const logLines: string[] = [];
   const secretError = new Error(`database request failed ${token} https://merchant.example/?t=${token} customer@example.com +1 (415) 555-0132 OLD10`);
   const result = await exercise({
