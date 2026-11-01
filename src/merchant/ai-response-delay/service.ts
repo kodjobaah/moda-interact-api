@@ -90,8 +90,8 @@ export class MerchantAiResponseDelayService {
         const shop = await assertCurrentShop(tx, principal, true);
         const current = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId } });
         const currentResponse = response(current);
-        if (currentResponse.aiResponseDelayMinutes === input.aiResponseDelayMinutes) return currentResponse;
         if (currentResponse.revision !== input.expectedRevision) throw new AiResponseDelayConflictError();
+        if (currentResponse.aiResponseDelayMinutes === input.aiResponseDelayMinutes) return currentResponse;
 
         const time = this.now();
         const updatedAt = new Date(Math.max(time.getTime(), (current?.updatedAt.getTime() ?? 0) + 1));

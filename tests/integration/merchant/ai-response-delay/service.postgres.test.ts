@@ -45,7 +45,7 @@ test("ARCH-054 response delay: tenant isolation, defaults, no-op, CAS race and r
     assert.equal(settings.followUpEnabled, false);
 
     const stable = await service.update(principal, {
-      schemaVersion: 1, expectedRevision: "UNCONFIGURED", aiResponseDelayMinutes: 7,
+      schemaVersion: 1, expectedRevision: created.revision, aiResponseDelayMinutes: 7,
     });
     assert.equal(stable.revision, created.revision);
     assert.equal((await db.shopSettings.findUniqueOrThrow({ where: { shopId: shop.id } })).updatedAt.toISOString(), created.revision);

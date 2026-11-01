@@ -100,11 +100,11 @@ test("reads and updates only the response delay, creates established defaults an
   assert.equal((fixture.getSettings() as Record<string, unknown>).recoveryDelayMinutes, 17);
 });
 
-test("same-value retries do not write; stale different values conflict", async () => {
+test("current-revision same-value retries do not write; stale different values conflict", async () => {
   const fixture = serviceFixture({ settings: {
     id: "settings-1", shopId: principal.shopId, aiResponseDelayMinutes: 7, updatedAt: timestamp,
   } });
-  const retry = await fixture.service.update(principal, write("UNCONFIGURED", 7));
+  const retry = await fixture.service.update(principal, write(timestamp.toISOString(), 7));
   assert.equal(retry.revision, timestamp.toISOString());
   assert.equal(fixture.writes.length, 0);
   await assert.rejects(fixture.service.update(principal, write("UNCONFIGURED", 30)), AiResponseDelayConflictError);
@@ -140,6 +140,33 @@ async function withRoute(
   try { await callback(`http://127.0.0.1:${address.port}`); }
   finally { await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve())); }
 }
+
+test("same-value PUT succeeds only with the current revision and never writes", async () => {
+  const fixture = serviceFixture({ settings: {
+    id: "settings-1", shopId: principal.shopId, aiResponseDelayMinutes: 7, updatedAt: timestamp,
+  } });
+  await withRoute(async (origin) => {
+    const currentRevision = await fetch(`${origin}${MERCHANT_AI_RESPONSE_DELAY_PATH}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ schemaVersion: 1, expectedRevision: timestamp.toISOString(), aiResponseDelayMinutes: 7 }),
+    });
+    assert.equal(currentRevision.status, 200);
+    assert.deepEqual(await currentRevision.json(), {
+      schemaVersion: 1, revision: timestamp.toISOString(), aiResponseDelayMinutes: 7,
+    });
+    assert.equal(fixture.writes.length, 0);
+
+    const staleRevision = await fetch(`${origin}${MERCHANT_AI_RESPONSE_DELAY_PATH}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ schemaVersion: 1, expectedRevision: "UNCONFIGURED", aiResponseDelayMinutes: 7 }),
+    });
+    assert.equal(staleRevision.status, 409);
+    assert.deepEqual(await staleRevision.json(), { error: "ai_response_delay_conflict" });
+    assert.equal(fixture.writes.length, 0);
+  }, {}, fixture.service);
+});
 
 test("GET and PUT are authenticated, no-store, reject browser tenant overrides and malformed writes", async () => {
   await withRoute(async (origin) => {
