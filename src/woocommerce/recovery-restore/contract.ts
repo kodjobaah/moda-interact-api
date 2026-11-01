@@ -1,4 +1,7 @@
-import { WooRestoreResolveRequestV1Schema } from "@modainteract/moda-interact-shared/woocommerce";
+import {
+  WooRestoreResolveRequestV1Schema,
+  type WooRestoreResolveRequestV1,
+} from "@modainteract/moda-interact-shared/woocommerce";
 import { decodeStrictJsonBody, readBoundedBody } from "../../http/body.js";
 import { singleHeader } from "../../http/headers.js";
 
@@ -12,7 +15,9 @@ export class WooRestoreResolveRequestError extends Error {
   }
 }
 
-export async function readWooRestoreResolveRequest(request: Parameters<typeof readBoundedBody>[0]) {
+export async function readWooRestoreResolveRequest(
+  request: Parameters<typeof readBoundedBody>[0],
+): Promise<WooRestoreResolveRequestV1> {
   const contentType = singleHeader(request, "content-type");
   const contentEncoding = singleHeader(request, "content-encoding");
   const contentLength = singleHeader(request, "content-length");

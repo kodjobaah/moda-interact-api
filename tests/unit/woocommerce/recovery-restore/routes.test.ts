@@ -58,6 +58,28 @@ test("installation-authenticated resolve returns the strict no-store v1 contract
   assert.deepEqual(calls[1], [principal, payload]);
 });
 
+test("the same v1 route forwards a complete ordered offer union without caching", async () => {
+  const grouped = {
+    ...eligible,
+    outreachOffer: {
+      kind: "CHECKOUT_OFFERS",
+      offers: [
+        { method: "CODE", code: "SAVE15", providerDiscountId: "discount-one" },
+        { method: "AUTOMATIC", providerDiscountId: "discount-two" },
+      ],
+    },
+  };
+  const result = await exercise({
+    authenticator: { async authenticate() { return principal; } },
+    service: { async resolve() { return grouped as never; } },
+    logger: { info() {}, warn() {}, error() {} } as never,
+  }, JSON.stringify(payload));
+
+  assert.equal(result.status, 200);
+  assert.equal(result.cache, "no-store");
+  assert.deepEqual(result.json, grouped);
+});
+
 test("strict request schema rejects unknown fields, wrong version, invalid token and query parameters", async () => {
   let resolutions = 0;
   const options = {

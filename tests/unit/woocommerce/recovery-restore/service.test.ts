@@ -33,6 +33,7 @@ function makeRow(overrides: Record<string, unknown> = {}) {
     lastExternalActivityAt: new Date(now.getTime() - 60_000),
     checkoutUrl: restoreUrl,
     wooRestoreSnapshot: snapshot,
+    conversationId: "conversation_123",
     shopDomain: principal.canonicalSiteUrl,
     shopStatus: "ACTIVE",
     shopPlatform: "WOOCOMMERCE",
@@ -47,12 +48,13 @@ function makeRow(overrides: Record<string, unknown> = {}) {
 
 function harness(rows: unknown[] | (() => unknown[])) {
   const queries: Array<{ sql: string; values: unknown[] }> = [];
+  const offerReader = { async read() { return { kind: "NONE" as const, reason: "NO_CONFIRMED_OFFER" as const }; } };
   const service = new WooRecoveryRestoreService({
     async $queryRaw(query: { sql: string; values: unknown[] }) {
       queries.push(query);
       return typeof rows === "function" ? rows() : rows;
     },
-  } as never, () => now);
+  } as never, offerReader, () => now);
   return { service, queries };
 }
 
@@ -75,6 +77,7 @@ test("resolves only the tenant's latest supported eligible recovery and returns 
   assert.match(queries[0]!.sql, /config\."id" = 'default'/);
   assert.match(queries[0]!.sql, /cr\."shopId" =/);
   assert.match(queries[0]!.sql, /MAX\(latest\."generation"\)/);
+  assert.match(queries[0]!.sql, /"whatsapp"\."Conversation"/);
   assert.ok(queries[0]!.values.includes(principal.shopId));
   assert.ok(queries[0]!.values.includes(principal.installationId));
   assert.equal("$executeRaw" in service, false);
@@ -177,15 +180,40 @@ test("reads changed policy on the next resolve and propagates database failures"
   assert.equal(await service.resolve(principal, {
     schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
   }), null);
-  assert.equal(queries.length, 2);
+  assert.equal(queries.length, 3);
 
   const dependencyError = new Error("database unavailable");
   const broken = new WooRecoveryRestoreService({
     async $queryRaw() { throw dependencyError; },
-  } as never, () => now);
+  } as never,
+  { async read() { return { kind: "NONE" as const, reason: "NO_CONFIRMED_OFFER" as const }; } },
+  () => now);
   await assert.rejects(broken.resolve(principal, {
     schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
   }), error => error === dependencyError);
+});
+
+test("rechecks recovery eligibility and generation after reading offer evidence", async () => {
+  const rows = [makeRow(), makeRow({ status: "COMPLETED", completedAt: now })];
+  let offerReads = 0;
+  const queries: Array<{ sql: string; values: unknown[] }> = [];
+  const service = new WooRecoveryRestoreService({
+    async $queryRaw(query: { sql: string; values: unknown[] }) {
+      queries.push(query);
+      return [rows.shift()];
+    },
+  } as never, {
+    async read() {
+      offerReads += 1;
+      return { kind: "CHECKOUT_CODE", code: "SAVE15", providerDiscountId: "discount-1" };
+    },
+  }, () => now);
+
+  assert.equal(await service.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
+  }), null);
+  assert.equal(offerReads, 1);
+  assert.equal(queries.length, 2);
 });
 
 test("rejects token, recovery identity, host, scheme, query and path tampering", async () => {

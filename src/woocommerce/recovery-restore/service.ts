@@ -7,6 +7,7 @@ import {
   type WooRestoreResolveResponseV1,
 } from "@modainteract/moda-interact-shared/woocommerce";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
+import type { ConfirmedWooSentOfferReader } from "./offer-resolver.js";
 
 type Database = Pick<PrismaClient, "$queryRaw">;
 type ResolvePrincipal = Pick<WooInstallationPrincipal, "installationId" | "shopId" | "canonicalSiteUrl" | "credentialVersion">;
@@ -23,6 +24,7 @@ interface RecoveryRow {
   lastExternalActivityAt: Date;
   checkoutUrl: string | null;
   wooRestoreSnapshot: unknown;
+  conversationId: string | null;
   shopDomain: string;
   shopStatus: string;
   shopPlatform: string;
@@ -34,18 +36,63 @@ interface RecoveryRow {
 }
 
 export class WooRecoveryRestoreService {
-  constructor(private readonly database: Database, private readonly now: () => Date = () => new Date()) {}
+  constructor(
+    private readonly database: Database,
+    private readonly offerReader: ConfirmedWooSentOfferReader,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
   async resolve(
     principal: ResolvePrincipal,
     request: WooRestoreResolveRequestV1,
   ): Promise<WooRestoreResolveResponseV1 | null> {
+    const recovery = await this.readRecovery(principal, request);
     const now = this.now();
+    const lifetimeDays = validateRecoveryLifetimeDays(recovery.checkoutRecoveryLifetimeDays);
+    if (!recovery.id || !this.isEligible(recovery, principal, request.token, now, lifetimeDays)) return null;
+
+    const snapshot = WooCartRestoreSnapshotV1Schema.safeParse(recovery.wooRestoreSnapshot);
+    if (!snapshot.success || snapshot.data.kind !== "supported") return null;
+
+    const outreachOffer = await this.offerReader.read({
+      shopId: recovery.shopId,
+      recoveryId: recovery.id,
+      generation: recovery.generation,
+      conversationId: recovery.conversationId,
+    });
+
+    const current = await this.readRecovery(principal, request);
+    const currentNow = this.now();
+    const currentLifetimeDays = validateRecoveryLifetimeDays(current.checkoutRecoveryLifetimeDays);
+    if (!current.id || current.id !== recovery.id || current.shopId !== recovery.shopId ||
+      current.checkoutToken !== recovery.checkoutToken || current.generation !== recovery.generation ||
+      current.conversationId !== recovery.conversationId ||
+      !this.isEligible(current, principal, request.token, currentNow, currentLifetimeDays)) return null;
+
+    const currentSnapshot = WooCartRestoreSnapshotV1Schema.safeParse(current.wooRestoreSnapshot);
+    if (!currentSnapshot.success || currentSnapshot.data.kind !== "supported") return null;
+    const response = WooRestoreResolveResponseV1Schema.safeParse({
+      schemaVersion: "woo.restore.resolve.v1",
+      status: "eligible",
+      recoveryId: current.id,
+      checkoutKey: current.checkoutToken,
+      snapshot: currentSnapshot.data,
+      outreachOffer,
+    });
+    return response.success ? response.data : null;
+  }
+
+  private async readRecovery(
+    principal: ResolvePrincipal,
+    request: WooRestoreResolveRequestV1,
+  ): Promise<RecoveryRow> {
     const rows = await this.database.$queryRaw<RecoveryRow[]>(Prisma.sql`
       SELECT config."checkoutRecoveryLifetimeDays" AS "checkoutRecoveryLifetimeDays",
         cr."id", cr."shopId", cr."checkoutToken", cr."generation",
         cr."status"::text AS "status", cr."completedAt", cr."expiredAt",
         cr."lastExternalActivityAt", cr."checkoutUrl", cr."wooRestoreSnapshot",
+        (SELECT conversation."id" FROM "whatsapp"."Conversation" conversation
+          WHERE conversation."checkoutRecoveryId" = cr."id" LIMIT 1) AS "conversationId",
         s."domain" AS "shopDomain", s."status"::text AS "shopStatus",
         s."platform"::text AS "shopPlatform", s."shopifyShopId",
         i."canonicalSiteUrl" AS "installationCanonicalSiteUrl",
@@ -68,20 +115,7 @@ export class WooRecoveryRestoreService {
     `);
     const recovery = rows[0];
     if (!recovery) throw new Error("Checkout recovery resolver query returned no configuration row.");
-    const lifetimeDays = validateRecoveryLifetimeDays(recovery.checkoutRecoveryLifetimeDays);
-    if (!recovery.id || !this.isEligible(recovery, principal, request.token, now, lifetimeDays)) return null;
-
-    const snapshot = WooCartRestoreSnapshotV1Schema.safeParse(recovery.wooRestoreSnapshot);
-    if (!snapshot.success || snapshot.data.kind !== "supported") return null;
-    const response = WooRestoreResolveResponseV1Schema.safeParse({
-      schemaVersion: "woo.restore.resolve.v1",
-      status: "eligible",
-      recoveryId: recovery.id,
-      checkoutKey: recovery.checkoutToken,
-      snapshot: snapshot.data,
-      outreachOffer: { kind: "NONE", reason: "NO_CONFIRMED_OFFER" },
-    });
-    return response.success ? response.data : null;
+    return recovery;
   }
 
   private isEligible(

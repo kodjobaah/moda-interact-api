@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { after, test } from "node:test";
 import { readFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
+import { WooConfirmedSentOfferResolver } from "../../../../src/woocommerce/recovery-restore/offer-resolver.js";
 import { WooRecoveryRestoreService } from "../../../../src/woocommerce/recovery-restore/service.js";
 
 const databaseUrl = process.env.ARCH053_WOO_RESTORE_TEST_DATABASE_URL;
@@ -37,11 +38,45 @@ async function insertRecovery(input: {
   `;
 }
 
+async function insertConversation(recoveryId: string, conversationId: string): Promise<void> {
+  await prisma.$executeRaw`
+    INSERT INTO "whatsapp"."Conversation" ("id", "checkoutRecoveryId")
+    VALUES (${conversationId}, ${recoveryId})
+  `;
+}
+
+async function insertAttempt(input: {
+  recoveryId: string;
+  conversationId: string;
+  attemptId: string;
+  sequence?: number;
+  status: string;
+  sentAt: Date | null;
+  outboundMessageId: string | null;
+  message?: { id: string; status: string; providerMessageId: string | null; content: string };
+}): Promise<void> {
+  if (input.message) {
+    await prisma.$executeRaw`
+      INSERT INTO "whatsapp"."ConversationMessage"
+        ("id", "conversationId", "direction", "senderType", "status", "providerMessageId", "content")
+      VALUES (${input.message.id}, ${input.conversationId}, 'OUTBOUND', 'AUTOMATION',
+        ${input.message.status}, ${input.message.providerMessageId}, ${input.message.content})
+    `;
+  }
+  await prisma.$executeRaw`
+    INSERT INTO "commerce"."RecoveryOutreachAttempt"
+      ("id", "checkoutRecoveryId", "sequence", "status", "sentAt", "outboundMessageId")
+    VALUES (${input.attemptId}, ${input.recoveryId}, ${input.sequence ?? 1}, ${input.status},
+      ${input.sentAt}, ${input.outboundMessageId})
+  `;
+}
+
 after(async () => prisma.$disconnect());
 
 test("PostgreSQL resolver query enforces latest generation and returns coupon codes only as snapshot data", async () => {
   await prisma.$executeRawUnsafe(`CREATE SCHEMA "commerce"`);
   await prisma.$executeRawUnsafe(`CREATE SCHEMA "woocommerce"`);
+  await prisma.$executeRawUnsafe(`CREATE SCHEMA "whatsapp"`);
   await prisma.$executeRawUnsafe(`
     CREATE TABLE "public"."BackgroundRuntimeConfig" (
       "id" text PRIMARY KEY, "checkoutRecoveryLifetimeDays" integer NOT NULL,
@@ -94,6 +129,24 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
       "checkoutUrl" text, "wooRestoreSnapshot" jsonb
     )
   `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE "whatsapp"."Conversation" (
+      "id" text PRIMARY KEY, "checkoutRecoveryId" text UNIQUE
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE "whatsapp"."ConversationMessage" (
+      "id" text PRIMARY KEY, "conversationId" text NOT NULL, "direction" text NOT NULL,
+      "senderType" text NOT NULL, "status" text NOT NULL, "providerMessageId" text, "content" text NOT NULL
+    )
+  `);
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE "commerce"."RecoveryOutreachAttempt" (
+      "id" text PRIMARY KEY, "checkoutRecoveryId" text NOT NULL, "sequence" integer NOT NULL,
+      "status" text NOT NULL, "sentAt" timestamptz, "outboundMessageId" text,
+      UNIQUE ("checkoutRecoveryId", "sequence")
+    )
+  `);
   await prisma.$executeRaw`
     INSERT INTO "commerce"."Shop" ("id", "domain", "status", "platform", "shopifyShopId")
     VALUES (${shopId}, ${canonicalSiteUrl}, 'ACTIVE', 'WOOCOMMERCE', NULL)
@@ -141,6 +194,70 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
   await insertRecovery({ id: "restore_future_activity", token: futureActivityToken,
     checkoutToken: "future_activity_checkout", generation: 1, status: "DETECTED",
     lastActivityAt: new Date(now.getTime() + 1), snapshot: originalSnapshot });
+  const confirmedOfferSet = {
+    schemaVersion: "moda.outreach.checkout-offers.v1",
+    offers: [
+      { offerId: "offer-one", providerDiscountId: "discount-one", method: "CODE", code: "SAVE15" },
+      { offerId: "offer-two", providerDiscountId: "discount-two", method: "AUTOMATIC", code: null },
+    ],
+  };
+  const confirmedReceipt = JSON.stringify({
+    contract: "moda.whatsapp.automated-template-parameters.v1",
+    recoveryPromise: {
+      kind: "CHECKOUT_DISCOUNT", promotionTarget: "CHECKOUT", offerSet: confirmedOfferSet,
+    },
+  });
+  await insertConversation("restore_old_generation", "conversation_old_generation");
+  await insertAttempt({
+    recoveryId: "restore_old_generation", conversationId: "conversation_old_generation",
+    attemptId: "attempt_old_generation", status: "WAITING_FOR_RESPONSE", sentAt: now,
+    outboundMessageId: "message_old_generation",
+    message: { id: "message_old_generation", status: "SENT", providerMessageId: "provider_old", content: confirmedReceipt },
+  });
+  await insertConversation("restore_current_generation", "conversation_current_generation");
+  await insertAttempt({
+    recoveryId: "restore_current_generation", conversationId: "conversation_current_generation",
+    attemptId: "attempt_current_generation", status: "WAITING_FOR_RESPONSE", sentAt: now,
+    outboundMessageId: "message_current_generation",
+    message: { id: "message_current_generation", status: "DELIVERED", providerMessageId: "provider_current", content: confirmedReceipt },
+  });
+  const failedToken = token(10);
+  await insertRecovery({ id: "restore_failed_attempt", token: failedToken, checkoutToken: "failed_checkout",
+    generation: 1, status: "DETECTED", lastActivityAt: now, snapshot: originalSnapshot });
+  await insertConversation("restore_failed_attempt", "conversation_failed_attempt");
+  await insertAttempt({ recoveryId: "restore_failed_attempt", conversationId: "conversation_failed_attempt",
+    attemptId: "attempt_failed", status: "FAILED", sentAt: null, outboundMessageId: null });
+  const unconfirmedToken = token(11);
+  await insertRecovery({ id: "restore_unconfirmed_attempt", token: unconfirmedToken,
+    checkoutToken: "unconfirmed_checkout", generation: 1, status: "DETECTED", lastActivityAt: now,
+    snapshot: originalSnapshot });
+  await insertConversation("restore_unconfirmed_attempt", "conversation_unconfirmed_attempt");
+  await insertAttempt({
+    recoveryId: "restore_unconfirmed_attempt", conversationId: "conversation_unconfirmed_attempt",
+    attemptId: "attempt_unconfirmed", status: "PENDING", sentAt: null,
+    outboundMessageId: "message_unconfirmed",
+    message: { id: "message_unconfirmed", status: "PENDING", providerMessageId: null, content: confirmedReceipt },
+  });
+  const duplicateToken = token(12);
+  await insertRecovery({ id: "restore_duplicate_offer", token: duplicateToken,
+    checkoutToken: "duplicate_offer_checkout", generation: 1, status: "DETECTED", lastActivityAt: now,
+    snapshot: originalSnapshot });
+  await insertConversation("restore_duplicate_offer", "conversation_duplicate_offer");
+  const duplicateOfferSet = {
+    ...confirmedOfferSet,
+    offers: [
+      confirmedOfferSet.offers[0],
+      { ...confirmedOfferSet.offers[1], providerDiscountId: "discount-one" },
+    ],
+  };
+  await insertAttempt({
+    recoveryId: "restore_duplicate_offer", conversationId: "conversation_duplicate_offer",
+    attemptId: "attempt_duplicate_offer", status: "WAITING_FOR_RESPONSE", sentAt: now,
+    outboundMessageId: "message_duplicate_offer",
+    message: { id: "message_duplicate_offer", status: "READ", providerMessageId: "provider_duplicate",
+      content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1",
+        recoveryPromise: { kind: "CHECKOUT_DISCOUNT", promotionTarget: "CHECKOUT", offerSet: duplicateOfferSet } }) },
+  });
   await prisma.$executeRaw`
     INSERT INTO "commerce"."CheckoutRecovery"
       ("id", "shopId", "checkoutToken", "generation", "status", "lastExternalActivityAt",
@@ -150,13 +267,34 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
       CAST(${JSON.stringify(originalSnapshot)} AS jsonb))
   `;
 
-  const resolver = new WooRecoveryRestoreService(prisma, () => now);
+  const resolver = new WooRecoveryRestoreService(prisma, new WooConfirmedSentOfferResolver(prisma, {
+    warn() {},
+  } as never), () => now);
   const current = await resolver.resolve(principal, {
     schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_current_generation", token: currentToken,
   });
   assert.ok(current);
   assert.deepEqual(current.snapshot, originalSnapshot);
-  assert.deepEqual(current.outreachOffer, { kind: "NONE", reason: "NO_CONFIRMED_OFFER" });
+  assert.deepEqual(current.outreachOffer, {
+    kind: "CHECKOUT_OFFERS",
+    offers: [
+      { method: "CODE", providerDiscountId: "discount-one", code: "SAVE15" },
+      { method: "AUTOMATIC", providerDiscountId: "discount-two" },
+    ],
+  });
+  for (const [id, tokenValue] of [
+    ["restore_failed_attempt", failedToken],
+    ["restore_unconfirmed_attempt", unconfirmedToken],
+  ] as const) {
+    const result = await resolver.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1", recoveryId: id, token: tokenValue,
+    });
+    assert.deepEqual(result?.outreachOffer, { kind: "NONE", reason: "NO_CONFIRMED_OFFER" });
+  }
+  const duplicateOffer = await resolver.resolve(principal, {
+    schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_duplicate_offer", token: duplicateToken,
+  });
+  assert.deepEqual(duplicateOffer?.outreachOffer, { kind: "NONE", reason: "UNVERIFIABLE" });
   assert.ok(await resolver.resolve(principal, {
     schemaVersion: "woo.restore.resolve.v1", recoveryId: "restore_eight_days", token: eightDaysToken,
   }));

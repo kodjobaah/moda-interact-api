@@ -23,6 +23,7 @@ import { createWooRecoverySelectionRoute } from "../woocommerce/recovery-selecti
 import { WooRecoverySelectionService } from "../woocommerce/recovery-selection/service.js";
 import { createWooRecoveryRestoreRoute } from "../woocommerce/recovery-restore/routes.js";
 import { WooRecoveryRestoreService } from "../woocommerce/recovery-restore/service.js";
+import { WooConfirmedSentOfferResolver } from "../woocommerce/recovery-restore/offer-resolver.js";
 
 /** The Woo routes each retain their distinct connect, signed-webhook and callback trust boundaries. */
 export function createWooRoutes(options: {
@@ -84,7 +85,9 @@ export function createWooRoutes(options: {
       authenticator, service: new WooRecoverySelectionService(prisma), logger,
     }),
     recoveryRestore: createWooRecoveryRestoreRoute({
-      authenticator, service: new WooRecoveryRestoreService(prisma), logger,
+      authenticator, service: new WooRecoveryRestoreService(
+        prisma, new WooConfirmedSentOfferResolver(prisma, logger),
+      ), logger,
     }),
     billingWebhook,
     ...(restRead ? { restRead } : {}),
