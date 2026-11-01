@@ -27,9 +27,75 @@ test("maps only explicit confirmed receipt promises to the Shared v1 offer union
   assert.deepEqual(parseWooOfferReceipt(receipt({
     kind: "AUTOMATIC_OFFER", promotionTarget: "CHECKOUT", providerDiscountId: "discount-2",
   })).offer, { kind: "CHECKOUT_AUTOMATIC", providerDiscountId: "discount-2" });
-  assert.deepEqual(parseWooOfferReceipt(receipt({
-    kind: "CODE_OFFER", promotionTarget: "ALTERNATIVE_PRODUCT", providerDiscountId: "discount-3", code: "OTHER",
-  })).offer, { kind: "ALTERNATIVE_PRODUCT" });
+});
+
+test("maps exact production alternative-product receipts without exposing either offer code", () => {
+  const codeReceipt = parseWooOfferReceipt(receipt({
+    kind: "ALTERNATIVE_PRODUCT_PROMOTION",
+    promotionTarget: "ALTERNATIVE_PRODUCT",
+    offerId: "offer-code",
+    providerDiscountId: "discount-code",
+    method: "CODE",
+    code: "PRODUCT15",
+    productId: "product-101",
+    variantId: "variant-202",
+    productTitle: "Recommended product",
+  }));
+  const automaticReceipt = parseWooOfferReceipt(receipt({
+    kind: "ALTERNATIVE_PRODUCT_PROMOTION",
+    promotionTarget: "ALTERNATIVE_PRODUCT",
+    offerId: "offer-automatic",
+    providerDiscountId: "discount-automatic",
+    method: "AUTOMATIC",
+    productId: "product-303",
+    variantId: null,
+    productTitle: "Another recommended product",
+  }));
+
+  assert.deepEqual(codeReceipt.offer, { kind: "ALTERNATIVE_PRODUCT" });
+  assert.deepEqual(automaticReceipt.offer, { kind: "ALTERNATIVE_PRODUCT" });
+  assert.equal("code" in codeReceipt.offer, false);
+  assert.equal("code" in automaticReceipt.offer, false);
+  assert.equal(codeReceipt.warning, undefined);
+  assert.equal(automaticReceipt.warning, undefined);
+});
+
+test("rejects malformed or contradictory alternative-product receipts", () => {
+  const validCode = {
+    kind: "ALTERNATIVE_PRODUCT_PROMOTION",
+    promotionTarget: "ALTERNATIVE_PRODUCT",
+    offerId: "offer-code",
+    providerDiscountId: "discount-code",
+    method: "CODE",
+    code: "PRODUCT15",
+    productId: "product-101",
+    variantId: "variant-202",
+    productTitle: "Recommended product",
+  };
+  const invalidPromises = [
+    { ...validCode, code: "" },
+    { ...validCode, method: "AUTOMATIC" },
+    { ...validCode, productTitle: "  " },
+    { ...validCode, variantId: 202 },
+    { ...validCode, promotionTarget: "CHECKOUT" },
+    { ...validCode, unexpected: true },
+    {
+      kind: "ALTERNATIVE_PRODUCT_PROMOTION", promotionTarget: "ALTERNATIVE_PRODUCT",
+      offerId: "offer-auto", providerDiscountId: "discount-auto", method: "AUTOMATIC",
+      code: null, productId: "product-101", variantId: null, productTitle: "Recommended product",
+    },
+    { kind: "CODE_OFFER", promotionTarget: "ALTERNATIVE_PRODUCT", providerDiscountId: "discount-1", code: "OTHER" },
+  ];
+
+  for (const promise of invalidPromises) {
+    assert.deepEqual(parseWooOfferReceipt(receipt(promise)).offer, { kind: "NONE", reason: "UNVERIFIABLE" });
+  }
+
+  const contradictoryGroup = parseWooOfferReceipt(receipt({
+    kind: "CHECKOUT_DISCOUNT", promotionTarget: "ALTERNATIVE_PRODUCT", offerSet: { invalid: true },
+  }));
+  assert.deepEqual(contradictoryGroup.offer, { kind: "NONE", reason: "UNVERIFIABLE" });
+  assert.equal(contradictoryGroup.warning, "UNVERIFIABLE_PROMISE");
 });
 
 test("preserves every ordered checkout offer and rejects duplicate or malformed groups as a whole", () => {
@@ -75,7 +141,4 @@ test("legacy, untagged, mismatched, corrupt, and unsupported evidence is unverif
   for (const content of cases) {
     assert.deepEqual(parseWooOfferReceipt(content).offer, { kind: "NONE", reason: "UNVERIFIABLE" });
   }
-  assert.deepEqual(parseWooOfferReceipt(receipt({
-    kind: "CHECKOUT_DISCOUNT", promotionTarget: "ALTERNATIVE_PRODUCT", offerSet: { invalid: true },
-  })).offer, { kind: "ALTERNATIVE_PRODUCT" });
 });

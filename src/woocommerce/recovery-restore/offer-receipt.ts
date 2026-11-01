@@ -90,11 +90,26 @@ export function parseWooOfferReceipt(content: string): WooOfferReceiptResult {
     return hasExactKeys(promise, ["kind"]) ? noConfirmedOffer : unverifiable("UNVERIFIABLE_PROMISE");
   }
 
+  if (promise.kind === "ALTERNATIVE_PRODUCT_PROMOTION") {
+    const sharedFields = [
+      "kind", "promotionTarget", "offerId", "providerDiscountId", "method",
+      "productId", "variantId", "productTitle",
+    ];
+    const methodFields = promise.method === "CODE" ? [...sharedFields, "code"] : sharedFields;
+    if (promise.promotionTarget !== "ALTERNATIVE_PRODUCT" ||
+        (promise.method !== "CODE" && promise.method !== "AUTOMATIC") ||
+        !hasExactKeys(promise, methodFields) ||
+        !nonblank(promise.offerId) || !nonblank(promise.providerDiscountId) ||
+        !nonblank(promise.productId) || !nonblank(promise.productTitle) ||
+        (promise.variantId !== null && !nonblank(promise.variantId)) ||
+        (promise.method === "CODE" && (!nonblank(promise.code) || promise.code.length > 100))) {
+      return unverifiable("UNVERIFIABLE_PROMISE");
+    }
+    return { offer: { kind: "ALTERNATIVE_PRODUCT" } };
+  }
+
   if (!["CODE_OFFER", "AUTOMATIC_OFFER", "CHECKOUT_DISCOUNT"].includes(promise.kind)) {
     return unverifiable("UNVERIFIABLE_PROMISE");
-  }
-  if (promise.promotionTarget === "ALTERNATIVE_PRODUCT") {
-    return { offer: { kind: "ALTERNATIVE_PRODUCT" } };
   }
   if (promise.promotionTarget !== "CHECKOUT") return unverifiable("UNVERIFIABLE_PROMISE");
 
