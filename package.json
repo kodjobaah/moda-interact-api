@@ -36,6 +36,7 @@
     "test:arch035-woo-support:postgres": "node scripts/test-arch035-woo-support-postgres.mjs",
     "test:arch046-woo-consent:unit": "tsx --test \"tests/unit/woocommerce/consent/*.test.ts\"",
     "test:arch046-woo-consent:postgres": "node scripts/test-arch046-woo-consent-postgres.mjs",
+    "test:arch046-woo-consent-status:unit": "npm run prisma:generate && tsx --test \"tests/unit/woocommerce/consent-status/*.test.ts\"",
     "test:arch046-woo-selection:unit": "tsx --test \"tests/unit/woocommerce/recovery-selection/*.test.ts\"",
     "test:arch046-woo-selection:postgres": "node scripts/test-arch046-woo-consent-postgres.mjs",
     "test:arch049-shop-brand:unit": "tsx --test \"tests/unit/woocommerce/shop-brand/*.test.ts\"",

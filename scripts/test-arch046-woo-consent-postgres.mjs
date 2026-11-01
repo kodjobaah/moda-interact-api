@@ -58,6 +58,7 @@ try {
     "tests/integration/woocommerce/consent/service.postgres.test.ts",
     "tests/integration/woocommerce/consent/races.postgres.test.ts",
     "tests/integration/woocommerce/consent/v2.postgres.test.ts",
+    "tests/integration/woocommerce/consent-status/status.postgres.test.ts",
     "tests/integration/woocommerce/recovery-selection/service.postgres.test.ts"], { env, stdio: "inherit" });
 
   // Explicit opt-in: run the same independent performance scenario against the
