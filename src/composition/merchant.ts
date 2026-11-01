@@ -42,6 +42,8 @@ import { createMerchantUsageHistoryRoute } from "../merchant/usage-history/route
 import { MerchantUsageHistoryService } from "../merchant/usage-history/history.service.js";
 import { MerchantPromotionsService } from "../merchant/promotions/service.js";
 import { createMerchantPromotionsRoutes } from "../merchant/promotions/routes.js";
+import { MerchantAiResponseDelayService } from "../merchant/ai-response-delay/service.js";
+import { createMerchantAiResponseDelayRoutes } from "../merchant/ai-response-delay/routes.js";
 
 /** Assemble existing merchant-owned routes once; each route retains its own auth policy. */
 export function createMerchantRoutes(options: {
@@ -86,6 +88,9 @@ export function createMerchantRoutes(options: {
     }),
     createMerchantFeaturePreferencesRoute({
       service: new MerchantFeaturePreferencesService(prisma), authenticator, logger,
+    }),
+    createMerchantAiResponseDelayRoutes({
+      service: new MerchantAiResponseDelayService(prisma), authenticator, logger,
     }),
     createMerchantRecoverySummaryRoute({
       service: new MerchantRecoverySummaryService(prisma), authenticator, logger,
