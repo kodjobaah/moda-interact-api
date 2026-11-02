@@ -47,7 +47,10 @@ test("ARCH-035-API-020: concurrent replay, tenant isolation, Support visibility,
     await assert.rejects(commands.compose(a,{...input,body:"different"}),SupportConflictError);
     const offlineResult=await offline.compose(a,{body:"Encore",actionId:"offline"});
     assert.equal(offlineResult.created,true);
-    assert.equal((await db.merchantMessageTranslation.findMany({where:{messageId:offlineResult.response.messageId,status:"PENDING"}})).length,1);
+    const offlinePending=await db.merchantMessageTranslation.findMany({where:{messageId:offlineResult.response.messageId,status:"PENDING"}});
+    assert.equal(offlinePending.length,1);
+    assert.equal(offlinePending[0]?.currentBatchId,null);
+    assert.equal(offlinePending[0]?.nextAttemptAt,null);
     assert.equal(warnings.length,1);
     assert.equal(warnings[0]?.event,"merchant.support.translation_dispatch.deferred");
     assert.equal(warnings[0]?.fields.errorMessage,"redis://[redacted]");
