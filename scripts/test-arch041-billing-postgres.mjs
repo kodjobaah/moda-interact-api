@@ -12,6 +12,7 @@ const user = `arch041_${suffix.slice(16, 28)}`;
 const password = randomUUID();
 const initialSuites = [
   "tests/integration/billing/presentation/billing-read.postgres.test.ts",
+  "tests/integration/billing/purchase-history/arch055-history.postgres.test.ts",
   "tests/integration/billing/commands/recurring-subscription-command.postgres.test.ts",
   "tests/integration/billing/commands/recovery-credit-purchase-command.postgres.test.ts",
   "tests/integration/billing/commands/recurring-outcome.test.ts",

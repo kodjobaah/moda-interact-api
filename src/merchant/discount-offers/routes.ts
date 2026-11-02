@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { sanitizeLogFields, type StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import { Prisma } from "@prisma/client";
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
@@ -7,6 +7,13 @@ import { DISCOUNT_CATALOGUE_PATH, DISCOUNT_OFFERS_PATH, DiscountOffersError,
   MAX_DISCOUNT_SAVE_BYTES, parseSaveDiscountOffers, readCatalogueQuery } from "./contract.js";
 import type { MerchantDiscountOffersService } from "./service.js";
 
+function safeErrorDiagnostic(error: unknown) {
+  if (!(error instanceof Error)) return sanitizeLogFields({ errorType: typeof error });
+  const message = error.message
+    .replace(/\b(?:postgres(?:ql)?|mysql|redis|mongodb):\/\/[^\s]+/gi, "[REDACTED]")
+    .replace(/\b(?:secret|credential|password|token|authorization)\b/gi, "[REDACTED]");
+  return sanitizeLogFields({ error: { name: error.name, message }, redactionApplied: message !== error.message });
+}
 
 function requestHasBody(request: IncomingMessage): boolean {
   return request.rawHeaders.some((v,i) => i%2===0 && (
@@ -76,20 +83,14 @@ export function createMerchantDiscountOffersRoutes(options: {
         if (error instanceof WooUnauthenticatedError) sendJson(response,401,{error:"unauthorized"});
         else if (error instanceof DiscountOffersError) {
           logger.warn("merchant.discount_offers.access.denied",{reason:error.code,
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeErrorDiagnostic(error),
           });
           sendJson(response,error.status,{error:error.code});
         } else if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002","P2034"].includes(error.code)) {
           sendJson(response,409,{error:"offers_conflict"});
         } else {
           logger.error("merchant.discount_offers.access.failed",{reason:"internal",
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeErrorDiagnostic(error),
           });
           sendJson(response,500,{error:"internal_error"});
         }

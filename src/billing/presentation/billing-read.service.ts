@@ -53,7 +53,9 @@ async function readBillingSnapshot(
   }
   let durablePendingCataloguePlan: Awaited<ReturnType<BillingSnapshotReader["readCataloguePlanByHandle"]>> = null;
   if (durablePendingPlan) {
-    durablePendingCataloguePlan = await reader.readCataloguePlanByHandle(durablePendingPlan.shopifyPlanHandle);
+    durablePendingCataloguePlan = operationTargetPlan?.shopifyPlanHandle === durablePendingPlan.shopifyPlanHandle
+      ? operationTargetPlan
+      : await reader.readCataloguePlanByHandle(durablePendingPlan.shopifyPlanHandle);
     if (!durablePendingCataloguePlan) throw new BillingPresentationError("billing_catalogue_mapping_invalid");
   }
   validatePendingPlans(subscription, recurringOperations, operationTargetPlan, durablePendingCataloguePlan);

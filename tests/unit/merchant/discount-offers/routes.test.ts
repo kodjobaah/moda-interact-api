@@ -4,8 +4,9 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { createMerchantDiscountOffersRoutes } from "../../../../src/merchant/discount-offers/routes.js";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 
-function harness(method: string, path: string, input?: unknown, denied = false) {
+function harness(method: string, path: string, input?: unknown, denied = false, failure?: Error) {
   const calls: string[] = [];
+  const logs: unknown[] = [];
   const bytes = input===undefined?null:Buffer.from(JSON.stringify(input));
   const request = {method,url:path,rawHeaders:bytes?["Content-Type","application/json","Content-Length",String(bytes.length)]:[],
     async *[Symbol.asyncIterator]() {if(bytes)yield bytes;}} as unknown as IncomingMessage;
@@ -17,12 +18,12 @@ function harness(method: string, path: string, input?: unknown, denied = false) 
     authenticator:{async authenticate(){if(denied)throw new WooUnauthenticatedError();return {shopId:"woo-shop",installationId:"inst",canonicalSiteUrl:"https://woo.test",credentialVersion:1};}} as never,
     service:{
       async catalogue(){calls.push("catalogue");return {schemaVersion:1,items:[]};},
-      async read(){calls.push("read");return {schemaVersion:1,merchant:{recoveryOfferMode:"NONE"}};},
+      async read(){calls.push("read");if(failure)throw failure;return {schemaVersion:1,merchant:{recoveryOfferMode:"NONE"}};},
       async save(){calls.push("save");return {schemaVersion:1,merchant:{recoveryOfferMode:"FIXED"}};},
     } as never,
-    logger:{info(){},warn(){},error(){}} as never,
+    logger:{info(){},warn(_event:string,fields:unknown){logs.push(fields);},error(_event:string,fields:unknown){logs.push(fields);}} as never,
   });
-  return {route,request,response,output,calls};
+  return {route,request,response,output,calls,logs};
 }
 
 test("Woo merchant coupon endpoints use installation authentication and no-store responses",async()=>{
@@ -56,4 +57,13 @@ test("Woo merchant coupon endpoints use installation authentication and no-store
   assert.equal(invalid.output.status,422);
   assert.deepEqual(invalid.calls,[]);
   assert.equal(await get.route.handle({method:"POST",url:"/v1/merchant/discount-offers"} as IncomingMessage,get.response),false);
+});
+
+test("discount failure diagnostics redact credentials before logging",async()=>{
+  const failed=harness("GET","/v1/merchant/discount-offers",undefined,false,
+    new Error("secret credential postgres://private"));
+  await failed.route.handle(failed.request,failed.response);
+  assert.equal(failed.output.status,500);
+  assert.equal(JSON.stringify(failed.logs).includes("secret"),false);
+  assert.equal(JSON.stringify(failed.logs).includes("postgres://private"),false);
 });

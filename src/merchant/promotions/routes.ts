@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { sanitizeLogFields, type StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import {
   PROMOTIONS_PATH, PROMOTION_SELECTION_PATH, PromotionDomainError, PromotionRequestError,
@@ -16,6 +16,14 @@ function respond(response: ServerResponse, status: number, value: unknown): void
     "x-content-type-options": "nosniff",
   });
   response.end(JSON.stringify(value));
+}
+
+function safeErrorDiagnostic(error: unknown) {
+  if (!(error instanceof Error)) return sanitizeLogFields({ errorType: typeof error });
+  const message = error.message
+    .replace(/\b(?:postgres(?:ql)?|mysql|redis|mongodb):\/\/[^\s]+/gi, "[REDACTED]")
+    .replace(/\b(?:secret|credential|password|token|authorization)\b/gi, "[REDACTED]");
+  return sanitizeLogFields({ error: { name: error.name, message }, redactionApplied: message !== error.message });
 }
 
 export function createMerchantPromotionsRoutes(options: {
@@ -48,18 +56,12 @@ export function createMerchantPromotionsRoutes(options: {
         if (error instanceof WooUnauthenticatedError) respond(response, 401, { error: "unauthorized" });
         else if (error instanceof PromotionRequestError || error instanceof PromotionDomainError) {
           logger.warn("merchant.promotions.access.denied", { reason: error.code,
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeErrorDiagnostic(error),
           });
           respond(response, error.status, { error: error.code });
         } else {
           logger.error("merchant.promotions.access.failed", { reason: "internal",
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeErrorDiagnostic(error),
           });
           respond(response, 500, { error: "internal_error" });
         }
