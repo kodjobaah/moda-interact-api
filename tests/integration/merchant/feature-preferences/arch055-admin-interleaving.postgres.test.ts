@@ -7,6 +7,7 @@ import { FeaturePreferencesConflictError } from "../../../../src/merchant/featur
 import { MerchantFeaturePreferencesService } from "../../../../src/merchant/feature-preferences/service.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
+type QueryEventClient = { $on(event: "query", listener: (event: { query: string }) => void): void };
 
 test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { skip: !databaseUrl }, async () => {
   const db = new PrismaClient({ datasources: { db: { url: databaseUrl! } }, log: [{ emit: "event", level: "query" }] });
@@ -19,11 +20,12 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
   let preferenceId: string | undefined;
   const createdFeatureIds: string[] = [];
   const preferenceUpserts: string[] = [];
-  db.$on("query", (event) => {
+  (db as unknown as QueryEventClient).$on("query", (event) => {
     if (/^\s*INSERT\s+INTO/i.test(event.query) && event.query.includes('"ShopFeaturePreference"')) {
       preferenceUpserts.push(event.query);
     }
   });
+  let releaseUpsert = () => {};
   try {
     const plan = await db.billingPlan.create({ data: {
       shopifyPlanHandle: `arch055-feature-${suffix}`, name: "ARCH-055 feature", kind: "FREE", active: true,
@@ -34,6 +36,7 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
       activationMode: "MERCHANT_OPT_IN", systemRequired: false,
     } });
     featureId = feature.id;
+    const targetFeatureId = feature.id;
     const shop = await db.shop.create({ data: { domain, platform: "WOOCOMMERCE", status: "ACTIVE" } });
     shopId = shop.id;
     const installation = await db.wooCommerceInstallation.create({ data: {
@@ -49,11 +52,10 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
     const service = new MerchantFeaturePreferencesService(db);
 
     let upsertReached!: () => void;
-    let releaseUpsert!: () => void;
     const atUpsert = new Promise<void>((resolve) => { upsertReached = resolve; });
     const upsertGate = new Promise<void>((resolve) => { releaseUpsert = resolve; });
     const wrappedDatabase = {
-      $transaction: (callback: (tx: Prisma.TransactionClient) => Promise<unknown>, options: Prisma.TransactionOptions) =>
+      $transaction: (callback: (tx: Prisma.TransactionClient) => Promise<unknown>, options: { isolationLevel?: Prisma.TransactionIsolationLevel }) =>
         db.$transaction((tx) => callback(new Proxy(tx, { get(target, property, receiver) {
           if (property === "shopFeaturePreference") return new Proxy(target.shopFeaturePreference, {
             get(delegate, method, delegateReceiver) {
@@ -102,14 +104,14 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
     const unchangedAt = (await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt;
     const beforeStaleSql = preferenceUpserts.length;
     await assert.rejects(() => service.update(principal,
-      { expectedRevision: beforeAdminDisable.revision, changes: [{ featureId, enabled: true }] },
+      { expectedRevision: beforeAdminDisable.revision, changes: [{ featureId: targetFeatureId, enabled: true }] },
     ), (error: unknown) => error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_conflict");
     assert.equal(preferenceUpserts.length, beforeStaleSql);
     assert.equal((await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt.getTime(), unchangedAt.getTime());
     const disabledRevision = await service.read(principal);
     const beforeDeniedSql = preferenceUpserts.length;
     await assert.rejects(() => service.update(principal,
-      { expectedRevision: disabledRevision.revision, changes: [{ featureId, enabled: true }] },
+      { expectedRevision: disabledRevision.revision, changes: [{ featureId: targetFeatureId, enabled: true }] },
     ), (error: unknown) => error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_denied");
     assert.equal(preferenceUpserts.length, beforeDeniedSql);
     assert.equal((await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt.getTime(), unchangedAt.getTime());

@@ -7,13 +7,15 @@ import { StoreCategoriesReadService } from "../../../../src/merchant/store-categ
 import { StoreCategorySelectionService } from "../../../../src/merchant/store-categories/store-category-selection.service.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
+type QueryEventClient = { $on(event: "query", listener: (event: { query: string }) => void): void };
+type CategoryFixture = { id: string; mappingId: string };
 let prisma: PrismaClient | undefined;
 const revisionHistorySelects: string[] = [];
 const revisionUpdates: string[] = [];
 const db = () => {
   if (!prisma) {
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl! } }, log: [{ emit: "event", level: "query" }] });
-    prisma.$on("query", (event) => {
+    (prisma as unknown as QueryEventClient).$on("query", (event) => {
       if (/^\s*SELECT/i.test(event.query) && event.query.includes('"CommerceAgentPromptRevision"')) {
         revisionHistorySelects.push(event.query);
       }
@@ -56,7 +58,7 @@ test("ARCH-055 category GET returns a coherent pre-publication snapshot", { skip
     } });
     const admin = await db().platformAdmin.create({ data: { email: `${suffix}@arch055-category.invalid` } });
     adminId = admin.id;
-    const categories = [];
+    const categories: CategoryFixture[] = [];
     for (const label of ["A", "B"]) {
       const category = await db().commercePromptTemplateCategory.create({ data: {
         slug: `${label.toLowerCase()}-${suffix}`, displayName: `Category ${label}`, enabled: false,

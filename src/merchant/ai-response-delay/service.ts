@@ -9,7 +9,7 @@ import {
 
 type Database = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
-type DelaySettings = Pick<Prisma.ShopSettingsGetPayload<{}>, "aiResponseDelayMinutes" | "updatedAt">;
+type DelaySettings = Prisma.ShopSettingsGetPayload<{ select: { aiResponseDelayMinutes: true; updatedAt: true } }>;
 
 interface ShopIdentity {
   id: string;

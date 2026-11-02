@@ -61,6 +61,7 @@ async function load(tx: Tx, shopId: string, phase: FeaturePreferenceLoadPhase,
     !subscription.plan || !subscription.plan.active) {
     throw new FeaturePreferencesConflictError("feature_preferences_unavailable");
   }
+  const plan = subscription.plan;
   const [features, preferences] = await Promise.all([
     measureFeaturePreferencePhase(timings, phase, "featuresLookupMs", () => tx.feature.findMany({
       where: { active: true }, orderBy: [{ displayName: "asc" }, { id: "asc" }],
@@ -71,7 +72,7 @@ async function load(tx: Tx, shopId: string, phase: FeaturePreferenceLoadPhase,
       where: { shopId }, orderBy: { featureId: "asc" }, select: { featureId: true, enabled: true, updatedAt: true },
     })),
   ]);
-  const mappingIds = new Set(subscription.plan.features.filter((mapping) => mapping.enabled && mapping.feature.active)
+  const mappingIds = new Set(plan.features.filter((mapping) => mapping.enabled && mapping.feature.active)
     .map((mapping) => mapping.featureId));
   const preferenceByFeature = new Map(preferences.map((p) => [p.featureId, p]));
   const facts = features.map((feature) => ({
@@ -89,8 +90,8 @@ async function load(tx: Tx, shopId: string, phase: FeaturePreferenceLoadPhase,
     schemaVersion: 1,
     revision: createHash("sha256").update(JSON.stringify({
       subscription: [subscription.id, subscription.status, subscription.planId],
-      plan: [subscription.plan.id, subscription.plan.active, subscription.plan.updatedAt],
-      mappings: subscription.plan.features.map((m) => [m.featureId, m.enabled, m.feature.active, m.feature.updatedAt]),
+      plan: [plan.id, plan.active, plan.updatedAt],
+      mappings: plan.features.map((m) => [m.featureId, m.enabled, m.feature.active, m.feature.updatedAt]),
       features: features.map((f) => [f.id, f.key, f.displayName, f.description, f.active, f.activationMode, f.systemRequired, f.updatedAt]),
       preferences: preferences.map((p) => [p.featureId, p.enabled, p.updatedAt]),
     })).digest("hex"),

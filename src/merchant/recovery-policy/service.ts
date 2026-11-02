@@ -7,10 +7,23 @@ import { UNCONFIGURED_RECOVERY_POLICY } from "../recovery-summary/recovery-summa
 
 type PolicyDatabase = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
-type Settings = Pick<Prisma.ShopSettingsGetPayload<{}>, "recoveryDelayMinutes" | "recoveryOfferMode" |
-  "fixedShopifyDiscountId" | "followUpEnabled" | "followUpDelayMinutes" | "notifyOnInitialRecoveryOutreach" | "updatedAt">;
-type Override = Pick<Prisma.ShopRecoveryPolicyOverrideGetPayload<{}>, "recoveryDelayMinutes" | "recoveryOfferMode" |
-  "fixedShopifyDiscountId" | "followUpEnabled" | "followUpDelayMinutes" | "expiresAt">;
+type Settings = Prisma.ShopSettingsGetPayload<{ select: {
+  recoveryDelayMinutes: true;
+  recoveryOfferMode: true;
+  fixedShopifyDiscountId: true;
+  followUpEnabled: true;
+  followUpDelayMinutes: true;
+  notifyOnInitialRecoveryOutreach: true;
+  updatedAt: true;
+} }>;
+type Override = Prisma.ShopRecoveryPolicyOverrideGetPayload<{ select: {
+  recoveryDelayMinutes: true;
+  recoveryOfferMode: true;
+  fixedShopifyDiscountId: true;
+  followUpEnabled: true;
+  followUpDelayMinutes: true;
+  expiresAt: true;
+} }>;
 
 interface ShopIdentity { id: string; domain: string; platform: string; shopifyShopId: string | null; status: string; onboardingCompleted: boolean }
 interface InstallationIdentity { id: string; shopId: string; canonicalSiteUrl: string; credentialVersion: number; status: string; revokedAt: Date | null }

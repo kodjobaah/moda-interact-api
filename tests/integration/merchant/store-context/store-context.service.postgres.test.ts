@@ -7,13 +7,14 @@ import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installa
 import { MerchantStoreContextConflictError, MerchantStoreContextService } from "../../../../src/merchant/store-context/store-context.service.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
+type QueryEventClient = { $on(event: "query", listener: (event: { query: string }) => void): void };
 let prisma: PrismaClient | undefined;
 const shopUpdates: number[] = [];
 const shopUpdateSql: string[] = [];
 const database = () => {
   if (!prisma) {
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl! } }, log: [{ emit: "event", level: "query" }] });
-    prisma.$on("query", (event) => {
+    (prisma as unknown as QueryEventClient).$on("query", (event) => {
       if (/^\s*UPDATE/i.test(event.query) && event.query.includes('"Shop"')) shopUpdateSql.push(event.query);
     });
   }
