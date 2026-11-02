@@ -57,6 +57,7 @@ try {
   run("node", ["--import", "tsx", "--test", "--test-concurrency=1",
     "tests/integration/woocommerce/consent/service.postgres.test.ts",
     "tests/integration/woocommerce/consent/races.postgres.test.ts",
+    "tests/integration/woocommerce/consent/arch055-duplicate-and-selection.postgres.test.ts",
     "tests/integration/woocommerce/consent/v2.postgres.test.ts",
     "tests/integration/woocommerce/recovery-selection/service.postgres.test.ts"], { env, stdio: "inherit" });
 
