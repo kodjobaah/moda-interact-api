@@ -32,7 +32,8 @@ try{
   run("npx",["--no-install","prisma","migrate","deploy","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
   phase="running Support integration";
   run("node",["--import","tsx","--test","--test-concurrency=1",
-    "tests/integration/merchant/support/service.postgres.test.ts"],{env,stdio:"inherit"});
+    "tests/integration/merchant/support/service.postgres.test.ts",
+    "tests/integration/merchant/support/arch055-snapshot-and-thread.postgres.test.ts"],{env,stdio:"inherit"});
 }catch{
   // Never print thrown errors or Docker arguments containing disposable secrets.
   process.stderr.write(`ARCH-035 Support PostgreSQL validation failed while ${phase}.\n`);

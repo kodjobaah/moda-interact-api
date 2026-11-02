@@ -13,8 +13,8 @@ test("ARCH-035-API-020: concurrent replay, tenant isolation, Support visibility,
 },async()=>{
   if(!databaseUrl)return;
   const db=new PrismaClient({datasources:{db:{url:databaseUrl}}});
-  const id=randomUUID(),shopIds:string[]=[], dispatched:string[]=[],warnings:string[]=[];
-  const logger={info(){},error(){},warn(event:string){warnings.push(event);}} as never;
+  const id=randomUUID(),shopIds:string[]=[], dispatched:string[]=[],warnings:Array<{event:string;fields:Record<string,unknown>}>=[];
+  const logger={info(){},error(){},warn(event:string,fields:Record<string,unknown>){warnings.push({event,fields});}} as never;
   const commands=new MerchantSupportCommandService(db,{async enqueue(key:string){dispatched.push(key);}},logger);
   const offline=new MerchantSupportCommandService(db,{async enqueue(){throw new Error("redis://secret");}},logger);
   const read=new MerchantSupportReadService(db);
@@ -48,7 +48,10 @@ test("ARCH-035-API-020: concurrent replay, tenant isolation, Support visibility,
     const offlineResult=await offline.compose(a,{body:"Encore",actionId:"offline"});
     assert.equal(offlineResult.created,true);
     assert.equal((await db.merchantMessageTranslation.findMany({where:{messageId:offlineResult.response.messageId,status:"PENDING"}})).length,1);
-    assert.deepEqual(warnings,["merchant.support.translation_dispatch.deferred"]);
+    assert.equal(warnings.length,1);
+    assert.equal(warnings[0]?.event,"merchant.support.translation_dispatch.deferred");
+    assert.equal(warnings[0]?.fields.errorMessage,"redis://[redacted]");
+    assert.equal(JSON.stringify(warnings).includes("secret"),false);
     const bSend=await commands.compose(b,{...input,body:"Shop B"});
     assert.notEqual(messageId,bSend.response.messageId);
     assert.equal(bSend.response.translationId,null);
