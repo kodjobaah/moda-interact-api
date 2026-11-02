@@ -80,7 +80,7 @@ test("consent replay returns historical evidence without waiting for recipient l
 test("recovery-selection GET reads through a held phone row lock", {
   skip: !databaseUrl,
 }, async () => {
-  const { db, shop, principal, service } = await setup();
+  const { db, principal, service } = await setup();
   try {
     await service.record(principal, event("selection-get-grant", "GRANT", 100));
     const selection = new WooRecoverySelectionService(db);

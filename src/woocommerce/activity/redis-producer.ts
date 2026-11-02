@@ -1,12 +1,11 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { WOO_CHECKOUT_QUEUE, WOO_ORDER_QUEUE, type WooCheckoutJob, type WooOrderJob } from "./contract.js";
 import { WooCheckoutQueueProducer, type WooCheckoutPublisher } from "./producer.js";
 import { WooOrderQueueProducer, type WooOrderPublisher } from "./order-producer.js";
 
 /** One lazy Redis connection with independent, Woo-only checkout and order queues. */
-export function createWooCheckoutRedisProducer(redisUrl: string | undefined, logger: StructuredLogger): {
+export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
   publisher: WooCheckoutPublisher;
   orderPublisher: WooOrderPublisher;
   close(): Promise<void>;
