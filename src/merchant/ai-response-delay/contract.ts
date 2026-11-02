@@ -15,8 +15,8 @@ export class AiResponseDelayRequestError extends Error {
 }
 
 export class AiResponseDelayConflictError extends Error {
-  constructor() {
-    super("ai_response_delay_conflict");
+  constructor(options?: ErrorOptions) {
+    super("ai_response_delay_conflict", options);
   }
 }
 

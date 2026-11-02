@@ -8,7 +8,17 @@ import { MerchantStoreContextConflictError, MerchantStoreContextService } from "
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 let prisma: PrismaClient | undefined;
-const database = () => prisma ??= new PrismaClient({ datasources: { db: { url: databaseUrl! } } });
+const shopUpdates: number[] = [];
+const shopUpdateSql: string[] = [];
+const database = () => {
+  if (!prisma) {
+    prisma = new PrismaClient({ datasources: { db: { url: databaseUrl! } }, log: [{ emit: "event", level: "query" }] });
+    prisma.$on("query", (event) => {
+      if (/^\s*UPDATE/i.test(event.query) && event.query.includes('"Shop"')) shopUpdateSql.push(event.query);
+    });
+  }
+  return prisma;
+};
 
 test("PostgreSQL writes only the context snapshot, round-trips via bootstrap and preserves installation and billing", {
   skip: !databaseUrl,
@@ -27,11 +37,21 @@ test("PostgreSQL writes only the context snapshot, round-trips via bootstrap and
     const principal: WooInstallationPrincipal = {
       installationId: installation.id, shopId, canonicalSiteUrl: domain, credentialVersion: 2,
     };
-    const service = new MerchantStoreContextService(database());
+    const storeContextDatabase = {
+      shop: { updateMany: async (args: Parameters<ReturnType<typeof database>["shop"]["updateMany"]>[0]) => {
+        const result = await database().shop.updateMany(args);
+        shopUpdates.push(result.count);
+        return result;
+      } },
+    };
+    const service = new MerchantStoreContextService(storeContextDatabase as never);
     const before = await database().shop.findUniqueOrThrow({ where: { id: shopId } });
     const snapshot = { schemaVersion: 1 as const, storeLocale: "en_GB", languageTag: "en-GB", timeZone: "Europe/London", countryCode: "GB" };
+    const sqlBeforeEqualWrites = shopUpdateSql.length;
     await service.update(principal, snapshot);
     await service.update(principal, snapshot);
+    assert.deepEqual(shopUpdates.slice(0, 2), [1, 1]);
+    assert.equal(shopUpdateSql.length - sqlBeforeEqualWrites, 2);
     const after = await database().shop.findUniqueOrThrow({ where: { id: shopId } });
     assert.deepEqual({
       ...after, updatedAt: before.updatedAt,
@@ -51,7 +71,10 @@ test("PostgreSQL writes only the context snapshot, round-trips via bootstrap and
       storeLocale: null, languageTag: null, timeZone: null, countryCode: null,
     });
 
+    const beforeStalePrincipalSql = shopUpdateSql.length;
     await assert.rejects(() => service.update({ ...principal, canonicalSiteUrl: "https://other.example" }, snapshot), MerchantStoreContextConflictError);
+    assert.equal(shopUpdates.at(-1), 0);
+    assert.equal(shopUpdateSql.length - beforeStalePrincipalSql, 1);
     await database().wooCommerceInstallation.update({ where: { id: installation.id }, data: { credentialVersion: { increment: 1 } } });
     await assert.rejects(() => service.update(principal, snapshot), MerchantStoreContextConflictError);
     await database().wooCommerceInstallation.update({ where: { id: installation.id }, data: { revokedAt: new Date() } });

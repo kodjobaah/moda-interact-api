@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient, type ShopSettings, type ShopRecoveryPolicyOverride } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { parseEffectiveRecoveryPolicy } from "@modainteract/moda-interact-shared/recovery-policy";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { RecoveryPolicyConflictError, RecoveryPolicyIntegrityError,
@@ -7,8 +7,10 @@ import { UNCONFIGURED_RECOVERY_POLICY } from "../recovery-summary/recovery-summa
 
 type PolicyDatabase = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
-type Settings = ShopSettings;
-type Override = ShopRecoveryPolicyOverride;
+type Settings = Pick<Prisma.ShopSettingsGetPayload<{}>, "recoveryDelayMinutes" | "recoveryOfferMode" |
+  "fixedShopifyDiscountId" | "followUpEnabled" | "followUpDelayMinutes" | "notifyOnInitialRecoveryOutreach" | "updatedAt">;
+type Override = Pick<Prisma.ShopRecoveryPolicyOverrideGetPayload<{}>, "recoveryDelayMinutes" | "recoveryOfferMode" |
+  "fixedShopifyDiscountId" | "followUpEnabled" | "followUpDelayMinutes" | "expiresAt">;
 
 interface ShopIdentity { id: string; domain: string; platform: string; shopifyShopId: string | null; status: string; onboardingCompleted: boolean }
 interface InstallationIdentity { id: string; shopId: string; canonicalSiteUrl: string; credentialVersion: number; status: string; revokedAt: Date | null }
@@ -61,7 +63,10 @@ function policyValues(source: Settings | Override | typeof UNCONFIGURED_RECOVERY
 
 async function projection(tx: Tx, principal: WooInstallationPrincipal, now: Date,
   settings: Settings | null): Promise<MerchantRecoveryPolicyResponse> {
-  const override = await tx.shopRecoveryPolicyOverride.findUnique({ where: { shopId: principal.shopId } });
+  const override = await tx.shopRecoveryPolicyOverride.findUnique({ where: { shopId: principal.shopId }, select: {
+    recoveryDelayMinutes: true, recoveryOfferMode: true, fixedShopifyDiscountId: true,
+    followUpEnabled: true, followUpDelayMinutes: true, expiresAt: true,
+  } });
   const active = override && (override.expiresAt === null || override.expiresAt > now) ? override : null;
   return {
     schemaVersion: 2,
@@ -91,7 +96,10 @@ export class MerchantRecoveryPolicyService {
   async read(principal: WooInstallationPrincipal): Promise<MerchantRecoveryPolicyResponse> {
     return this.database.$transaction(async (tx) => {
       await assertCurrentShop(tx, principal, false);
-      const settings = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId } });
+      const settings = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId }, select: {
+        recoveryDelayMinutes: true, recoveryOfferMode: true, fixedShopifyDiscountId: true,
+        followUpEnabled: true, followUpDelayMinutes: true, notifyOnInitialRecoveryOutreach: true, updatedAt: true,
+      } });
       return projection(tx, principal, this.now(), settings);
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
@@ -100,7 +108,10 @@ export class MerchantRecoveryPolicyService {
     try {
       return await this.database.$transaction(async (tx) => {
         const shop = await assertCurrentShop(tx, principal, true);
-        const current = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId } });
+        const current = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId }, select: {
+          recoveryDelayMinutes: true, recoveryOfferMode: true, fixedShopifyDiscountId: true,
+          followUpEnabled: true, followUpDelayMinutes: true, notifyOnInitialRecoveryOutreach: true, updatedAt: true,
+        } });
         // Never retain or mutate a historical Shopify discount selection on Woo.
         if (current && (current.recoveryOfferMode !== "NONE" || current.fixedShopifyDiscountId !== null)) {
           throw new RecoveryPolicyConflictError("recovery_offer_unsupported");
@@ -122,7 +133,7 @@ export class MerchantRecoveryPolicyService {
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code)) {
-        throw new RecoveryPolicyConflictError("recovery_policy_conflict");
+        throw new RecoveryPolicyConflictError("recovery_policy_conflict", { cause: error });
       }
       throw error;
     }

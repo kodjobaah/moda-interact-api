@@ -34,8 +34,8 @@ export class FeaturePreferencesRequestError extends Error {
 }
 
 export class FeaturePreferencesConflictError extends Error {
-  constructor(readonly code: "feature_preferences_conflict" | "feature_preferences_denied" | "feature_preferences_unavailable") {
-    super(code);
+  constructor(readonly code: "feature_preferences_conflict" | "feature_preferences_denied" | "feature_preferences_unavailable", options?: ErrorOptions) {
+    super(code, options);
   }
 }
 

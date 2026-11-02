@@ -6,6 +6,10 @@ import {
   FeaturePreferencesConflictError, FeaturePreferencesIntegrityError,
   isFeaturePreferencesResponse, type FeaturePreferencesResponse, type FeaturePreferencesUpdate,
 } from "./contract.js";
+import {
+  measureFeaturePreferencePhase, measureFeaturePreferenceProjection,
+  type FeaturePreferenceLoadPhase, type FeaturePreferenceLoadTimings, type FeaturePreferenceTimingSink,
+} from "./timing.js";
 
 type Database = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
@@ -41,18 +45,31 @@ async function assertInstallation(tx: Tx, principal: WooInstallationPrincipal, w
     installation.revokedAt !== null) throw new FeaturePreferencesIntegrityError();
 }
 
-async function load(tx: Tx, shopId: string): Promise<FeaturePreferencesResponse> {
-  const subscription = await tx.subscription.findUnique({
+async function load(tx: Tx, shopId: string, phase: FeaturePreferenceLoadPhase,
+  timings: FeaturePreferenceLoadTimings): Promise<FeaturePreferencesResponse> {
+  const subscription = await measureFeaturePreferencePhase(timings, phase, "subscriptionLookupMs", () => tx.subscription.findUnique({
     where: { shopId },
-    include: { plan: { include: { features: { include: { feature: true }, orderBy: { featureId: "asc" } } } } },
-  });
+    select: {
+      id: true, status: true, planId: true,
+      plan: { select: { id: true, active: true, updatedAt: true, features: {
+        orderBy: { featureId: "asc" },
+        select: { featureId: true, enabled: true, feature: { select: { active: true, updatedAt: true } } },
+      } } },
+    },
+  }));
   if (!subscription || !["ACTIVE", "TRIALING"].includes(subscription.status) ||
     !subscription.plan || !subscription.plan.active) {
     throw new FeaturePreferencesConflictError("feature_preferences_unavailable");
   }
   const [features, preferences] = await Promise.all([
-    tx.feature.findMany({ where: { active: true }, orderBy: [{ displayName: "asc" }, { id: "asc" }] }),
-    tx.shopFeaturePreference.findMany({ where: { shopId }, orderBy: { featureId: "asc" } }),
+    measureFeaturePreferencePhase(timings, phase, "featuresLookupMs", () => tx.feature.findMany({
+      where: { active: true }, orderBy: [{ displayName: "asc" }, { id: "asc" }],
+      select: { id: true, key: true, displayName: true, description: true, active: true,
+        activationMode: true, systemRequired: true, updatedAt: true },
+    })),
+    measureFeaturePreferencePhase(timings, phase, "preferencesLookupMs", () => tx.shopFeaturePreference.findMany({
+      where: { shopId }, orderBy: { featureId: "asc" }, select: { featureId: true, enabled: true, updatedAt: true },
+    })),
   ]);
   const mappingIds = new Set(subscription.plan.features.filter((mapping) => mapping.enabled && mapping.feature.active)
     .map((mapping) => mapping.featureId));
@@ -68,7 +85,7 @@ async function load(tx: Tx, shopId: string): Promise<FeaturePreferencesResponse>
   const selected = new Set(selectCapabilities(features.map((feature, position) => ({
     key: `feature_${position}`, featureId: feature.id, enabled: true, position,
   })), { features: facts }));
-  const response: FeaturePreferencesResponse = {
+  const response = measureFeaturePreferenceProjection(timings, phase, (): FeaturePreferencesResponse => ({
     schemaVersion: 1,
     revision: createHash("sha256").update(JSON.stringify({
       subscription: [subscription.id, subscription.status, subscription.planId],
@@ -88,7 +105,7 @@ async function load(tx: Tx, shopId: string): Promise<FeaturePreferencesResponse>
         required, planEligible,
       };
     }),
-  };
+  }));
   if (!isFeaturePreferencesResponse(response)) throw new FeaturePreferencesIntegrityError();
   return response;
 }
@@ -96,18 +113,22 @@ async function load(tx: Tx, shopId: string): Promise<FeaturePreferencesResponse>
 export class MerchantFeaturePreferencesService {
   constructor(private readonly database: Database) {}
 
-  async read(principal: WooInstallationPrincipal): Promise<FeaturePreferencesResponse> {
-    return this.database.$transaction(async (tx) => {
+  async read(principal: WooInstallationPrincipal, reportTimings?: FeaturePreferenceTimingSink): Promise<FeaturePreferencesResponse> {
+    const timings: FeaturePreferenceLoadTimings = {};
+    try { return await this.database.$transaction(async (tx) => {
       await assertInstallation(tx, principal, false);
-      return load(tx, principal.shopId);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+      return load(tx, principal.shopId, "initial", timings);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead }); }
+    finally { reportTimings?.(timings); }
   }
 
-  async update(principal: WooInstallationPrincipal, input: FeaturePreferencesUpdate): Promise<FeaturePreferencesResponse> {
+  async update(principal: WooInstallationPrincipal, input: FeaturePreferencesUpdate,
+    reportTimings?: FeaturePreferenceTimingSink): Promise<FeaturePreferencesResponse> {
+    const timings: FeaturePreferenceLoadTimings = {};
     try {
       return await this.database.$transaction(async (tx) => {
         await assertInstallation(tx, principal, true);
-        const current = await load(tx, principal.shopId);
+        const current = await load(tx, principal.shopId, "initial", timings);
         // Compare revisions before no-op checks: even identical stale requests must not bypass CAS.
         if (current.revision !== input.expectedRevision) {
           throw new FeaturePreferencesConflictError("feature_preferences_conflict");
@@ -127,13 +148,13 @@ export class MerchantFeaturePreferencesService {
             update: { enabled: change.enabled },
           });
         }
-        return load(tx, principal.shopId);
+        return load(tx, principal.shopId, "final", timings);
       }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code)) {
-        throw new FeaturePreferencesConflictError("feature_preferences_conflict");
+        throw new FeaturePreferencesConflictError("feature_preferences_conflict", { cause: error });
       }
       throw error;
-    }
+    } finally { reportTimings?.(timings); }
   }
 }
