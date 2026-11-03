@@ -13,12 +13,22 @@ import { canonicalizeWooSiteUrl } from "../../../../src/woocommerce/installation
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 let prisma: PrismaClient | undefined;
+const queryEvents: string[] = [];
 const freePlanHandle = `woo-free-${randomUUID()}`;
 let checkoutFeatureId: string | undefined;
+const catalogueLocales = [
+  "cs", "da", "de", "en", "es", "fi", "fr", "it", "ja", "ko", "nb", "nl", "pl",
+  "pt-BR", "pt-PT", "sv", "th", "tr", "zh-Hans", "zh-Hant",
+] as const;
 
 function database(): PrismaClient {
   if (!databaseUrl) throw new Error("WOO_INSTALLATION_TEST_DATABASE_URL is required");
-  return prisma ??= new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  if (!prisma) {
+    prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } }, log: [{ emit: "event", level: "query" }] });
+    (prisma as unknown as { $on: (event: "query", callback: (event: { query: string }) => void) => void })
+      .$on("query", event => queryEvents.push(event.query));
+  }
+  return prisma;
 }
 
 function service(verify: () => Promise<void> = async () => {}): WooInstallationConnectionService {
@@ -37,6 +47,10 @@ function makeInput(siteUrl: string) {
 
 function uniqueSite(): string {
   return `https://${randomUUID()}.woo-integration.invalid`;
+}
+
+function statementsSince(offset: number): string[] {
+  return queryEvents.slice(offset).filter(query => !/^(BEGIN|COMMIT|ROLLBACK|SET TRANSACTION)\b/i.test(query.trim()));
 }
 
 async function removeSite(siteUrl: string): Promise<void> {
@@ -59,22 +73,23 @@ async function restorePlatformBillingPolicy(): Promise<void> {
 
 before(async () => {
   if (!databaseUrl) return;
-  const feature = await database().feature.create({
-    data: {
-      key: "checkout_recovery",
-      displayName: "Checkout recovery test feature",
-      activationMode: "ALWAYS_ENABLED",
-      systemRequired: true,
+  const feature = await database().feature.upsert({
+    where: { key: "checkout_recovery" },
+    create: {
+      key: "checkout_recovery", displayName: "Checkout recovery test feature",
+      activationMode: "ALWAYS_ENABLED", systemRequired: true,
     },
+    update: {},
   });
   checkoutFeatureId = feature.id;
-  await database().merchantPricingPlan.create({
-    data: {
+  await database().merchantPricingPlan.upsert({
+    where: { shopifyPlanHandle: freePlanHandle },
+    create: {
       shopifyPlanHandle: freePlanHandle,
       displayName: "Woo Free test plan",
       planKind: "FREE",
       isActive: true,
-      cataloguePosition: 1,
+      cataloguePosition: 0,
       includedRecoveryCredits: 91,
       allowancePeriod: "LIFETIME",
       billingPeriod: "EVERY_30_DAYS",
@@ -83,7 +98,11 @@ before(async () => {
       features: {
         create: { featureId: feature.id, configuration: {} },
       },
+      translations: {
+        create: catalogueLocales.map((locale) => ({ locale, merchantDescription: "Integration fixture" })),
+      },
     },
+    update: { isActive: true, recurringAmountMinor: 0 },
   });
   await restorePlatformBillingPolicy();
 });
@@ -221,6 +240,73 @@ test("PostgreSQL reconnect preserves tenant state and rotates only the installat
     assert.equal(counterAfter.refundingQuantity, 1);
     assert.equal(await database().shopEntitlementCounter.count({ where: { shopId: shop.id } }), 1);
     assert.deepEqual(Buffer.from(installation.credentialDigest), digestSecret(Buffer.from(reconnect.credential, "base64url")));
+  } finally {
+    await removeSite(siteUrl);
+  }
+});
+
+test("PostgreSQL captures baseline and current SQL for an already-onboarded ACTIVE reconnect", {
+  skip: !databaseUrl,
+}, async () => {
+  const siteUrl = uniqueSite();
+  const originalDigest = Uint8Array.from(digestSecret(Buffer.alloc(32, 0x31)));
+  const baselineDigest = Uint8Array.from(digestSecret(Buffer.alloc(32, 0x32)));
+  try {
+    const shop = await database().shop.create({ data: {
+      domain: siteUrl, platform: "WOOCOMMERCE", status: "ACTIVE", onboardingCompleted: true,
+    } });
+    const installation = await database().wooCommerceInstallation.create({ data: {
+      shopId: shop.id, canonicalSiteUrl: siteUrl, credentialDigest: originalDigest,
+    } });
+
+    const baselineStart = queryEvents.length;
+    const observed = await database().wooCommerceInstallation.findUnique({
+      where: { canonicalSiteUrl: siteUrl },
+      select: {
+        id: true, shopId: true, credentialVersion: true,
+        shop: { select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true } },
+      },
+    });
+    assert.ok(observed);
+    const baselineRows = await database().$transaction(async tx => {
+      const currentShop = await tx.shop.findUnique({
+        where: { id: observed.shop.id },
+        select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true },
+      });
+      assert.equal(currentShop?.onboardingCompleted, true);
+      const activationShop = await tx.shop.findUnique({
+        where: { id: currentShop!.id }, select: { id: true, onboardingCompleted: true },
+      });
+      assert.equal(activationShop?.onboardingCompleted, true);
+      const updated = await tx.wooCommerceInstallation.updateMany({
+        where: { id: installation.id, shopId: shop.id, credentialVersion: installation.credentialVersion },
+        data: { credentialDigest: baselineDigest, credentialVersion: { increment: 1 }, status: "ACTIVE", revokedAt: null },
+      });
+      const returned = await tx.wooCommerceInstallation.findUniqueOrThrow({
+        where: { id: installation.id, shopId: shop.id, credentialVersion: installation.credentialVersion + 1 },
+        select: { id: true, shopId: true, credentialVersion: true },
+      });
+      return { changed: updated.count, returned: returned ? 1 : 0 };
+    });
+    const baselineSql = statementsSince(baselineStart);
+    await database().wooCommerceInstallation.update({ where: { id: installation.id }, data: {
+      credentialDigest: originalDigest, credentialVersion: installation.credentialVersion,
+    } });
+
+    const currentStart = queryEvents.length;
+    const result = await service(async () => undefined).connect(makeInput(siteUrl));
+    const currentSql = statementsSince(currentStart);
+    assert.equal(result.credentialVersion, installation.credentialVersion + 1);
+    assert.equal(baselineRows.changed, 1);
+    assert.equal(baselineRows.returned, 1);
+    assert.equal((await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: installation.id } })).credentialVersion,
+      installation.credentialVersion + 1);
+    console.info(`ARCH-055 reconnect SQL capture baseline statements=${baselineSql.length}, update affected=${baselineRows.changed}, follow-up rows=${baselineRows.returned}`);
+    baselineSql.forEach((query, index) => console.info(`BASELINE SQL ${index + 1}: ${query}`));
+    console.info(`ARCH-055 reconnect SQL capture current statements=${currentSql.length}, returning rows=${result.credentialVersion === installation.credentialVersion + 1 ? 1 : 0}`);
+    currentSql.forEach((query, index) => console.info(`CURRENT SQL ${index + 1}: ${query}`));
+    assert.equal(baselineSql.length, 6);
+    assert.equal(currentSql.length, 4);
   } finally {
     await removeSite(siteUrl);
   }

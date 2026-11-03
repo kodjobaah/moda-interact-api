@@ -18,12 +18,16 @@ function inMemoryTransaction() {
   let media: Record<string, unknown> = {};
   let brand: Record<string, unknown> | null = null;
   let writes = 0;
+  let brandReads = 0;
   let validInstallation = true;
   const db = {
     $transaction: async <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn({
       $queryRaw: async (query: RawSql) => {
         const sql = query.strings.join("?");
-        if (sql.includes('FROM "commerce"."ShopBrand"')) return brand ? [{ ...brand, whatsAppMedia: media }] : [];
+        if (sql.includes('FROM "commerce"."ShopBrand"')) {
+          brandReads++;
+          return brand ? [{ ...brand, whatsAppMedia: media }] : [];
+        }
         if (sql.includes('FROM "commerce"."Shop"')) return [{ id: "shop-1", domain: principal.canonicalSiteUrl,
           status: "ACTIVE", platform: "WOOCOMMERCE", shopifyShopId: null }];
         if (sql.includes('FROM "woocommerce"."WooCommerceInstallation"')) return validInstallation
@@ -31,9 +35,12 @@ function inMemoryTransaction() {
             credentialVersion: 1, status: "ACTIVE", revokedAt: null }] : [];
         throw new Error("unexpected query");
       },
-      shopBrand: { create: async () => { brand = { id: "brand-1", brandName: null, logoUrl: null,
+      shopBrand: { create: async () => {
+        brand = { id: "brand-1", brandName: null, logoUrl: null,
         logoAltText: null, logoWidth: null, logoHeight: null,
-        squareLogoUrl: null, squareLogoAltText: null, coverImageUrl: null }; } },
+        squareLogoUrl: null, squareLogoAltText: null, coverImageUrl: null, whatsAppMedia: {} };
+        return { ...brand };
+      } },
       $executeRaw: async (query: RawSql) => {
         const values = query.values ?? query.v ?? [];
         if (!brand || values.length !== 13) throw new Error("unexpected UPDATE");
@@ -46,7 +53,7 @@ function inMemoryTransaction() {
       },
     }),
   };
-  return { db, state: () => ({ media, brand, writes }), revoke: () => { validInstallation = false; } };
+  return { db, state: () => ({ media, brand, writes, brandReads }), revoke: () => { validInstallation = false; } };
 }
 
 test("transactional source generations, idempotence and stale observations", async () => {
@@ -54,6 +61,7 @@ test("transactional source generations, idempotence and stale observations", asy
   const service = new WooShopBrandService(fake.db as never, () => clock);
   const first = snapshot();
   assert.deepEqual(await service.record(principal, first), { status: "updated" });
+  assert.equal(fake.state().brandReads, 1, "first-row creation reuses the returned ShopBrand projection");
   assert.deepEqual(await service.record(principal, first), { status: "unchanged" });
   assert.deepEqual(await service.record(principal, { ...first, observedAt: "2026-10-27T11:57:00.000Z" }),
     { status: "unchanged" });
