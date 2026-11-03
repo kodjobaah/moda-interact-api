@@ -139,13 +139,33 @@ test("retained conflict is bounded 409; enqueue failure is retryable 503", async
       if (status === 503) {
         const warning = calls.logs.find((entry) => Array.isArray(entry) && entry[0] === "woocommerce.activity.queue.unavailable");
         assert.ok(warning && Array.isArray(warning));
-        const fields = warning[1] as { error?: Error };
-        assert.ok(fields.error instanceof Error);
-        assert.equal(fields.error.name, "Error");
-        assert.equal(fields.error.message, "Woo activity queue operation failed");
+        const fields = warning[1] as { stage?: string; error?: { name?: string; message?: string } };
+        assert.equal(fields.stage, "redis_connection_or_publication");
+        assert.deepEqual(fields.error, { name: "Error", message: "[REDACTED_URL]" });
       }
     });
   }
+});
+
+test("authentication database failures are distinguished and retain only redacted causes", async () => {
+  const cause = new Error("connect failed at postgresql://user:password@database.example/app");
+  const failure = new Error("Prisma authentication query failed", { cause });
+  Object.assign(failure, { code: "P1001" });
+  await withRoute({ authenticate: async () => { throw failure; } }, async (origin, calls) => {
+    const response = await send(origin);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "queue_unavailable" });
+    const entry = calls.logs.find((value) => Array.isArray(value) &&
+      value[0] === "woocommerce.activity.authentication.unavailable");
+    assert.ok(Array.isArray(entry));
+    assert.deepEqual(entry[1], {
+      stage: "authentication_database", reason: "authentication_database_unavailable",
+      error: { name: "Error", message: "Prisma authentication query failed", code: "P1001",
+        cause: { name: "Error", message: "connect failed at [REDACTED_URL]" } },
+    });
+    assert.doesNotMatch(JSON.stringify(calls.logs), /password|database\.example/);
+    assert.equal(calls.publish, 0);
+  });
 });
 
 test("orders use authenticated shop and separate publisher, including order-first", async () => {

@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
-import { readFileSync } from "node:fs";
 import { PrismaClient } from "@prisma/client";
 import { WooConfirmedSentOfferResolver } from "../../../../src/woocommerce/recovery-restore/offer-resolver.js";
 import { WooRecoveryRestoreService } from "../../../../src/woocommerce/recovery-restore/service.js";
@@ -31,17 +30,17 @@ async function insertRecovery(input: {
   await prisma.$executeRaw`
     INSERT INTO "commerce"."CheckoutRecovery"
       ("id", "shopId", "checkoutToken", "generation", "status", "completedAt", "expiredAt",
-       "lastExternalActivityAt", "checkoutUrl", "wooRestoreSnapshot")
-    VALUES (${input.id}, ${shopId}, ${input.checkoutToken}, ${input.generation}, ${input.status},
+       "lastExternalActivityAt", "checkoutUrl", "wooRestoreSnapshot", "updatedAt")
+    VALUES (${input.id}, ${shopId}, ${input.checkoutToken}, ${input.generation}, CAST(${input.status} AS "commerce"."CheckoutRecoveryStatus"),
       ${input.completedAt ?? null}, ${input.expiredAt ?? null}, ${input.lastActivityAt},
-      ${storedUrl(input.id, input.token)}, CAST(${JSON.stringify(input.snapshot)} AS jsonb))
+      ${storedUrl(input.id, input.token)}, CAST(${JSON.stringify(input.snapshot)} AS jsonb), CURRENT_TIMESTAMP)
   `;
 }
 
 async function insertConversation(recoveryId: string, conversationId: string): Promise<void> {
   await prisma.$executeRaw`
-    INSERT INTO "whatsapp"."Conversation" ("id", "checkoutRecoveryId")
-    VALUES (${conversationId}, ${recoveryId})
+    INSERT INTO "whatsapp"."Conversation" ("id", "checkoutRecoveryId", "type", "updatedAt")
+    VALUES (${conversationId}, ${recoveryId}, 'RECOVERY', CURRENT_TIMESTAMP)
   `;
 }
 
@@ -60,110 +59,51 @@ async function insertAttempt(input: {
       INSERT INTO "whatsapp"."ConversationMessage"
         ("id", "conversationId", "direction", "senderType", "status", "providerMessageId", "content")
       VALUES (${input.message.id}, ${input.conversationId}, 'OUTBOUND', 'AUTOMATION',
-        ${input.message.status}, ${input.message.providerMessageId}, ${input.message.content})
+        CAST(${input.message.status} AS "whatsapp"."MessageStatus"), ${input.message.providerMessageId}, ${input.message.content})
     `;
   }
   await prisma.$executeRaw`
     INSERT INTO "commerce"."RecoveryOutreachAttempt"
-      ("id", "checkoutRecoveryId", "sequence", "status", "sentAt", "outboundMessageId")
-    VALUES (${input.attemptId}, ${input.recoveryId}, ${input.sequence ?? 1}, ${input.status},
-      ${input.sentAt}, ${input.outboundMessageId})
+      ("id", "checkoutRecoveryId", "recipient", "sequence", "trigger", "status",
+       "configuredOfferMode", "sentAt", "outboundMessageId", "updatedAt")
+    VALUES (${input.attemptId}, ${input.recoveryId}, '447400000000', ${input.sequence ?? 1},
+      'INITIAL', CAST(${input.status} AS "commerce"."RecoveryOutreachStatus"), 'NONE', ${input.sentAt}, ${input.outboundMessageId}, CURRENT_TIMESTAMP)
   `;
 }
 
 after(async () => prisma.$disconnect());
 
 test("PostgreSQL resolver query enforces latest generation and returns coupon codes only as snapshot data", async () => {
-  await prisma.$executeRawUnsafe(`CREATE SCHEMA "commerce"`);
-  await prisma.$executeRawUnsafe(`CREATE SCHEMA "woocommerce"`);
-  await prisma.$executeRawUnsafe(`CREATE SCHEMA "whatsapp"`);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "public"."BackgroundRuntimeConfig" (
-      "id" text PRIMARY KEY, "checkoutRecoveryLifetimeDays" integer NOT NULL,
-      CONSTRAINT "ck_arch016_checkout_recovery_lifetime"
-        CHECK ("checkoutRecoveryLifetimeDays" BETWEEN 1 AND 90)
-    )
-  `);
   await prisma.$executeRaw`
-    INSERT INTO "public"."BackgroundRuntimeConfig" ("id", "checkoutRecoveryLifetimeDays")
-    VALUES ('default', 21)
+    INSERT INTO "public"."BackgroundRuntimeConfig" ("id", "checkoutRecoveryLifetimeDays", "updatedAt")
+    VALUES ('default', 21, CURRENT_TIMESTAMP)
+    ON CONFLICT ("id") DO UPDATE SET "checkoutRecoveryLifetimeDays" = 21, "updatedAt" = CURRENT_TIMESTAMP
   `;
-  const migrationPath = new URL(
-    "../../../../database/prisma/migrations/20261031110000_arch016_remove_recovery_lifetime_check/migration.sql",
-    import.meta.url,
-  );
-  const originalConstraint = await prisma.$queryRaw<Array<{ exists: boolean }>>`
+  const lifetimeConstraint = await prisma.$queryRaw<Array<{ exists: boolean }>>`
     SELECT EXISTS (
       SELECT 1 FROM pg_constraint
       WHERE conname = 'ck_arch016_checkout_recovery_lifetime'
         AND conrelid = '"public"."BackgroundRuntimeConfig"'::regclass
     ) AS "exists"
   `;
-  assert.equal(originalConstraint[0]?.exists, true);
-  await prisma.$executeRawUnsafe(readFileSync(migrationPath, "utf8"));
-  const removedConstraint = await prisma.$queryRaw<Array<{ exists: boolean }>>`
-    SELECT EXISTS (
-      SELECT 1 FROM pg_constraint
-      WHERE conname = 'ck_arch016_checkout_recovery_lifetime'
-        AND conrelid = '"public"."BackgroundRuntimeConfig"'::regclass
-    ) AS "exists"
-  `;
-  assert.equal(removedConstraint[0]?.exists, false);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "commerce"."Shop" (
-      "id" text PRIMARY KEY, "domain" text NOT NULL, "status" text NOT NULL,
-      "platform" text NOT NULL, "shopifyShopId" text
-    )
-  `);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "woocommerce"."WooCommerceInstallation" (
-      "id" text PRIMARY KEY, "shopId" text NOT NULL, "canonicalSiteUrl" text NOT NULL,
-      "status" text NOT NULL, "credentialVersion" integer NOT NULL, "revokedAt" timestamptz
-    )
-  `);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "commerce"."CheckoutRecovery" (
-      "id" text PRIMARY KEY, "shopId" text NOT NULL, "checkoutToken" text NOT NULL,
-      "generation" integer NOT NULL, "status" text NOT NULL, "completedAt" timestamptz,
-      "expiredAt" timestamptz, "lastExternalActivityAt" timestamptz NOT NULL,
-      "checkoutUrl" text, "wooRestoreSnapshot" jsonb
-    )
-  `);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "whatsapp"."Conversation" (
-      "id" text PRIMARY KEY, "checkoutRecoveryId" text UNIQUE
-    )
-  `);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "whatsapp"."ConversationMessage" (
-      "id" text PRIMARY KEY, "conversationId" text NOT NULL, "direction" text NOT NULL,
-      "senderType" text NOT NULL, "status" text NOT NULL, "providerMessageId" text, "content" text NOT NULL
-    )
-  `);
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "commerce"."RecoveryOutreachAttempt" (
-      "id" text PRIMARY KEY, "checkoutRecoveryId" text NOT NULL, "sequence" integer NOT NULL,
-      "status" text NOT NULL, "sentAt" timestamptz, "outboundMessageId" text,
-      UNIQUE ("checkoutRecoveryId", "sequence")
-    )
-  `);
+  assert.equal(lifetimeConstraint[0]?.exists, false, "canonical migrations remove the legacy lifetime check");
   await prisma.$executeRaw`
-    INSERT INTO "commerce"."Shop" ("id", "domain", "status", "platform", "shopifyShopId")
-    VALUES (${shopId}, ${canonicalSiteUrl}, 'ACTIVE', 'WOOCOMMERCE', NULL)
+    INSERT INTO "commerce"."Shop" ("id", "domain", "status", "platform", "shopifyShopId", "updatedAt")
+    VALUES (${shopId}, ${canonicalSiteUrl}, 'ACTIVE', 'WOOCOMMERCE', NULL, CURRENT_TIMESTAMP)
   `;
   await prisma.$executeRaw`
     INSERT INTO "woocommerce"."WooCommerceInstallation"
-      ("id", "shopId", "canonicalSiteUrl", "status", "credentialVersion", "revokedAt")
-    VALUES (${installationId}, ${shopId}, ${canonicalSiteUrl}, 'ACTIVE', 3, NULL)
+      ("id", "shopId", "canonicalSiteUrl", "status", "credentialDigest", "credentialVersion", "revokedAt")
+    VALUES (${installationId}, ${shopId}, ${canonicalSiteUrl}, 'ACTIVE', ${Buffer.alloc(32)}, 3, NULL)
   `;
   await prisma.$executeRaw`
-    INSERT INTO "commerce"."Shop" ("id", "domain", "status", "platform", "shopifyShopId")
-    VALUES ('other_shop', 'https://other.example', 'ACTIVE', 'WOOCOMMERCE', NULL)
+    INSERT INTO "commerce"."Shop" ("id", "domain", "status", "platform", "shopifyShopId", "updatedAt")
+    VALUES ('other_shop', 'https://other.example', 'ACTIVE', 'WOOCOMMERCE', NULL, CURRENT_TIMESTAMP)
   `;
   await prisma.$executeRaw`
     INSERT INTO "woocommerce"."WooCommerceInstallation"
-      ("id", "shopId", "canonicalSiteUrl", "status", "credentialVersion", "revokedAt")
-    VALUES ('other_installation', 'other_shop', 'https://other.example', 'ACTIVE', 1, NULL)
+      ("id", "shopId", "canonicalSiteUrl", "status", "credentialDigest", "credentialVersion", "revokedAt")
+    VALUES ('other_installation', 'other_shop', 'https://other.example', 'ACTIVE', ${Buffer.alloc(32)}, 1, NULL)
   `;
 
   const originalSnapshot = {
@@ -261,10 +201,10 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
   await prisma.$executeRaw`
     INSERT INTO "commerce"."CheckoutRecovery"
       ("id", "shopId", "checkoutToken", "generation", "status", "lastExternalActivityAt",
-       "checkoutUrl", "wooRestoreSnapshot")
+       "checkoutUrl", "wooRestoreSnapshot", "updatedAt")
     VALUES ('restore_other_shop', 'other_shop', 'other_checkout', 1, 'DETECTED', ${now},
       ${`https://other.example/?moda_interact_resume=1&r=restore_other_shop&t=${token(5)}`},
-      CAST(${JSON.stringify(originalSnapshot)} AS jsonb))
+      CAST(${JSON.stringify(originalSnapshot)} AS jsonb), CURRENT_TIMESTAMP)
   `;
 
   const resolver = new WooRecoveryRestoreService(prisma, new WooConfirmedSentOfferResolver(prisma, {

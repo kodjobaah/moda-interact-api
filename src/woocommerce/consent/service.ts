@@ -110,12 +110,9 @@ export class WooConsentService {
     try {
       return await this.database.$transaction(async tx => {
         await verifyInstallation(tx, principal);
-        // Lock both the event identity and recipient before checking existing
-        // evidence. Concurrent lost-ACK retries must not race to create revisions.
+        // Serialize the event identity before checking immutable evidence.
         await lockConsentKey(tx, principal.shopId, `event:${event.eventId}`);
-        await lockConsentKey(tx, principal.shopId, `phone:${event.canonicalPhone}`);
-        // The Shop and installation are locked before the evidence lookup.
-        // An identical event remains idempotent even after feature disable or STOP.
+        // An identical event remains idempotent after a later decision or STOP.
         const existing = await tx.$queryRaw<Evidence[]>(Prisma.sql`
           SELECT "payloadDigest", "decision"::text AS "decision", "phoneConsentRevision", "decisionSequence"
           FROM "commerce"."WhatsAppConsentEvidence"
@@ -128,6 +125,8 @@ export class WooConsentService {
             consentRevision: previous.phoneConsentRevision.toString(),
             decisionSequence: previous.decisionSequence.toString() };
         }
+        // New events coordinate recipient state only after the replay fast path.
+        await lockConsentKey(tx, principal.shopId, `phone:${event.canonicalPhone}`);
         const now = this.now();
         const occurred = new Date(event.occurredAt);
         // Woo validates the action timestamp, then the API bounds clock skew and
@@ -172,7 +171,11 @@ export class WooConsentService {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 10_000 });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError &&
-        ["P2002", "P2034"].includes(error.code)) throw conflict("consent_write_conflict");
+        ["P2002", "P2034"].includes(error.code)) {
+        const mapped = conflict("consent_write_conflict");
+        Object.defineProperty(mapped, "cause", { value: error, configurable: true });
+        throw mapped;
+      }
       throw error;
     }
   }
