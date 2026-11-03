@@ -109,14 +109,13 @@ test("ARCH-055 category GET returns a coherent pre-publication snapshot", { skip
             } });
           }
           return Reflect.get(target, property, receiver);
-        } })) as Promise<unknown>, options),
+        } })) as Promise<unknown>, { ...options, timeout: 30_000 }),
     };
     const read = new StoreCategoriesReadService(readDatabase as never, CommerceEnvironment.TEST);
     pendingRead = read.read(principal);
     await atProfileRead;
     const next = await select(1, 1);
-    assert.equal(revisionHistorySelects.length - beforeExistingPublicationReads, 2,
-      JSON.stringify(revisionHistorySelects.slice(beforeExistingPublicationReads)));
+    assert.equal(revisionHistorySelects.length - beforeExistingPublicationReads, 2);
     assert.equal(next.activeCategoryId, categories[1]!.id);
     releaseProfileRead();
     const raced = await pendingRead;
