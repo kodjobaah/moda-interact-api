@@ -17,7 +17,6 @@ test("disposable PostgreSQL category catalogue read retains active Shop profile 
   const adminEmail = `${randomUUID()}@category.invalid`;
   let shopId: string | undefined;
   let categoryId: string | undefined;
-  let templateId: string | undefined;
   let adminId: string | undefined;
   try {
     const shop = await database().shop.create({ data: {
@@ -39,7 +38,6 @@ test("disposable PostgreSQL category catalogue read retains active Shop profile 
       key: `store-prompt-${randomUUID()}`, categoryId, displayName: "Store prompt", promptText: "You assist apparel shoppers.",
       createdByAdminId: adminId, updatedByAdminId: adminId,
     } });
-    templateId = prompt.id;
     await database().commercePromptTemplateCategory.update({ where: { id: categoryId }, data: {
       enabled: true, defaultTemplateId: prompt.id,
     } });

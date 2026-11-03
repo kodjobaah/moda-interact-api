@@ -79,7 +79,6 @@ test("PostgreSQL bootstrap projects active and pending category identities witho
   const categorySlugs = [`bootstrap-active-${randomUUID()}`, `bootstrap-pending-${randomUUID()}`];
   let shopId: string | undefined;
   let adminId: string | undefined;
-  let categoryIds: string[] = [];
   try {
     const shop = await database().shop.create({
       data: { domain, platform: "WOOCOMMERCE" },
@@ -96,7 +95,6 @@ test("PostgreSQL bootstrap projects active and pending category identities witho
       data: { slug: categorySlugs[1]!, displayName: "Pending category", createdByAdminId: adminId, updatedByAdminId: adminId },
       select: { id: true, slug: true, displayName: true },
     });
-    categoryIds = [active.id, pending.id];
     const prompt = await database().commerceAgentPrompt.create({ data: { scope: "SHOP", shopId } });
     const pendingRevision = await database().commerceAgentPromptRevision.create({ data: {
       promptId: prompt.id, revisionNumber: 1, status: "DRAFT", promptText: "Pending category prompt",

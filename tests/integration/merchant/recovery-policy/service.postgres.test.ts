@@ -48,7 +48,7 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
     assert.equal(emptySummary.recoveryDelayMinutes, 30);
     assert.equal(summaryStatements.length, 1);
     assert.match(summaryStatements[0]!, /LEFT JOIN/);
-    assert.match(summaryStatements[0]!, /WHERE s\."id" = \$1/);
+    assert.match(summaryStatements[0]!, /WHERE s\."id" = \$2/);
 
     const first = await service.update(principal, {
       expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,

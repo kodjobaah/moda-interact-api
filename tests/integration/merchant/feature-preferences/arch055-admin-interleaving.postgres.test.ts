@@ -1,13 +1,35 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { Readable } from "node:stream";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { createMerchantFeaturePreferencesRoute } from "../../../../src/merchant/feature-preferences/routes.js";
 import { Prisma, PrismaClient } from "@prisma/client";
 import test from "node:test";
 import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
-import { FeaturePreferencesConflictError } from "../../../../src/merchant/feature-preferences/contract.js";
+import { FeaturePreferencesConflictError, MERCHANT_FEATURE_PREFERENCES_PATH } from "../../../../src/merchant/feature-preferences/contract.js";
 import { MerchantFeaturePreferencesService } from "../../../../src/merchant/feature-preferences/service.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 type QueryEventClient = { $on(event: "query", listener: (event: { query: string }) => void): void };
+
+// Exercise the real HTTP mapping with the exact service result/error from each race.
+async function assertHttpOutcome(principal: WooInstallationPrincipal, outcome: unknown, status: number, code?: string) {
+  let actualStatus = 0; let body = "";
+  const route = createMerchantFeaturePreferencesRoute({
+    authenticator: { authenticate: async () => principal } as never,
+    service: { update: async () => { if (outcome instanceof Error) throw outcome; return outcome; } } as never,
+    logger: { info() {}, warn() {}, error() {} } as never,
+  });
+  const request = Object.assign(Readable.from([Buffer.from(JSON.stringify({
+    expectedRevision: "a".repeat(64), changes: [],
+  }))]), { method: "PUT", url: MERCHANT_FEATURE_PREFERENCES_PATH, rawHeaders: ["Content-Type", "application/json"] }) as IncomingMessage;
+  const response = { destroyed: false, headersSent: false,
+    writeHead(value: number) { actualStatus = value; }, end(value: string) { body = value; },
+  } as unknown as ServerResponse;
+  assert.equal(await route.handle(request, response), true);
+  assert.equal(actualStatus, status);
+  assert.deepEqual(JSON.parse(body), code ? { error: code } : outcome);
+}
 
 test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { skip: !databaseUrl }, async () => {
   const db = new PrismaClient({ datasources: { db: { url: databaseUrl! } }, log: [{ emit: "event", level: "query" }] });
@@ -81,6 +103,7 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
     await admin.billingPlanFeature.update({ where: { planId_featureId: { planId, featureId } }, data: { enabled: false } });
     releaseUpsert();
     const saved = await updatePromise;
+    await assertHttpOutcome(principal, saved, 200);
     assert.equal(preferenceUpserts.length - beforeInterleavingSql, 1);
     const stored = await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } });
     const mapping = await db.billingPlanFeature.findUniqueOrThrow({ where: { planId_featureId: { planId, featureId } } });
@@ -103,16 +126,19 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
     await admin.billingPlanFeature.update({ where: { planId_featureId: { planId, featureId } }, data: { enabled: false } });
     const unchangedAt = (await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt;
     const beforeStaleSql = preferenceUpserts.length;
+    let observedError: unknown;
     await assert.rejects(() => service.update(principal,
       { expectedRevision: beforeAdminDisable.revision, changes: [{ featureId: targetFeatureId, enabled: true }] },
-    ), (error: unknown) => error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_conflict");
+    ), (error: unknown) => { observedError = error; return error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_conflict"; });
+    await assertHttpOutcome(principal, observedError, 409, "feature_preferences_conflict");
     assert.equal(preferenceUpserts.length, beforeStaleSql);
     assert.equal((await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt.getTime(), unchangedAt.getTime());
     const disabledRevision = await service.read(principal);
     const beforeDeniedSql = preferenceUpserts.length;
     await assert.rejects(() => service.update(principal,
       { expectedRevision: disabledRevision.revision, changes: [{ featureId: targetFeatureId, enabled: true }] },
-    ), (error: unknown) => error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_denied");
+    ), (error: unknown) => { observedError = error; return error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_denied"; });
+    await assertHttpOutcome(principal, observedError, 409, "feature_preferences_denied");
     assert.equal(preferenceUpserts.length, beforeDeniedSql);
     assert.equal((await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt.getTime(), unchangedAt.getTime());
 
@@ -124,6 +150,7 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
     const noOp = await service.update(principal,
       { expectedRevision: noOpRevision.revision, changes: [{ featureId, enabled: false }] },
       (value) => noOpTimings.push(value));
+    await assertHttpOutcome(principal, noOp, 200);
     assert.equal(noOp.revision, noOpRevision.revision);
     assert.equal(preferenceUpserts.length, beforeNoOpSql);
     assert.equal(Object.keys(noOpTimings[0] ?? {}).some((key) => key.startsWith("final.")), false);
@@ -132,7 +159,8 @@ test("ARCH-055 C03 Admin mapping interleavings and revision/no-op controls", { s
     const afterChangedAt = (await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt;
     await assert.rejects(() => service.update(principal,
       { expectedRevision: noOp.revision, changes: [] },
-    ), (error: unknown) => error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_conflict");
+    ), (error: unknown) => { observedError = error; return error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_conflict"; });
+    await assertHttpOutcome(principal, observedError, 409, "feature_preferences_conflict");
     assert.equal((await db.shopFeaturePreference.findUniqueOrThrow({ where: { id: preferenceId } })).updatedAt.getTime(), afterChangedAt.getTime());
     assert.notEqual(changed.revision, noOp.revision);
 
