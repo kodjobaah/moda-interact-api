@@ -40,7 +40,7 @@ test("ARCH-055 conditional web writes reject Background generation advances; com
       const ordinary = new MerchantKnowledgeCommandService(db, new MerchantKnowledgeReadService(db));
       let readReached = deferred<void>();
       let allowWrite = deferred<void>();
-      const racingDatabase = { $transaction: (handler: (tx: Prisma.TransactionClient) => Promise<unknown>, options?: Prisma.TransactionOptions) =>
+      const racingDatabase = { $transaction: (handler: (tx: Prisma.TransactionClient) => Promise<unknown>, options?: unknown) =>
         db.$transaction(async (tx) => {
           let paused = false;
           const wrapped = new Proxy(tx, { get(target, property, receiver) {
@@ -61,7 +61,7 @@ test("ARCH-055 conditional web writes reject Background generation advances; com
             } });
           } });
           return handler(wrapped);
-        }, options) };
+        }, options as never) };
       const racing = new MerchantKnowledgeCommandService(racingDatabase as never, new MerchantKnowledgeReadService(db));
       const staleWrites = [
         ["metadata patch", (sourceId: string) => racing.patch(principal, sourceId, { expectedGeneration: 1, name: "stale name" })],

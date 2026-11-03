@@ -40,7 +40,7 @@ try {
   phase = "deploying migrations";
   run("npx", ["--no-install", "prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"], { env, stdio: "inherit" });
   phase = "running Merchant Knowledge integration suite";
-  run("node", ["--import", "tsx", "--test", "tests/integration/merchant/merchant-knowledge/upload.postgres.test.ts",
+  run("node", ["--import", "tsx", "--test", "--test-concurrency=1", "tests/integration/merchant/merchant-knowledge/upload.postgres.test.ts",
     "tests/integration/merchant/merchant-knowledge/arch055-upload-lifecycle.postgres.test.ts"], { env, stdio: "inherit" });
 } catch {
   // Never print the exception: child-process arguments may include generated credentials.

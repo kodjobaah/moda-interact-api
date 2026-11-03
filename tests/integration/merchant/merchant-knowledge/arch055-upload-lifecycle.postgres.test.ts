@@ -178,7 +178,7 @@ test("ARCH-055 finalization cannot resurrect an upload after cleanup wins the as
         }, options as never);
       } };
       const finalizer = new MerchantKnowledgeUploadService(finalizerDatabase as never, { r2, config, environment: "test" });
-      const finalizing = finalizer.finalize(principal, completingFinalize);
+      const finalizingSuccess = finalizer.finalize(principal, completingFinalize);
       await assetReadHeld.promise;
       const cleanupQueryStarted = deferred<number>();
       let cleanupSawAvailable = false;
@@ -204,13 +204,16 @@ test("ARCH-055 finalization cannot resurrect an upload after cleanup wins the as
       try {
         assert.equal(observedLockWait, true, "cleanup must be blocked on the asset row lock held by finalization");
       } finally { allowFinalCommit.resolve(); }
-      const accepted = await finalizing;
+      const accepted = await finalizingSuccess;
       await cleanupWinsLater;
       assert.equal(accepted.status, "ACCEPTED");
       assert.equal(cleanupSawAvailable, true);
       assert.equal((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: completing.assetId } })).status, "AVAILABLE");
       assert.equal(await db.merchantKnowledgeSourceRevision.count({ where: { uploadedAssetId: completing.assetId } }), 1);
     } finally {
+      if (createdAssetIds.length) await db.merchantKnowledgeSourceRevision.deleteMany({
+        where: { uploadedAssetId: { in: createdAssetIds } },
+      });
       if (createdAssetIds.length) await db.merchantKnowledgeUploadedAsset.deleteMany({ where: { id: { in: createdAssetIds } } });
       await db.shop.delete({ where: { id: shop.id } });
       if (planId) await db.billingPlan.delete({ where: { id: planId } });

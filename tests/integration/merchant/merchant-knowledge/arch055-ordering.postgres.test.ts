@@ -6,7 +6,7 @@ import { MerchantKnowledgeCommandService } from "../../../../src/merchant/mercha
 import { MerchantKnowledgeReadService } from "../../../../src/merchant/merchant-knowledge/read.service.js";
 
 const url = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
-const config = { schemaVersion: 1, maxKnowledgeSources: 1000, maxContentUnitsPerSource: 1500,
+const config = { schemaVersion: 1, maxKnowledgeSources: 100, maxContentUnitsPerSource: 1500,
   allowedSourceTypes: [{ purposeKey: "FAQ", dataFormatKey: "WEB_PAGE" }] };
 
 test("ARCH-055 ordering writes only changed rows and deleting the tail does not rewrite survivors",
@@ -57,13 +57,6 @@ test("ARCH-055 ordering writes only changed rows and deleting the tail does not 
       for (const row of before.slice(2)) {
         assert.equal(afterSwap.find(({ id }) => id === row.id)?.updatedAt.getTime(), row.updatedAt.getTime());
       }
-      const unchanged = await db.merchantKnowledgeSource.findUniqueOrThrow({ where: { id: ids[0] },
-        select: { name: true, languageTag: true, updatedAt: true } });
-      statements.length = 0;
-      await service.edit(principal, ids[0]!, { name: unchanged.name, languageTag: unchanged.languageTag });
-      assert.equal(statements.filter((sql) => /UPDATE\s+"commerce"\."MerchantKnowledgeSource"/i.test(sql)).length, 0);
-      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({ where: { id: ids[0] }, select: { updatedAt: true } })).updatedAt.getTime(),
-        unchanged.updatedAt.getTime());
       statements.length = 0;
       await service.remove(principal, ids[99]!, { expectedGeneration: 1 });
       assert.equal(statements.filter((sql) => /UPDATE\s+"commerce"\."MerchantKnowledgeSource"/i.test(sql)).length, 0);

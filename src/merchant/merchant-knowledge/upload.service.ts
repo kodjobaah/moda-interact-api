@@ -75,6 +75,7 @@ async function eligibleSource(tx: Tx, shopId: string, sourceId: string, config: 
   const candidates = await tx.merchantKnowledgeSource.findMany({ where: allowedSourceWhere(shopId, config),
     orderBy: [{ position: "asc" }, { id: "asc" }], take: config.maxKnowledgeSources,
     select: { id: true, position: true, purposeId: true, dataFormatId: true, currentGeneration: true,
+      name: true, languageTag: true,
       purpose: { select: { key: true } }, dataFormat: { select: { key: true, inputKind: true } } } });
   const source = candidates.find((candidate) => candidate.id === sourceId);
   if (!source || source.dataFormat.inputKind !== "UPLOAD") throw denied();

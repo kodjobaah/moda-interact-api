@@ -29,7 +29,9 @@ const deferred = <T = void,>() => {
 test("migration-backed Woo upload: unique tenant asset, retries, replacement, reprocess, merchant-off and expiry",
   { skip: !connection }, async () => {
     if (!connection) return;
-    const db = new PrismaClient({ datasources: { db: { url: connection } } });
+    const db = new PrismaClient({ datasources: { db: { url: connection } }, log: [{ emit: "event", level: "query" }] });
+    const statements: string[] = [];
+    db.$on("query", (event) => statements.push(event.query));
     const marker = randomUUID();
     const domain = `https://${marker}.upload.example.invalid`;
     const shop = await db.shop.create({ data: { domain, platform: "WOOCOMMERCE", status: "ACTIVE", defaultLanguageTag: "en" } });
@@ -148,6 +150,18 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
       const created = await service.finalize(principal, finalize);
       assert.equal(created.status, "ACCEPTED");
       assert.equal((await service.finalize(principal, finalize)).sourceId, created.sourceId);
+      const originalMetadata = await db.merchantKnowledgeSource.findUniqueOrThrow({
+        where: { id: created.sourceId }, select: { name: true, languageTag: true, updatedAt: true },
+      });
+      statements.length = 0;
+      const unchanged = await service.edit(principal, created.sourceId, {
+        name: originalMetadata.name, languageTag: originalMetadata.languageTag,
+      });
+      assert.deepEqual(unchanged, { schemaVersion: 1, sourceId: created.sourceId, updated: true });
+      assert.equal(statements.filter((sql) => /UPDATE\s+"commerce"\."MerchantKnowledgeSource"/i.test(sql)).length, 0);
+      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({
+        where: { id: created.sourceId }, select: { updatedAt: true },
+      })).updatedAt.getTime(), originalMetadata.updatedAt.getTime());
       assert.equal(await db.merchantKnowledgeSourceRevision.count({ where: { sourceId: created.sourceId } }), 1);
       assert.equal((await db.merchantKnowledgeSourceRevision.findUniqueOrThrow({
         where: { sourceId_generation: { sourceId: created.sourceId, generation: 1 } },
