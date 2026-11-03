@@ -1,0 +1,76 @@
+openapi: 3.1.0
+info:
+  title: Moda Interact proof-backed WooCommerce checkout consent status
+  version: woo.whatsapp-consent-status.v1
+  description: >-
+    Read-only status for a private WordPress-held acknowledged GRANT event.
+    A phone alone never conveys authority. No recovery entitlement, queue,
+    billing, database write, or message is triggered by this endpoint.
+paths:
+  /v1/woocommerce/whatsapp-consent/status:
+    post:
+      operationId: readWooCheckoutMarketingConsentStatus
+      summary: Verify the current effective grant against exact evidence and active recipient
+      security:
+        - WooBearer: []
+          WooInstallationId: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WooConsentStatusProbe'
+      responses:
+        '200':
+          description: Proof confirmed or not verified; never discloses reasons or recipient metadata
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                const: no-store
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WooConsentStatusResult'
+        '400':
+          description: Invalid payload or query parameters
+        '401':
+          description: Installation credentials unauthorized, revoked or rotated
+        '413':
+          description: Request body exceeds 512 bytes
+        '503':
+          description: Operational failure; details only in redacted shared server logs
+components:
+  securitySchemes:
+    WooBearer:
+      type: http
+      scheme: bearer
+    WooInstallationId:
+      type: apiKey
+      in: header
+      name: X-Moda-Installation-Id
+  schemas:
+    WooConsentStatusProbe:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, canonicalPhone, grantEventId]
+      properties:
+        schemaVersion:
+          const: woo.whatsapp-consent-status.v1
+        canonicalPhone:
+          type: string
+          pattern: '^[1-9][0-9]{1,14}$'
+          maxLength: 15
+        grantEventId:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          maxLength: 128
+    WooConsentStatusResult:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, state]
+      properties:
+        schemaVersion:
+          const: woo.whatsapp-consent-status.v1
+        state:
+          enum: [CONFIRMED_GRANTED, UNVERIFIED]

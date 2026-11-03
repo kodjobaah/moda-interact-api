@@ -55,6 +55,7 @@ try {
   docker(["exec", "--env", `PGPASSWORD=${password}`, name, "psql", "-h", "127.0.0.1", "-U", user, "-d", database,
     "-v", "ON_ERROR_STOP=1", "-c",
     "SELECT 1 FROM \"commerce\".\"WhatsAppConsentEvidence\" LIMIT 1"]);
+  phase = "running Woo consent API integration suite";
   let comparisonEnv = env;
   if (process.env.ARCH055_M03_COMPARE_BASELINE === "1") {
     // Clone the same migrated empty database for each version. Append-only
@@ -81,6 +82,10 @@ try {
       "tests/integration/woocommerce/consent/v2.postgres.test.ts",
       "tests/integration/woocommerce/recovery-selection/service.postgres.test.ts"], { env, stdio: "inherit" });
   }
+
+  phase = "running Woo consent status integration suite";
+  run("node", ["--import", "tsx", "--test",
+    "tests/integration/woocommerce/consent-status/status.postgres.test.ts"], { env, stdio: "inherit" });
 
   if (process.env.ARCH055_M03_COMPARE_BASELINE === "1") {
     phase = "preparing isolated ARCH-055 M03 baseline";

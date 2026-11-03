@@ -16,6 +16,8 @@ import type { WooCheckoutPublisher } from "../woocommerce/activity/producer.js";
 import type { WooOrderPublisher } from "../woocommerce/activity/order-producer.js";
 import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
 import { createWooConsentRoute } from "../woocommerce/consent/routes.js";
+import { createWooConsentStatusRoute } from "../woocommerce/consent-status/routes.js";
+import { WooConsentStatusService } from "../woocommerce/consent-status/service.js";
 import { WooConsentService } from "../woocommerce/consent/service.js";
 import { createWooShopBrandRoute } from "../woocommerce/shop-brand/routes.js";
 import { WooShopBrandService } from "../woocommerce/shop-brand/service.js";
@@ -34,7 +36,7 @@ export function createWooRoutes(options: {
   platformConfiguration?: ApiPlatformConfigurationReader;
   checkoutPublisher?: WooCheckoutPublisher;
   orderPublisher?: WooOrderPublisher;
-}): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; consent: ApiRouteHandler; shopBrand: ApiRouteHandler; recoverySelection: ApiRouteHandler; recoveryRestore: ApiRouteHandler; restRead?: ApiRouteHandler } {
+}): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; consent: ApiRouteHandler; consentStatus: ApiRouteHandler; shopBrand: ApiRouteHandler; recoverySelection: ApiRouteHandler; recoveryRestore: ApiRouteHandler; restRead?: ApiRouteHandler } {
   const { prisma, config, authenticator, logger } = options;
   const installation = createWooInstallationRoutes({
     mode: config.woocommerceConnectionMode,
@@ -80,6 +82,7 @@ export function createWooRoutes(options: {
     installation,
     activity,
     consent: createWooConsentRoute({ authenticator, service: new WooConsentService(prisma), logger }),
+    consentStatus: createWooConsentStatusRoute({ authenticator, service: new WooConsentStatusService(prisma), logger }),
     shopBrand: createWooShopBrandRoute({ authenticator, service: new WooShopBrandService(prisma), logger }),
     recoverySelection: createWooRecoverySelectionRoute({
       authenticator, service: new WooRecoverySelectionService(prisma), logger,

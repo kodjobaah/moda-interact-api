@@ -57,10 +57,13 @@ test("registers callbacks, webhook, merchant, billing and finally installation",
   const install = route("installation", [], calls);
   const activity = route("woo-activity", [], calls);
   const restore = route("woo-recovery-restore", [], calls);
+  const consent = route("woo-consent", [], calls);
+  const consentStatus = route("woo-consent-status", [], calls);
   assert.deepEqual(composeApiRoutes({
-    wooRestRead: rest, wooBillingWebhook: webhook, wooActivity: activity, wooRecoveryRestore: restore,
+    wooRestRead: rest, wooBillingWebhook: webhook, wooActivity: activity,
+    wooConsent: consent, wooConsentStatus: consentStatus, wooRecoveryRestore: restore,
     merchant, billing, wooInstallation: install,
-  }), [rest, webhook, activity, restore, ...merchant, ...billing, install]);
+  }), [rest, webhook, activity, consent, consentStatus, restore, ...merchant, ...billing, install]);
   assert.deepEqual(composeApiRoutes({
     wooBillingWebhook: webhook, merchant, billing, wooInstallation: install,
   }), [webhook, ...merchant, ...billing, install]);
