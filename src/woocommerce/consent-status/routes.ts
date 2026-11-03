@@ -19,6 +19,11 @@ function redactDiagnostic(value: string | undefined, privateValues: readonly str
   // identifiers, so a known phone is classified as PHONE rather than IDENTITY.
   // Accept the entire Bearer token (including hyphens), not just its prefix.
   let safe = value
+    .replace(/\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b/gi, "[REDACTED_IDENTITY]")
+    .replace(/\bc[a-z0-9]{24}\b/gi, "[REDACTED_IDENTITY]")
+    .replace(/(\b(?:customer(?:[_ -]?phone)?|account|wordpress[_ -]?user|woo[_ -]?customer)[_ -]?(?:id|identifier)\b["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,;)}\]]+)/gi,
+      "$1[REDACTED_IDENTITY]")
+    .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
     .replace(/\b(authorization|x-moda-installation-credential|password|access[_-]?token|api[_-]?key|secret)\s*[:=]\s*(?:Bearer\s+)?[^\s,;]+/gi,
       "$1=[REDACTED_TOKEN]")
     .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED_TOKEN]")
@@ -33,7 +38,7 @@ function redactDiagnostic(value: string | undefined, privateValues: readonly str
 function safeCause(cause: unknown, privateValues: readonly string[]): unknown {
   if (cause === undefined) return undefined;
   if (cause instanceof Error) return {
-    name: cause.name,
+    name: redactDiagnostic(cause.name, privateValues),
     message: redactDiagnostic(cause.message, privateValues),
     stack: redactDiagnostic(cause.stack, privateValues),
     ...( "code" in cause && (typeof cause.code === "string" || typeof cause.code === "number")

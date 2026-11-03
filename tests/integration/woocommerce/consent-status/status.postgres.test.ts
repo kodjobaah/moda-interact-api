@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { performance } from "node:perf_hooks";
@@ -95,6 +95,22 @@ test("real HTTP route: one joined status read checks GRANT, REVOKE and installat
       canonicalPhone: phone, grantEventId: grant.eventId };
     const status = async (input: unknown = probe, useOther = false) =>
       request(WOO_CONSENT_STATUS_PATH, input, useOther);
+    const evidence = await database.whatsAppConsentEvidence.findUniqueOrThrow({
+      where: { shopId_eventId: { shopId: shop.id, eventId: grant.eventId } },
+    });
+    const replay = await request("/v1/woocommerce/whatsapp-consent", grant);
+    assert.equal(replay.body.status, "duplicate");
+    assert.deepEqual(await database.whatsAppConsentEvidence.findUniqueOrThrow({
+      where: { shopId_eventId: { shopId: shop.id, eventId: grant.eventId } },
+    }), evidence);
+    await assert.rejects(database.wooCommerceInstallation.create({ data: {
+      shopId: shop.id, canonicalSiteUrl: `https://alternate-${name}.invalid`,
+      credentialDigest: Uint8Array.from(digestSecret(otherSecret)),
+    } }), error => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002");
+    assert.equal((await new WooConsentStatusService(database).read({
+      shopId: shop.id, installationId: otherInstallation.id,
+      canonicalSiteUrl: shop.domain, credentialVersion: installation.credentialVersion,
+    }, probe)).state, "UNVERIFIED");
     // Snapshot durable state outside the measured read. Status must not mutate it.
     const beforeEvidence = await database.whatsAppConsentEvidence.findMany({ where: { shopId: shop.id },
       orderBy: { eventId: "asc" } });
@@ -176,6 +192,29 @@ test("real HTTP route: one joined status read checks GRANT, REVOKE and installat
     assert.equal(forgedAuth.status, 401);
     assert.equal(sql.slice(failedAuthSqlStart).some(query => query.includes("WhatsAppConsentEvidence")), false);
 
+    const otherCustomerGrant = consentEvent({ ...grant, eventId: `customer-b-${name.slice(0, 8)}`,
+      canonicalPhone: "447400123458" });
+    assert.equal((await request("/v1/woocommerce/whatsapp-consent", otherCustomerGrant)).body.status, "recorded");
+    const otherCustomerEvidence = await database.whatsAppConsentEvidence.findUniqueOrThrow({
+      where: { shopId_eventId: { shopId: shop.id, eventId: otherCustomerGrant.eventId } },
+    });
+    assert.notEqual(otherCustomerEvidence.customerId, evidence.customerId);
+    assert.equal((await status({ ...probe, grantEventId: otherCustomerGrant.eventId })).body.state, "UNVERIFIED");
+    await assert.rejects(database.whatsAppConsentEvidence.create({ data: {
+      ...evidence, id: randomUUID(), eventId: `mismatch-${name}`, customerId: otherCustomerEvidence.customerId,
+    } }), /Woo evidence must match exact current phone decision/);
+
+    // Force a real SQL failure after installation authentication in this disposable database.
+    await database.$executeRawUnsafe('ALTER TABLE "commerce"."WhatsAppConsentEvidence" RENAME TO "StatusFaultEvidence"');
+    try {
+      const failure = await status();
+      assert.deepEqual([failure.status, failure.body, failure.cache],
+        [503, { error: "consent_status_unavailable" }, "no-store"]);
+    } finally {
+      await database.$executeRawUnsafe('ALTER TABLE "commerce"."StatusFaultEvidence" RENAME TO "WhatsAppConsentEvidence"');
+    }
+    assert.equal((await status()).body.state, "CONFIRMED_GRANTED");
+
     // Real v2 write, not a fake mutation, must invalidate older evidence.
     const revoke = consentEvent({ eventId: `status-revoke-${name.slice(0, 8)}`,
       canonicalPhone: phone, decision: "REVOKE", disclosure: null,
@@ -187,11 +226,19 @@ test("real HTTP route: one joined status read checks GRANT, REVOKE and installat
       "parallel reads after committed REVOKE cannot confirm a stale grant");
     assert.equal((await status(otherProbe, true)).body.state, "CONFIRMED_GRANTED",
       "one merchant's withdrawal must not alter another merchant's checkbox decision");
+    await database.customerPhone.update({ where: { id: evidence.customerPhoneId }, data: { endedAt: new Date() } });
+    assert.equal((await status()).body.state, "UNVERIFIED", "ended recipient cannot restore an old grant");
     const newGrant = consentEvent({ eventId: `status-new-${name.slice(0, 8)}`,
       canonicalPhone: phone, occurredAt: new Date(baseTime - 60_000).toISOString() });
     assert.equal((await request("/v1/woocommerce/whatsapp-consent", newGrant)).body.status, "recorded");
     assert.equal((await status()).body.state, "UNVERIFIED", "old grant cannot resurrect consent");
     const latestProbe = { ...probe, grantEventId: newGrant.eventId };
+    assert.equal((await status(latestProbe)).body.state, "CONFIRMED_GRANTED");
+    const revisionGrant = consentEvent({ ...newGrant, eventId: `status-revision-${name.slice(0, 8)}`,
+      occurredAt: new Date(baseTime - 50_000).toISOString() });
+    assert.equal((await request("/v1/woocommerce/whatsapp-consent", revisionGrant)).body.status, "recorded");
+    assert.equal((await status(latestProbe)).body.state, "UNVERIFIED", "newer grant invalidates the previous revision");
+    latestProbe.grantEventId = revisionGrant.eventId;
     assert.equal((await status(latestProbe)).body.state, "CONFIRMED_GRANTED");
     const activePrincipal = { shopId: shop.id, installationId: installation.id,
       canonicalSiteUrl: shop.domain, credentialVersion: installation.credentialVersion };

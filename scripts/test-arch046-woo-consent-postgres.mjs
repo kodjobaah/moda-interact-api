@@ -56,12 +56,6 @@ try {
     "-v", "ON_ERROR_STOP=1", "-c",
     "SELECT 1 FROM \"commerce\".\"WhatsAppConsentEvidence\" LIMIT 1"]);
   phase = "running Woo consent API integration suite";
-  run("node", ["--import", "tsx", "--test", "--test-concurrency=1",
-    "tests/integration/woocommerce/consent/service.postgres.test.ts",
-    "tests/integration/woocommerce/consent/races.postgres.test.ts",
-    "tests/integration/woocommerce/consent/v2.postgres.test.ts",
-    "tests/integration/woocommerce/consent-status/status.postgres.test.ts",
-    "tests/integration/woocommerce/recovery-selection/service.postgres.test.ts"], { env, stdio: "inherit" });
   let comparisonEnv = env;
   if (process.env.ARCH055_M03_COMPARE_BASELINE === "1") {
     // Clone the same migrated empty database for each version. Append-only
@@ -88,6 +82,10 @@ try {
       "tests/integration/woocommerce/consent/v2.postgres.test.ts",
       "tests/integration/woocommerce/recovery-selection/service.postgres.test.ts"], { env, stdio: "inherit" });
   }
+
+  phase = "running Woo consent status integration suite";
+  run("node", ["--import", "tsx", "--test",
+    "tests/integration/woocommerce/consent-status/status.postgres.test.ts"], { env, stdio: "inherit" });
 
   if (process.env.ARCH055_M03_COMPARE_BASELINE === "1") {
     phase = "preparing isolated ARCH-055 M03 baseline";

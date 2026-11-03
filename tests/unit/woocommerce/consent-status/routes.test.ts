@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createLogger, type LogRecord } from "@modainteract/moda-interact-shared/logging";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { createWooConsentStatusRoute } from "../../../../src/woocommerce/consent-status/routes.js";
@@ -167,4 +168,28 @@ test("object-shaped SDK causes never stringify untrusted arbitrary provider resp
   assert.match(diagnostic, /ECONNRESET/);
   assert.equal(diagnostic.includes(body.grantEventId), false);
   assert.equal(diagnostic.includes("secret personal-provider-body"), false);
+});
+
+test("Shared logs retain the database reason and redact customer and account identifiers", async () => {
+  const customerId = "7abf4b48-a7a1-4e70-bfab-e5fed16303e8";
+  const accountId = "private-account-value";
+  const cause = new Error(`Socket closed for accountId=${accountId}`);
+  const failure = Object.assign(new Error(`Connection refused for customerId=${customerId}`, { cause }), {
+    code: "P1001", status: 502,
+  });
+  const records: LogRecord[] = [];
+  const result = await post({
+    ...deps(async () => { throw failure; }),
+    logger: createLogger({ serviceName: "consent-status-test", environment: "test",
+      sink: record => records.push(record) }),
+  });
+  assert.deepEqual(result, { status: 503, body: { error: "consent_status_unavailable" }, noStore: "no-store" });
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.data?.errorCode, "P1001");
+  assert.equal(records[0]?.data?.providerHttpStatus, 502);
+  assert.match(String(records[0]?.data?.errorStack), /Connection refused/);
+  const diagnostic = JSON.stringify(records);
+  assert.match(diagnostic, /Socket closed/);
+  assert.equal(diagnostic.includes(customerId), false);
+  assert.equal(diagnostic.includes(accountId), false);
 });
