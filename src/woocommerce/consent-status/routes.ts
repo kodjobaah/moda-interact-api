@@ -9,18 +9,46 @@ import { WooConsentStatusHttpError, WOO_CONSENT_STATUS_PATH } from "./contract.j
 import { readWooConsentStatusRequest } from "./request.js";
 import type { WooConsentStatusService } from "./service.js";
 
-/** Preserve the provider text except sensitive values; the Shared logger additionally
- * handles secret-key redaction and bounded structured serialisation. */
-function redactDiagnostic(value: string | undefined): string | undefined {
-  return value?.replace(/\+?[0-9]{9,15}/g, "[REDACTED_PHONE]");
+/** API-006-specific redaction of proof and installation identifiers before the
+ * canonical Shared logger handles generic bounded structured serialisation.
+ * Preserve the provider's actual error message outside the sensitive spans.
+ */
+function redactDiagnostic(value: string | undefined, privateValues: readonly string[]): string | undefined {
+  if (value === undefined) return undefined;
+  // Redact generic credentials and contact details *before* exact scoped
+  // identifiers, so a known phone is classified as PHONE rather than IDENTITY.
+  // Accept the entire Bearer token (including hyphens), not just its prefix.
+  let safe = value
+    .replace(/\b(authorization|x-moda-installation-credential|password|access[_-]?token|api[_-]?key|secret)\s*[:=]\s*(?:Bearer\s+)?[^\s,;]+/gi,
+      "$1=[REDACTED_TOKEN]")
+    .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[REDACTED_TOKEN]")
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, "[REDACTED_EMAIL]")
+    .replace(/\+?\d[\d ().-]{8,}\d/g, "[REDACTED_PHONE]");
+  for (const secret of privateValues) {
+    if (secret.length > 0) safe = safe.split(secret).join("[REDACTED_IDENTITY]");
+  }
+  return safe;
 }
-function safeCause(cause: unknown): unknown {
+
+function safeCause(cause: unknown, privateValues: readonly string[]): unknown {
   if (cause === undefined) return undefined;
   if (cause instanceof Error) return {
-    name: cause.name, message: redactDiagnostic(cause.message),
-    stack: redactDiagnostic(cause.stack),
+    name: cause.name,
+    message: redactDiagnostic(cause.message, privateValues),
+    stack: redactDiagnostic(cause.stack, privateValues),
+    ...( "code" in cause && (typeof cause.code === "string" || typeof cause.code === "number")
+      ? { code: cause.code } : {}),
   };
-  return redactDiagnostic(String(cause));
+  if (cause && typeof cause === "object") {
+    // Do not stringify arbitrary provider response objects containing secrets.
+    const record = cause as Record<string, unknown>;
+    return {
+      ...(typeof record.name === "string" ? { name: redactDiagnostic(record.name, privateValues) } : {}),
+      ...(typeof record.message === "string" ? { message: redactDiagnostic(record.message, privateValues) } : {}),
+      ...(typeof record.code === "string" || typeof record.code === "number" ? { code: record.code } : {}),
+    };
+  }
+  return redactDiagnostic(String(cause), privateValues);
 }
 
 
@@ -37,6 +65,7 @@ export function createWooConsentStatusRoute(options: {
       const start = performance.now();
       const diagnosticId = randomUUID();
       let shopScope: string | undefined;
+      const privateValues: string[] = [];
       let stage = "authentication";
       let completedReads = 0;
       const logContext = (outcome: string, statusCode: number) => ({
@@ -47,11 +76,13 @@ export function createWooConsentStatusRoute(options: {
       });
       try {
         const principal = await options.authenticator.authenticate(request);
+        privateValues.push(principal.shopId, principal.installationId, principal.canonicalSiteUrl);
         // Hash only for correlation; neither the shop nor proof ID is logged.
         shopScope = createHash("sha256").update(principal.shopId).digest("hex").slice(0, 16);
         stage = "validation";
         if (url.search) throw new WooConsentStatusHttpError(400, "invalid_request");
         const probe = await readWooConsentStatusRequest(request);
+        privateValues.push(probe.canonicalPhone, probe.grantEventId);
         stage = "database_read";
         const result = await options.service.read(principal, probe);
         completedReads = 1;
@@ -73,9 +104,9 @@ export function createWooConsentStatusRoute(options: {
             ...logContext("unavailable", 503),
             errorName: error instanceof Error ? error.name : typeof error,
             errorCode: error && typeof error === "object" && "code" in error ? String(error.code) : undefined,
-            errorMessage: redactDiagnostic(error instanceof Error ? error.message : String(error)),
-            errorStack: redactDiagnostic(error instanceof Error ? error.stack : undefined),
-            errorCause: safeCause(error instanceof Error ? error.cause : undefined),
+            errorMessage: redactDiagnostic(error instanceof Error ? error.message : String(error), privateValues),
+            errorStack: redactDiagnostic(error instanceof Error ? error.stack : undefined, privateValues),
+            errorCause: safeCause(error instanceof Error ? error.cause : undefined, privateValues),
             providerHttpStatus: error && typeof error === "object" && "status" in error &&
               typeof error.status === "number" && error.status >= 100 && error.status <= 599
               ? error.status : undefined,

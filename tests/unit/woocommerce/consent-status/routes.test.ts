@@ -6,7 +6,7 @@ import { createWooConsentStatusRoute } from "../../../../src/woocommerce/consent
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import { WOO_CONSENT_STATUS_PATH, WOO_CONSENT_STATUS_VERSION } from "../../../../src/woocommerce/consent-status/contract.js";
 
-const principal = { installationId: "installed", shopId: "shop", canonicalSiteUrl: "https://woo.test", credentialVersion: 1 };
+const principal = { installationId: "woo-installation-private-fixture", shopId: "woo-shop-private-fixture", canonicalSiteUrl: "https://woo.test", credentialVersion: 1 };
 const body = { schemaVersion: WOO_CONSENT_STATUS_VERSION,
   canonicalPhone: "447400123456", grantEventId: "woo-consent-01" };
 type Dependencies = Parameters<typeof createWooConsentStatusRoute>[0];
@@ -120,4 +120,51 @@ test("shared diagnostics redact recipient-like values without replacing provider
   assert.equal(entry.data.errorCode, "P1008");
   assert.match(String(entry.data.errorMessage), /Prisma timeout for \[REDACTED_PHONE\]/);
   assert.equal(JSON.stringify(entry).includes("447400123456"), false);
+});
+
+test("provider diagnostics keep original failure metadata but redact exact proof, installation, token and email", async () => {
+  logs.splice(0);
+  const secret = "test-access-token-not-for-logging";
+  const error = Object.assign(new Error(
+    `Prisma P2028 for ${body.grantEventId} on ${principal.installationId} ` +
+    `${principal.shopId} ${principal.canonicalSiteUrl} ${body.canonicalPhone} ` +
+    `support@example.test Authorization: Bearer ${secret}`,
+  ), {
+    code: "P2028",
+    cause: new Error(`socket closed while reading ${body.grantEventId}; password=${secret}`),
+    status: 504,
+  });
+  const result = await post(deps(async () => { throw error; }));
+  assert.deepEqual([result.status, result.body, result.noStore],
+    [503, { error: "consent_status_unavailable" }, "no-store"]);
+  const logged = logs.at(-1);
+  assert.equal(logged?.event, "woocommerce.consent_status.unavailable");
+  assert.equal(logged?.data.errorCode, "P2028");
+  assert.equal(logged?.data.providerHttpStatus, 504);
+  assert.match(String(logged?.data.errorMessage), /Prisma P2028 for/);
+  assert.match(String(logged?.data.errorCause && JSON.stringify(logged.data.errorCause)), /socket closed/);
+  const diagnostic = JSON.stringify(logged);
+  for (const privateValue of [body.grantEventId, principal.installationId, principal.shopId,
+    principal.canonicalSiteUrl, body.canonicalPhone, secret, "support@example.test"]) {
+    assert.equal(diagnostic.includes(privateValue), false, `diagnostic exposed a private test value`);
+  }
+  assert.equal(diagnostic.includes("[REDACTED_IDENTITY]"), true);
+  assert.equal(diagnostic.includes("[REDACTED_TOKEN]"), true);
+  assert.equal(diagnostic.includes("[REDACTED_EMAIL]"), true);
+  // Reject partial Bearer masking as well as a leak of the full token.
+  assert.equal(diagnostic.includes("access-token-not-for-logging"), false);
+});
+
+test("object-shaped SDK causes never stringify untrusted arbitrary provider response fields", async () => {
+  logs.splice(0);
+  const failure = Object.assign(new Error("Prisma query failed"), {
+    code: "P1001",
+    cause: { code: "ECONNRESET", message: `query ${body.grantEventId} failed`,
+      responseBody: "secret personal-provider-body" },
+  });
+  assert.equal((await post(deps(async () => { throw failure; }))).status, 503);
+  const diagnostic = JSON.stringify(logs.at(-1));
+  assert.match(diagnostic, /ECONNRESET/);
+  assert.equal(diagnostic.includes(body.grantEventId), false);
+  assert.equal(diagnostic.includes("secret personal-provider-body"), false);
 });

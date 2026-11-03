@@ -44,6 +44,7 @@ redacted server-side `@modainteract/moda-interact-shared/logging` events.
 ```sh
 npm run test:arch046-woo-consent-status:unit
 npm run test:arch046-woo-consent:postgres
+MODA_WOO_SOURCE_ROOT=/path/to/moda-interact-woocommerce npm run test:arch046-woo-consent-status:php
 npm run typecheck
 npm run lint
 npm run build
@@ -55,8 +56,26 @@ never point it at a merchant/production database. HTTP integration exercises
 `createWooRoutes` and `composeApiRoutes`, using real installation bearer auth
 and real API-007 GRANT/REVOKE writes. Integration scenarios cover stale proof,
 wrong tenant/phone, retired recipient and credential
-rotation. The test records actual SQL statement counts, separate from the
-static one-joined-query design.
+rotation. The test records actual SQL statement counts, measured Prisma SQL
+execution times and seven warm real-HTTP samples (p50/p95), separately from
+the static one-joined-query design. Timing is empirical evidence on a local
+container, not a production latency guarantee or an arbitrary pass threshold.
+
+The PHP contract test loads `includes/Api/ModaApiClient.php` and its real
+supporting classes from `MODA_WOO_SOURCE_ROOT` (the separate WooCommerce task
+checkout). It sends the exact response bytes from an in-process API-006 HTTP
+route through `wooConsentStatus()`, checking both states, the public error and
+strict rejection of extra response fields. The caller's WooCommerce repository
+is not copied or changed inside the API repository. PHP must be available on
+`PATH`; missing source or PHP fails the dedicated test rather than silently
+skipping the contract.
+
+The PostgreSQL acceptance fixture also verifies independent same-phone merchants,
+several parallel reads after a committed REVOKE, invalid request scoping,
+authentication before evidence reads, and unchanged evidence, CustomerPhone
+and recovery rows across repeated status reads. The request SQL log is audited
+for writes and explicit transactions; no queues or provider calls are made by
+the status service.
 
 This status read is *not* a preflight for an explicit same-checkout withdrawal.
 The Woo r07 same-checkout withdrawal path remains independent of this endpoint.
