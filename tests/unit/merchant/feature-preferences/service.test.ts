@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { MerchantFeaturePreferencesService } from "../../../../src/merchant/feature-preferences/service.js";
 import { FeaturePreferencesConflictError, FeaturePreferencesIntegrityError } from "../../../../src/merchant/feature-preferences/contract.js";
+import type { FeaturePreferencesTimings } from "../../../../src/merchant/feature-preferences/timing.js";
 
 const principal = { shopId: "shop", canonicalSiteUrl: "https://woo.example", installationId: "installation", credentialVersion: 1 };
 const timestamp = new Date("2026-10-16T00:00:00.000Z");
@@ -78,4 +79,36 @@ test("invalid shop, installation and inactive plan fail before merchant writes",
     await assert.rejects(() => t.service.read(principal), error);
     assert.equal(t.getWrites(), 0);
   }
+});
+test("read reports transaction acquisition and individual DB/projection phases without changing the result", async () => {
+  const { service } = fixture();
+  const timings: FeaturePreferencesTimings = {};
+  const result = await service.read(principal, timings);
+  assert.equal(result.features.length, 2);
+  for (const phase of ["transactionMs", "transactionEntryMs", "transactionWorkMs", "transactionFinishMs",
+    "shopLookupMs", "shopValidationMs", "installationLookupMs", "installationValidationMs",
+    "subscriptionLookupMs", "subscriptionEligibilityMs", "featuresLookupMs",
+    "preferencesLookupMs", "capabilitySelectionMs", "projectionMs", "responseValidationMs"] as const) {
+    assert.equal(typeof timings[phase], "number", phase);
+    assert.ok(timings[phase]! >= 0, phase);
+  }
+  assert.equal(timings.failedPhase, undefined);
+});
+test("rejected service reads preserve their errors while identifying the failed phase", async () => {
+  const { service } = fixture({ platform: "SHOPIFY" });
+  const timings: FeaturePreferencesTimings = {};
+  await assert.rejects(service.read(principal, timings), FeaturePreferencesIntegrityError);
+  assert.equal(timings.failedPhase, "shopValidationMs");
+  assert.equal(typeof timings.shopLookupMs, "number");
+  assert.equal(typeof timings.transactionMs, "number");
+  assert.equal(typeof timings.transactionWorkMs, "number");
+});
+test("feature-preference writes report upsert time separately from the final reload", async () => {
+  const { service } = fixture();
+  const current = await service.read(principal);
+  const timings: FeaturePreferencesTimings = {};
+  await service.update(principal, { expectedRevision: current.revision,
+    changes: [{ featureId: optional.id, enabled: true }] }, timings);
+  assert.equal(typeof timings.featureUpsertsMs, "number");
+  assert.equal(typeof timings.transactionMs, "number");
 });
