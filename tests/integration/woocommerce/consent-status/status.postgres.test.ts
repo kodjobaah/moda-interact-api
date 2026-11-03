@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 import test from "node:test";
 import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
@@ -61,7 +64,25 @@ test("real HTTP route: one joined status read checks GRANT, REVOKE and installat
     } });
     const authenticator = new WooInstallationAuthenticator(database);
     // This is the real composition factory, not a standalone test-only route.
+    let queued = 0;
+    const publisher = { async publish(): Promise<never> {
+      queued++;
+      throw new Error("Consent status must not publish jobs");
+    } };
+    const effects = () => Promise.all([
+      database.checkoutRecovery.findMany({ orderBy: { id: "asc" } }),
+      database.recoveryOutreachAttempt.findMany({ orderBy: { id: "asc" } }),
+      database.merchantConversationSendCommand.findMany({ orderBy: { id: "asc" } }),
+      database.conversationMessage.findMany({ orderBy: { id: "asc" } }),
+      database.subscription.findMany({ orderBy: { id: "asc" } }),
+      database.recoveryCreditPurchase.findMany({ orderBy: { id: "asc" } }),
+      database.recoveryCreditRefund.findMany({ orderBy: { id: "asc" } }),
+      database.usageReservation.findMany({ orderBy: { id: "asc" } }),
+      database.promotionalCreditGrant.findMany({ orderBy: { id: "asc" } }),
+    ]);
+    const effectsBefore = await effects();
     const woo = createWooRoutes({ prisma: database, authenticator,
+      checkoutPublisher: publisher, orderPublisher: publisher,
       config: { woocommerceConnectionMode: "local-development" } as RuntimeConfig,
       logger });
     const routes = composeApiRoutes({ wooBillingWebhook: woo.billingWebhook,
@@ -75,13 +96,37 @@ test("real HTTP route: one joined status read checks GRANT, REVOKE and installat
     });
     await new Promise<void>(resolve => server!.listen(0, "127.0.0.1", resolve));
     const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    if (process.env.MODA_WOO_SOURCE_ROOT) {
+      const fixturePhone = "447400123459";
+      const { stdout } = await promisify(execFile)("php", [
+        fileURLToPath(new URL("../../../contracts/woocommerce/consent-returning-checkout.php", import.meta.url)),
+      ], {
+        timeout: 20_000,
+        env: { ...process.env, MODA_CONSENT_FIXTURE: JSON.stringify({ origin, phone: fixturePhone, installation: {
+          schemaVersion: 1, installationId: installation.id, shopId: shop.id, canonicalSiteUrl: shop.domain,
+          credential: encodeSecret(secret), credentialVersion: installation.credentialVersion,
+          connectedAt: new Date().toISOString(),
+        } }) },
+      });
+      const checkout = JSON.parse(stdout) as { confirmed: boolean; eventId: string };
+      assert.equal(checkout.confirmed, true);
+      const checkoutEvidence = await database.whatsAppConsentEvidence.findMany({
+        where: { shopId: shop.id, canonicalPhone: fixturePhone },
+      });
+      assert.deepEqual(checkoutEvidence.map(row => [row.eventId, row.decision]), [[checkout.eventId, "GRANT"]]);
+    }
     const request = async (path: string, payload: unknown, useOther = false) => {
+      const queryStart = sql.length;
       const response = await fetch(`${origin}${path}`, { method: "POST",
         headers: { "content-type": "application/json",
           "x-moda-installation-id": useOther ? otherInstallation.id : installation.id,
           authorization: `Bearer ${encodeSecret(useOther ? otherSecret : secret)}` },
         body: JSON.stringify(payload),
       });
+      if (path === WOO_CONSENT_STATUS_PATH) {
+        assert.ok(sql.slice(queryStart).every(statement => /^\s*SELECT\b/i.test(statement)),
+          "status must issue only SELECT statements");
+      }
       return { status: response.status, body: await response.json() as Record<string, unknown>,
         cache: response.headers.get("cache-control") };
     };
@@ -262,6 +307,8 @@ test("real HTTP route: one joined status read checks GRANT, REVOKE and installat
     } });
     assert.equal((await status(latestProbe)).status, 401);
     assert.equal(await database.checkoutRecovery.count({ where: { shopId: shop.id } }), 0);
+    assert.equal(queued, 0);
+    assert.deepEqual(await effects(), effectsBefore, "consent probes must preserve send and billing state");
   } finally {
     if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
     await database.$disconnect();
