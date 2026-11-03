@@ -5,10 +5,10 @@ export type CategorySelectionFailureCode =
   | "store_category_integrity_invalid";
 
 export class StoreCategorySelectionError extends Error {
-  constructor(readonly code: CategorySelectionFailureCode) {
-    super(code);
+  constructor(readonly code: CategorySelectionFailureCode, options?: ErrorOptions) {
+    super(code, options);
     this.name = "StoreCategorySelectionError";
   }
 }
 
-export const categoryConflict = () => new StoreCategorySelectionError("store_category_conflict");
+export const categoryConflict = (options?: ErrorOptions) => new StoreCategorySelectionError("store_category_conflict", options);
