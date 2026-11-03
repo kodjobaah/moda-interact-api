@@ -38,6 +38,19 @@ async function assertPendingInvalidated(db: PrismaClient, conversationId: string
   assert.equal(row.processingStartedAt, null);
 }
 
+test("ARCH-055 translated conversation-control conflicts retain the Prisma cause", async () => {
+  const prismaCause = new Prisma.PrismaClientKnownRequestError("unique constraint diagnostic", {
+    code: "P2002", clientVersion: "test",
+  });
+  const database = { $transaction: async () => { throw prismaCause; } } as never;
+  const service = new MerchantConversationControlService(database);
+  await assert.rejects(() => service.change({
+    shopId: "shop", canonicalSiteUrl: "https://shop.invalid", installationId: "installation", credentialVersion: 1,
+  }, "conversation", { targetMode: "HUMAN", expectedControlRevision: 0 }),
+  (error: unknown) => error instanceof ConversationControlConflictError &&
+    error.code === "conversation_control_conflict" && error.cause === prismaCause);
+});
+
 /** This suite runs only on the runner's brand-new PostgreSQL instance and schema. */
 test("ARCH-040-API-003 PostgreSQL CAS, immutable audit, Woo auth and restriction ordering", {
   skip: !disposableUrl,
@@ -137,6 +150,7 @@ test("ARCH-040-API-003 PostgreSQL CAS, immutable audit, Woo auth and restriction
     assert.deepEqual(events.map((event) => [event.fromMode, event.toMode, event.fromRevision, event.toRevision]), [
       ["AI", "HUMAN", 0, 1], ["HUMAN", "AI", 1, 2], ["AI", "HUMAN", 2, 3],
     ]);
+
     assert.deepEqual(events.map((x) => x.occurredAt.getTime()).sort((a,b)=>a-b),
       events.map((x) => x.occurredAt.getTime()), "transition timestamps must be monotonic");
     assert.equal((await db.conversation.findUniqueOrThrow({ where: { id: conversation.id } })).controlChangedAt?.getTime(),

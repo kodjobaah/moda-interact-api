@@ -31,6 +31,7 @@ import { createMerchantFeaturePreferencesRoute } from "../merchant/feature-prefe
 import { MerchantConversationControlService } from "../merchant/conversations/control/service.js";
 import { createMerchantConversationControlRoute } from "../merchant/conversations/control/routes.js";
 import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
+import { createTransactionMessagingSenderFactory } from "../platform-configuration/composition.js";
 import { MerchantConversationMessageAdmissionService } from "../merchant/conversations/messages/admission.service.js";
 import { MerchantConversationFollowUpService } from "../merchant/conversations/messages/follow-up.service.js";
 import { MerchantConversationSendStatusService } from "../merchant/conversations/messages/status.service.js";
@@ -56,6 +57,7 @@ export function createMerchantRoutes(options: {
 }): readonly ApiRouteHandler[] {
   const { prisma, authenticator, logger, environment } = options;
   const commerceEnvironment = commerceEnvironmentForApi(environment);
+  const transactionSenderFactory = createTransactionMessagingSenderFactory({ environment, logger });
   const knowledgeRead = new MerchantKnowledgeReadService(prisma, undefined, options.platformConfiguration);
   return [
     createMerchantUsageHistoryRoute({
@@ -71,9 +73,9 @@ export function createMerchantRoutes(options: {
       authenticator,logger,
     }),
     createMerchantConversationMessageRoutes({
-      admission: new MerchantConversationMessageAdmissionService(prisma, undefined, options.platformConfiguration),
+      admission: new MerchantConversationMessageAdmissionService(prisma, undefined, transactionSenderFactory),
       status: new MerchantConversationSendStatusService(prisma),
-      followUp: new MerchantConversationFollowUpService(prisma, options.platformConfiguration),
+      followUp: new MerchantConversationFollowUpService(prisma, transactionSenderFactory),
       authenticator, logger,
     }),
     createMerchantConversationControlRoute({

@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
-import type { ApiPlatformConfigurationReader } from "../../../platform-configuration/service.js";
+import type { TransactionMessagingSenderFactory } from "../../../platform-configuration/composition.js";
 
-export type SenderWabaReader = Pick<ApiPlatformConfigurationReader, "readMessagingSenderWabaId">;
+export type SenderWabaReader = TransactionMessagingSenderFactory;
 export type FollowUpChoice = Readonly<{ name: string; language: string }>;
 export type FollowUpChoicesResponse = Readonly<{ schemaVersion: 1; templates: readonly FollowUpChoice[] }>;
 
@@ -98,9 +98,7 @@ export async function readEligibleFollowUpChoices(tx: Prisma.TransactionClient, 
   sender: SenderWabaReader | undefined, now: Date): Promise<FollowUpChoice[]> {
   // A missing or misconfigured sender must never permit a guessed provider WABA.
   if (!sender) return [];
-  let senderWaba: string;
-  try { senderWaba = await sender.readMessagingSenderWabaId(); }
-  catch { return []; }
+  const senderWaba = await sender(tx).readMessagingSenderWabaId();
   if (!waba.test(senderWaba)) return [];
   const rows = await tx.$queryRaw<FollowUpRow[]>(Prisma.sql`
     SELECT v."id" AS "variantId", v."shopId", v."providerAccountId", v."purpose",

@@ -85,7 +85,7 @@ test("ARCH-047-API-001 tenant-scoped catalogue and fail-closed Meta admission", 
     assert.deepEqual(await catalogue.read(principal, target.conversation.id), empty);
     const { registrationId, variant } = await createPublishedFollowUp(db, shop.id, now);
     const wrongSender = new MerchantConversationFollowUpService(db,
-      { async readMessagingSenderWabaId() { return "987654321987"; } }, () => now);
+      () => ({ async readMessagingSenderWabaId() { return "987654321987"; } }), () => now);
     assert.deepEqual(await wrongSender.read(principal, target.conversation.id), empty);
     assert.deepEqual(await catalogue.read(principal, target.conversation.id), {
       schemaVersion: 1, templates: [{ name: NAME, language: LANGUAGE }],

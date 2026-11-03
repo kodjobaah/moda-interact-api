@@ -1,12 +1,17 @@
 import { parseCredentialKeyring, resolveActiveCredentialKey, type CredentialKeyring } from "@modainteract/moda-interact-shared/security/credentials/node";
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma, PrismaClient } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { createApiPlatformConfigurationService, type ApiPlatformConfigurationReader } from "./service.js";
 import { ApiPlatformConfigurationError, type ApiConfigurationKey } from "./errors.js";
 
+export type TransactionConfigurationDatabase = Pick<Prisma.TransactionClient, "platformConfiguration">;
+export type TransactionMessagingSenderFactory = (
+  tx: TransactionConfigurationDatabase,
+) => Pick<ApiPlatformConfigurationReader, "readMessagingSenderWabaId">;
+
 /** Per-operation root keyring resolution. Root material is deployment-owned, never DB-owned. */
 export function createApiPlatformConfigurationReader(input: {
-  prisma: Pick<PrismaClient, "platformConfiguration">;
+  prisma: Pick<PrismaClient, "platformConfiguration"> | TransactionConfigurationDatabase;
   environment: string;
   unsealEnvironment?: Readonly<NodeJS.ProcessEnv>;
   /** Inject the existing API shared logger; no additional logger or credential serialization. */
@@ -70,4 +75,13 @@ export function createApiPlatformConfigurationReader(input: {
     requireMetaWebhookSecrets: () => observedRead(
       "messaging.meta", "require_webhook_secrets", () => service().requireMetaWebhookSecrets()),
   });
+}
+
+/** Bind the existing reader implementation to each caller-owned transaction. */
+export function createTransactionMessagingSenderFactory(input: {
+  environment: string;
+  unsealEnvironment?: Readonly<NodeJS.ProcessEnv>;
+  logger?: Pick<StructuredLogger, "info" | "warn" | "error">;
+}): TransactionMessagingSenderFactory {
+  return (tx) => createApiPlatformConfigurationReader({ ...input, prisma: tx });
 }

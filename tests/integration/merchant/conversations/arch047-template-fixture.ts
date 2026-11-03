@@ -47,4 +47,7 @@ export async function createPublishedFollowUp(db: PrismaClient, shopId: string, 
     WHERE "id"=${variant.id} AND "shopId"=${shopId}`);
   return { variant, admin, definitionId, localeId, registrationId };
 }
-export const senderReader = { async readMessagingSenderWabaId() { return WABA; } };
+export const senderReader = (tx: unknown) => {
+  void tx;
+  return { async readMessagingSenderWabaId() { return WABA; } };
+};

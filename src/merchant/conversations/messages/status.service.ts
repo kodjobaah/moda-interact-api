@@ -30,7 +30,6 @@ export class MerchantConversationSendStatusService {
       const cmd = await tx.merchantConversationSendCommand.findFirst({ where: {
         id: commandId, shopId: principal.shopId, conversationId,
       }, select: { id: true, conversationId: true, shopId: true, kind: true, state: true,
-        textBody: true, templateName: true, templateLanguageCode: true, templateParameters: true,
         createdAt: true, updatedAt: true, outboundMessageId: true, failureCode: true,
       } });
       if (!cmd) throw new SendHttpError(404,"not_found");
@@ -44,7 +43,7 @@ export class MerchantConversationSendStatusService {
           AND "inputKind"=CASE WHEN ${cmd.kind}='HUMAN_TEXT' THEN 'TEXT' ELSE 'TEMPLATE_PARAMETERS' END
           AND "contentSha256"= (
             SELECT encode(sha256(convert_to(
-              CASE WHEN c."kind"='HUMAN_TEXT' THEN c."textBody"
+              CASE WHEN c."kind"='HUMAN_TEXT' THEN c."preparedTextBody"
                    ELSE "whatsapp".arch040_moderation_template_input_v1(
                      c."templateName", c."templateLanguageCode", c."templateParameters") END,
               'UTF8')),'hex')
