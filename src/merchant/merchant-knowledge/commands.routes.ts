@@ -5,7 +5,8 @@ import { decodeStrictJsonBody, readBoundedBody } from "../../http/body.js";
 import { singleHeader } from "../../http/headers.js";
 import { sendNoStoreJson } from "../../http/response.js";
 import { MerchantKnowledgeReadError } from "./contract.js";
-import { KnowledgeCommandError, KNOWLEDGE_ORDER_PATH, KNOWLEDGE_SOURCES_PATH,
+import { safeKnowledgeErrorFields } from "./diagnostics.js";
+import { KnowledgeCommandError, KnowledgeCommandPostCommitError, KNOWLEDGE_ORDER_PATH, KNOWLEDGE_SOURCES_PATH,
   MAX_KNOWLEDGE_COMMAND_BYTES, parseCreateWebSource, parsePatchWebSource,
   parseSourceGeneration, parseSourceId, parseSourceOrder } from "./commands.contract.js";
 import type { MerchantKnowledgeCommandService } from "./commands.service.js";
@@ -71,26 +72,18 @@ export function createMerchantKnowledgeCommandRoute(options: {
         if (error instanceof WooUnauthenticatedError) sendNoStoreJson(response, 401, { error: "unauthorized" });
         else if (error instanceof KnowledgeCommandError) {
           if (error.status >= 403) logger.warn("merchant.knowledge.command.denied", { operation: command.operation, reason: error.code,
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeKnowledgeErrorFields(error),
           });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else if (error instanceof MerchantKnowledgeReadError) {
           logger.warn("merchant.knowledge.command.failed", { operation: command.operation, reason: error.code,
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeKnowledgeErrorFields(error),
           });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
           logger.error("merchant.knowledge.command.failed", { operation: command.operation, reason: "internal",
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...(error instanceof KnowledgeCommandPostCommitError ? { committed: error.committed } : {}),
+            ...safeKnowledgeErrorFields(error),
           });
           sendNoStoreJson(response, 503, { error: "merchant_knowledge_unavailable" });
         }

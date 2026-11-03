@@ -71,12 +71,13 @@ export class InitialWooFreeActivationService {
     transaction: Prisma.TransactionClient,
     shopId: string,
     prepared: PreparedFreePlan | null,
+    currentShop?: { id: string; onboardingCompleted: boolean },
   ): Promise<"ACTIVATED_FREE" | "ALREADY_ONBOARDED"> {
-    const shop = await transaction.shop.findUnique({
+    const shop = currentShop ?? await transaction.shop.findUnique({
       where: { id: shopId },
       select: { id: true, onboardingCompleted: true },
     });
-    if (!shop) throw new FreePlanConfigurationUnavailableError("shop_missing");
+    if (!shop || shop.id !== shopId) throw new FreePlanConfigurationUnavailableError("shop_missing");
     if (shop.onboardingCompleted) return "ALREADY_ONBOARDED";
 
     const subscription = await transaction.subscription.findUnique({ where: { shopId } });

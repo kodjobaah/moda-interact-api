@@ -4,6 +4,7 @@ import test from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import type { ModaSupportedLanguageTag } from "@modainteract/moda-interact-shared/internationalization";
 import { createWooRestReadAuthorizationRoutes } from "../../../../src/woocommerce/rest-read/authorization.routes.js";
+import { WooReadAuthorizationError } from "../../../../src/woocommerce/rest-read/authorization.service.js";
 
 const token = Buffer.alloc(32, 15).toString("base64url");
 const payload = {
@@ -15,6 +16,7 @@ const payload = {
 async function withRoutes(
   callback: (origin: string, logs: string[], calls: string[]) => Promise<void>,
   resolveLocale: (attemptId: string | null) => Promise<ModaSupportedLanguageTag> = async () => "en",
+  serviceOverrides: Record<string, unknown> = {},
 ): Promise<void> {
   const logs: string[] = [];
   const calls: string[] = [];
@@ -39,6 +41,7 @@ async function withRoutes(
         calls.push(`returnLocale:${attemptId ?? "missing"}${locale ? `:${locale}:${proof ?? ""}` : ""}`);
         return resolveLocale(attemptId);
       },
+      ...serviceOverrides,
     } as never,
     logger,
   });
@@ -58,6 +61,59 @@ async function withRoutes(
     }));
   }
 }
+
+test("principal conflicts keep the safe 409 response while unexpected service failures remain 500", async () => {
+  await withRoutes(async (origin, logs) => {
+    const headers = { Authorization: "Bearer test-installation-credential" };
+    const stale = await fetch(`${origin}/v1/woocommerce/read-authorizations`, { method: "POST", headers });
+    assert.equal(stale.status, 409);
+    assert.deepEqual(await stale.json(), { error: "shop_unavailable" });
+    assert.match(logs.join("\n"), /shop_unavailable/);
+    assert.equal(logs.join("\n").includes("database password"), false);
+  }, async () => "en", {
+    start: async () => { throw new WooReadAuthorizationError(409, "shop_unavailable", {
+      cause: new Error("woo_mutation_principal_stale"),
+    }); },
+  });
+
+  await withRoutes(async (origin, logs) => {
+    const response = await fetch(`${origin}/v1/woocommerce/read-authorizations`, {
+      method: "POST", headers: { Authorization: "Bearer test-installation-credential" },
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "internal_error" });
+    assert.match(logs.join("\n"), /principal database read failed/);
+  }, async () => "en", {
+    start: async () => { throw new Error("principal database read failed"); },
+  });
+});
+
+test("revoke and callback principal conflicts return the exact bounded gate response", async () => {
+  const stalePrincipal = () => new WooReadAuthorizationError(409, "shop_unavailable", {
+    cause: new Error("woo_mutation_principal_stale"),
+  });
+
+  await withRoutes(async (origin, logs) => {
+    const response = await fetch(`${origin}/v1/woocommerce/read-authorization`, {
+      method: "DELETE", headers: { Authorization: "Bearer test-installation-credential" },
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "shop_unavailable" });
+    assert.match(logs.join("\n"), /shop_unavailable/);
+    assert.equal(logs.join("\n").includes("database password"), false);
+  }, async () => "en", { revoke: async () => { throw stalePrincipal(); } });
+
+  await withRoutes(async (origin, logs) => {
+    const response = await fetch(`${origin}/v1/woocommerce/read-authorizations/callback/${token}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload),
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "shop_unavailable" });
+    assert.match(logs.join("\n"), /shop_unavailable/);
+    assert.equal(logs.join("\n").includes(token), false);
+    assert.equal(logs.join("\n").includes(payload.consumer_secret), false);
+  }, async () => "en", { callback: async () => { throw stalePrincipal(); } });
+});
 
 test("installation-authenticated start, read, revoke use no-store and do not log URLs", async () => {
   await withRoutes(async (origin, logs, calls) => {
@@ -109,6 +165,7 @@ test("callback demands exact read payload, never echoes or logs keys or secret p
     // Native WooCommerce rejects all callback statuses other than HTTP 200.
     assert.equal(success.status, 200);
     assert.equal(success.headers.get("cache-control"), "no-store");
+    assert.equal(await success.text(), "");
     assert.deepEqual(calls, ["callback:read"]);
     for (const secret of [token, payload.consumer_key, payload.consumer_secret]) {
       assert.equal(logs.join("\n").includes(secret), false);

@@ -41,9 +41,9 @@ function fixture(options: { failRevisionInsert?: boolean; simultaneousReaders?: 
     merchantKnowledgeSource: {
       async findMany() {
         read("merchantKnowledgeSource.findMany");
-        return [{ id: sourceId, position: 0,
+        return [{ id: sourceId, position: 0, purposeId: "purpose-one", dataFormatId: "format-one", currentGeneration: generation,
           purpose: { key: "PRODUCT_INFORMATION", active: true },
-          dataFormat: { key: "XLSX", active: true } }];
+          dataFormat: { key: "XLSX", active: true, inputKind: "UPLOAD" } }];
       },
       async findFirst() {
         read("merchantKnowledgeSource.findFirst");

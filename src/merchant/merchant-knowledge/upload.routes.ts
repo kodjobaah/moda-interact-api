@@ -5,6 +5,7 @@ import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../.
 import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
 import { singleHeader } from "../../http/headers.js";
 import { sendNoStoreJson } from "../../http/response.js";
+import { safeKnowledgeErrorFields } from "./diagnostics.js";
 import { KNOWLEDGE_UPLOAD_FINALIZE_PATH, KNOWLEDGE_UPLOAD_INTENTS_PATH,
   KNOWLEDGE_UPLOAD_ROUTE, UPLOAD_REQUEST_MAX_BYTES, KnowledgeUploadError,
   invalid, parseEdit, parseFinalize, parseIntent } from "./upload-contract.js";
@@ -75,10 +76,7 @@ export function createMerchantKnowledgeUploadRoutes(options: {
               error instanceof TypeError ? "type_error" : "unexpected";
             logger.warn("merchant.knowledge.upload.failed", { operation, reason: failure.code, cause,
               ...(prismaCode ? { prismaCode } : {}), ...timings, durationMs: elapsedMs(startedAt),
-              errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
-              errorStack: error instanceof Error ? error.stack : undefined,
-              errorCause: error instanceof Error ? error.cause : undefined,
+              ...safeKnowledgeErrorFields(error),
             });
           }
           sendNoStoreJson(response, failure.status, { error: failure.code });
