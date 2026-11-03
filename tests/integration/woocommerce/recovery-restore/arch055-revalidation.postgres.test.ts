@@ -33,7 +33,7 @@ async function insertRecovery(id: string, checkoutToken: string, generation = 1)
   `;
 }
 
-test("restore revalidates completion, generation, and lifetime after offer resolution", async () => {
+test("restore revalidates completion, generation, lifetime, and credential rotation after offer resolution", async () => {
   await reader.$executeRaw`
     INSERT INTO "commerce"."Shop" ("id", "domain", "platform", "status", "shopifyShopId", "updatedAt")
     VALUES (${shopId}, ${canonicalSiteUrl}, 'WOOCOMMERCE', 'ACTIVE', NULL, CURRENT_TIMESTAMP)
@@ -82,9 +82,26 @@ test("restore revalidates completion, generation, and lifetime after offer resol
         `;
       },
     },
+    {
+      name: "credential rotation",
+      recoveryId: `arch055_rotation_${randomUUID()}`,
+      checkoutToken: `checkout_rotation_${randomUUID()}`,
+      mutate: async () => {
+        const rotated = await mutator.wooCommerceInstallation.update({
+          where: { id: installationId },
+          data: { credentialDigest: Buffer.alloc(32, 0x54), credentialVersion: { increment: 1 } },
+        });
+        assert.equal(rotated.credentialVersion, 2);
+      },
+    },
   ];
 
   for (const scenario of scenarios) {
+    await reader.$executeRaw`
+      UPDATE "public"."BackgroundRuntimeConfig"
+      SET "checkoutRecoveryLifetimeDays" = 21, "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = 'default'
+    `;
     await insertRecovery(scenario.recoveryId, scenario.checkoutToken);
     const [fixtureState] = await reader.$queryRaw<Array<{
       recoveryStatus: string | null;
