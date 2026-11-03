@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
+import { Prisma } from "@prisma/client";
+import { createLogger, LOG_VALUE_LIMITS, type StructuredLogger, type LogRecord } from "@modainteract/moda-interact-shared/logging";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import {
   PROMOTIONS_PATH, PROMOTION_SELECTION_PATH, PromotionDomainError,
@@ -25,7 +27,7 @@ function response() {
   } as unknown as ServerResponse;
   return { raw, result: () => ({ status, headers, body: JSON.parse(body) as Record<string, unknown> }) };
 }
-function factory(options: { unauthorized?: boolean; fail?: Error; corrupt?: boolean } = {}) {
+function factory(options: { unauthorized?: boolean; fail?: Error; corrupt?: boolean; logger?: StructuredLogger } = {}) {
   const calls: string[] = []; const logs: Record<string, unknown>[] = [];
   const route = createMerchantPromotionsRoutes({
     authenticator: { authenticate: async () => { calls.push("auth");
@@ -39,7 +41,7 @@ function factory(options: { unauthorized?: boolean; fail?: Error; corrupt?: bool
         assert.deepEqual(value, payload); if (options.fail) throw options.fail;
         return { schemaVersion: 1, revision, selection }; },
     } as never,
-    logger: { info: (_: string, data: Record<string, unknown>) => logs.push(data),
+    logger: options.logger ?? { info: (_: string, data: Record<string, unknown>) => logs.push(data),
       warn: (_: string, data: Record<string, unknown>) => logs.push(data),
       error: (_: string, data: Record<string, unknown>) => logs.push(data) } as never,
   });
@@ -99,4 +101,73 @@ test("unknown paths and HTTP methods fall through untouched", async () => {
   assert.equal(await f.route.handle(request("POST", PROMOTIONS_PATH), r.raw), false);
   assert.equal(await f.route.handle(request("GET", "/outside"), r.raw), false);
   assert.deepEqual(f.calls, []);
+});
+
+
+test("promotion routes retain wrapped database cause/code through the real Shared sink", async () => {
+  for (const method of ["GET", "PUT"]) {
+    const records: LogRecord[] = [];
+    const databaseError = new Prisma.PrismaClientKnownRequestError(
+      "Original serialization failure while selecting promotional credits",
+      { code: "P2034", clientVersion: "test" },
+    );
+    const wrapped = new PromotionDomainError(409, "promotion_revision_conflict", { cause: databaseError });
+    const f = factory({ fail: wrapped, logger: createLogger({
+      serviceName: "api006-promotions-test", environment: "test", sink: record => records.push(record),
+    }) });
+    const r = response();
+    await f.route.handle(request(method, method === "GET" ? PROMOTIONS_PATH : PROMOTION_SELECTION_PATH), r.raw);
+    assert.equal(r.result().status, 409);
+    assert.deepEqual(r.result().body, { error: "promotion_revision_conflict" });
+    assert.equal(r.result().headers["cache-control"], "private, no-store");
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!.event, "merchant.promotions.access.denied");
+    assert.equal(records[0]!.data?.databaseCode, "P2034");
+    assert.deepEqual(records[0]!.data?.errorCause, {
+      name: databaseError.name, message: databaseError.message,
+    });
+    assert.equal(wrapped.cause, databaseError);
+    assert.equal(records[0]!.data?.redactionApplied, false);
+    assert.ok(!JSON.stringify(r.result().body).includes(databaseError.message));
+  }
+});
+
+test("promotion diagnostics redact sensitive cause text and omit arbitrary database payloads", async () => {
+  const records: LogRecord[] = [];
+  const original = "Original serialization failure; postgres://reader:db-password@private/db " +
+    "Bearer bearer-value; token=token-value; password=password-value; user@example.invalid +447700900123";
+  const databaseError = new Prisma.PrismaClientKnownRequestError(original, {
+    code: "P2034", clientVersion: "test",
+    meta: { query: "SELECT customer-body", password: "meta-value", payload: { customer: "customer-value" } },
+  });
+  const wrapped = new PromotionDomainError(409, "promotion_revision_conflict", { cause: databaseError });
+  const f = factory({ fail: wrapped, logger: createLogger({
+    serviceName: "api006-promotions-test", environment: "test", sink: record => records.push(record),
+  }) });
+  const r = response();
+  await f.route.handle(request("PUT", PROMOTION_SELECTION_PATH), r.raw);
+  const privateLog = JSON.stringify(records);
+  for (const sensitive of ["postgres://", "db-password", "bearer-value", "token-value", "password-value",
+    "user@example.invalid", "447700900123", "customer-body", "meta-value", "customer-value"]) {
+    assert.equal(privateLog.includes(sensitive), false, sensitive);
+  }
+  assert.ok(privateLog.includes("Original serialization failure"));
+  assert.equal(records[0]!.data?.databaseCode, "P2034");
+  assert.equal(records[0]!.data?.redactionApplied, true);
+  assert.deepEqual(r.result().body, { error: "promotion_revision_conflict" });
+  assert.equal(databaseError.message, original);
+  assert.equal(wrapped.cause, databaseError);
+
+  const longError = new Error("x".repeat(LOG_VALUE_LIMITS.maxStringLength - 8) + " token=" + "boundary-value".repeat(100));
+  const boundedRecords: LogRecord[] = [];
+  const bounded = factory({ fail: new PromotionDomainError(409, "promotion_revision_conflict", { cause: longError }),
+    logger: createLogger({ serviceName: "api006-promotions-test", environment: "test",
+      sink: record => boundedRecords.push(record) }) });
+  const boundedResponse = response();
+  await bounded.route.handle(request("PUT", PROMOTION_SELECTION_PATH), boundedResponse.raw);
+  assert.equal(boundedResponse.result().status, 409);
+  assert.equal(JSON.stringify(boundedRecords).includes("boundary-value"), false);
+  const cause = boundedRecords[0]!.data?.errorCause as { message: string };
+  assert.ok(cause.message.length <= LOG_VALUE_LIMITS.maxStringLength + 20);
+  assert.equal(boundedRecords[0]!.data?.databaseCode, undefined, "no database code may be invented");
 });

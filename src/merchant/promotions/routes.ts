@@ -18,12 +18,41 @@ function respond(response: ServerResponse, status: number, value: unknown): void
   response.end(JSON.stringify(value));
 }
 
+/** Map the route's wrapper/database cause to explicit Shared log fields.
+ * Shared owns Error serialization and bounds; raw stacks, query/meta payloads
+ * are never projected. Database text needs boundary-specific redaction first.
+ */
 function safeErrorDiagnostic(error: unknown) {
   if (!(error instanceof Error)) return sanitizeLogFields({ errorType: typeof error });
-  const message = error.message
-    .replace(/\b(?:postgres(?:ql)?|mysql|redis|mongodb):\/\/[^\s]+/gi, "[REDACTED]")
-    .replace(/\b(?:secret|credential|password|token|authorization)\b/gi, "[REDACTED]");
-  return sanitizeLogFields({ error: { name: error.name, message }, redactionApplied: message !== error.message });
+  const cause = error.cause instanceof Error ? error.cause : undefined;
+  const databaseError = cause ?? error;
+  const code = "code" in databaseError ? databaseError.code : undefined;
+  const fields = sanitizeLogFields({
+    error,
+    ...(cause ? { errorCause: cause } : {}),
+    ...(typeof code === "string" && /^(?:P\d{4}|[0-9A-Z]{5})$/.test(code) ? { databaseCode: code } : {}),
+  });
+  let redactionApplied = false;
+  for (const [key, original] of [["error", error], ["errorCause", cause]] as const) {
+    if (!original) continue;
+    const redact = (text: string) => text
+      // Prisma invocation renderings can include application/query arguments.
+      .replace(/\bInvalid[\s\S]*?\binvocation\b[\s\S]*/gi, "[REDACTED]")
+      .replace(/\b(?:detail|context|query|parameters?|payload|customer)\s*[:=][\s\S]*/gi, "[REDACTED]")
+      .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
+      .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED]")
+      .replace(/\b(?:password|passwd|secret|credential|token|access[_-]?token|refresh[_-]?token|client[_-]?secret|authorization|cookie|api[_-]?key|signature)\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, "[REDACTED]")
+      .replace(/\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b/gi, "[REDACTED]")
+      .replace(/\+?\d(?:[\d ().-]{5,}\d)/g, "[REDACTED]")
+      .replace(/\b(?:secret|credential|password|token|authorization)\b/gi, "[REDACTED]");
+    const name = redact(original.name);
+    const message = redact(original.message);
+    redactionApplied ||= name !== original.name || message !== original.message;
+    // Redact original text before Shared truncation, including sensitive text
+    // crossing its string boundary. Do not mutate the original exception.
+    fields[key] = sanitizeLogFields({ ...fields[key] as Record<string, unknown>, name, message });
+  }
+  return sanitizeLogFields({ ...fields, redactionApplied });
 }
 
 export function createMerchantPromotionsRoutes(options: {

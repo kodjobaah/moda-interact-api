@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { Prisma } from "@prisma/client";
+import { createLogger, LOG_VALUE_LIMITS, type StructuredLogger, type LogRecord } from "@modainteract/moda-interact-shared/logging";
+import { DiscountOffersError } from "../../../../src/merchant/discount-offers/contract.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createMerchantDiscountOffersRoutes } from "../../../../src/merchant/discount-offers/routes.js";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 
-function harness(method: string, path: string, input?: unknown, denied = false, failure?: Error) {
+function harness(method: string, path: string, input?: unknown, denied = false, failure?: Error, logger?: StructuredLogger) {
   const calls: string[] = [];
   const logs: unknown[] = [];
   const bytes = input===undefined?null:Buffer.from(JSON.stringify(input));
@@ -17,11 +20,11 @@ function harness(method: string, path: string, input?: unknown, denied = false, 
   const route=createMerchantDiscountOffersRoutes({
     authenticator:{async authenticate(){if(denied)throw new WooUnauthenticatedError();return {shopId:"woo-shop",installationId:"inst",canonicalSiteUrl:"https://woo.test",credentialVersion:1};}} as never,
     service:{
-      async catalogue(){calls.push("catalogue");return {schemaVersion:1,items:[]};},
+      async catalogue(){calls.push("catalogue");if(failure)throw failure;return {schemaVersion:1,items:[]};},
       async read(){calls.push("read");if(failure)throw failure;return {schemaVersion:1,merchant:{recoveryOfferMode:"NONE"}};},
-      async save(){calls.push("save");return {schemaVersion:1,merchant:{recoveryOfferMode:"FIXED"}};},
+      async save(){calls.push("save");if(failure)throw failure;return {schemaVersion:1,merchant:{recoveryOfferMode:"FIXED"}};},
     } as never,
-    logger:{info(){},warn(_event:string,fields:unknown){logs.push(fields);},error(_event:string,fields:unknown){logs.push(fields);}} as never,
+    logger:logger ?? {info(){},warn(_event:string,fields:unknown){logs.push(fields);},error(_event:string,fields:unknown){logs.push(fields);}} as never,
   });
   return {route,request,response,output,calls,logs};
 }
@@ -66,4 +69,88 @@ test("discount failure diagnostics redact credentials before logging",async()=>{
   assert.equal(failed.output.status,500);
   assert.equal(JSON.stringify(failed.logs).includes("secret"),false);
   assert.equal(JSON.stringify(failed.logs).includes("postgres://private"),false);
+});
+
+
+test("discount routes retain wrapped database cause/code through the real Shared sink", async () => {
+  for (const method of ["GET", "PUT"]) {
+    const records: LogRecord[] = [];
+    const databaseError = new Prisma.PrismaClientKnownRequestError("Original foreign-key failure while saving offers", {
+      code: "P2003", clientVersion: "test",
+    });
+    const wrapped = new DiscountOffersError(409, "offers_conflict", { cause: databaseError });
+    const f = harness(method, "/v1/merchant/discount-offers",
+      method === "PUT" ? { recoveryOfferMode: "FIXED", selectedDiscountIds: ["coupon-one"] } : undefined,
+      false, wrapped, createLogger({ serviceName: "api006-discounts-test", environment: "test",
+        sink: record => records.push(record) }));
+    await f.route.handle(f.request, f.response);
+    assert.equal(f.output.status, 409);
+    assert.deepEqual(f.output.body, { error: "offers_conflict" });
+    assert.equal(f.output.headers?.["cache-control"], "no-store");
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!.event, "merchant.discount_offers.access.denied");
+    assert.equal(records[0]!.data?.databaseCode, "P2003");
+    assert.deepEqual(records[0]!.data?.errorCause, { name: databaseError.name, message: databaseError.message });
+    assert.equal(records[0]!.data?.redactionApplied, false);
+    assert.equal(wrapped.cause, databaseError);
+    assert.ok(!JSON.stringify(f.output.body).includes(databaseError.message));
+  }
+});
+
+test("discount diagnostics redact sensitive causes with Shared bounds and no public details", async () => {
+  const records: LogRecord[] = [];
+  const original = "Original foreign-key failure; redis://reader:db-password@private/0 " +
+    "Bearer bearer-value; token=token-value; credential=credential-value; user@example.invalid +447700900123";
+  const databaseError = new Prisma.PrismaClientKnownRequestError(original, {
+    code: "P2003", clientVersion: "test",
+    meta: { query: "SELECT customer-body", secret: "meta-value", payload: { customer: "customer-value" } },
+  });
+  const wrapped = new DiscountOffersError(409, "offers_conflict", { cause: databaseError });
+  const f = harness("PUT", "/v1/merchant/discount-offers",
+    { recoveryOfferMode: "FIXED", selectedDiscountIds: ["coupon-one"] }, false, wrapped,
+    createLogger({ serviceName: "api006-discounts-test", environment: "test",
+      sink: record => records.push(record) }));
+  await f.route.handle(f.request, f.response);
+  const privateLog = JSON.stringify(records);
+  for (const sensitive of ["redis://", "db-password", "bearer-value", "token-value", "credential-value",
+    "user@example.invalid", "447700900123", "customer-body", "meta-value", "customer-value"]) {
+    assert.equal(privateLog.includes(sensitive), false, sensitive);
+  }
+  assert.ok(privateLog.includes("Original foreign-key failure"));
+  assert.equal(records[0]!.data?.databaseCode, "P2003");
+  assert.equal(records[0]!.data?.redactionApplied, true);
+  assert.deepEqual(f.output.body, { error: "offers_conflict" });
+  assert.equal(databaseError.message, original);
+  assert.equal(wrapped.cause, databaseError);
+
+  const boundedRecords: LogRecord[] = [];
+  const longError = new Error("x".repeat(LOG_VALUE_LIMITS.maxStringLength - 8) + " token=" + "boundary-value".repeat(100));
+  const bounded = harness("GET", "/v1/merchant/discount-offers", undefined, false, longError,
+    createLogger({ serviceName: "api006-discounts-test", environment: "test",
+      sink: record => boundedRecords.push(record) }));
+  await bounded.route.handle(bounded.request, bounded.response);
+  assert.equal(bounded.output.status, 500);
+  assert.deepEqual(bounded.output.body, { error: "internal_error" });
+  assert.equal(JSON.stringify(boundedRecords).includes("boundary-value"), false);
+  const error = boundedRecords[0]!.data?.error as { message: string };
+  assert.ok(error.message.length <= LOG_VALUE_LIMITS.maxStringLength + 20);
+  assert.equal(boundedRecords[0]!.data?.databaseCode, undefined);
+  assert.equal(boundedRecords[0]!.data?.errorCause, undefined);
+});
+
+test("unwrapped Prisma conflicts keep their database evidence and original public response", async () => {
+  const records: LogRecord[] = [];
+  const databaseError = new Prisma.PrismaClientKnownRequestError("Original unwrapped serialization failure", {
+    code: "P2034", clientVersion: "test",
+  });
+  const f = harness("GET", "/v1/merchant/discount-offers", undefined, false, databaseError,
+    createLogger({ serviceName: "api006-discounts-test", environment: "test",
+      sink: record => records.push(record) }));
+  await f.route.handle(f.request, f.response);
+  assert.equal(f.output.status, 409);
+  assert.deepEqual(f.output.body, { error: "offers_conflict" });
+  assert.equal(records.length, 1);
+  assert.equal(records[0]!.data?.databaseCode, "P2034");
+  assert.deepEqual(records[0]!.data?.error, { name: databaseError.name, message: databaseError.message });
+  assert.equal(records[0]!.data?.errorCause, undefined);
 });
