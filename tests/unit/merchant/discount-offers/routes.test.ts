@@ -154,3 +154,81 @@ test("unwrapped Prisma conflicts keep their database evidence and original publi
   assert.deepEqual(records[0]!.data?.error, { name: databaseError.name, message: databaseError.message });
   assert.equal(records[0]!.data?.errorCause, undefined);
 });
+
+
+test("discount-offers Prisma multiline diagnostics retain failure reasons without invocation/customer context", async () => {
+  const foreignKey = "Foreign key constraint violated on the constraint: safe_fk_constraint";
+  const transaction = "Transaction failed due to a write conflict or a deadlock. Please retry your transaction";
+  const fixtures = [
+    { code: "P2003", reason: foreignKey, message: [
+      "", "Invalid `prisma.example.update()` invocation:", "", "{", "  data: {",
+      '    customerName: "Private Shopper",', '    customerAddress: "Private Street",',
+      '    token: "invocation-value",', '    email: "customer@example.invalid",',
+      '    misleading: "Foreign key constraint violated on the constraint: private-fake-constraint",',
+      '    notes: "' + "private-argument".repeat(LOG_VALUE_LIMITS.maxStringLength) + '",',
+      "  }", "}", "", foreignKey,
+    ].join("\n") },
+    { code: "P2034", reason: transaction, message: [
+      "", "Invalid `prisma.example.update()` invocation in", "/private/customer-source.ts:42:17", "",
+      '  39 const customerName = "Private Shopper";',
+      '  40 const customerAddress = "Private Street";',
+      '  41 const token = "invocation-value"; // Transaction failed due to a write conflict or a deadlock: private-fake-constraint',
+      "→ 42 await prisma.example.update(", transaction,
+    ].join("\n") },
+    { code: "P2003", reason: foreignKey, message:
+      "\nInvalid `prisma.example.update()` invocation:\n\n\n" + foreignKey },
+    { code: "P2002", reason: "Unique constraint failed on the fields: (`safe_unique_field`)", message:
+      "\nInvalid `prisma.example.update()` invocation:\r\n\r\n" +
+      "Unique constraint failed on the fields: (`safe_unique_field`)\r\n" },
+    { code: "P2003", reason: foreignKey, message: [
+      "", "Invalid `prisma.example.update()` invocation in", "/private/customer-source.ts:42:17", "",
+      '  41 const customerName = "Private Shopper";', "→ 42 await prisma.example.update(", foreignKey,
+    ].join("\n") },
+    { code: "P2003", reason: foreignKey, message: [
+      "", "Invalid `prisma.example.update()` invocation in", "/private/customer-source.ts:42:17", "",
+      '  41 const customerName = "Private Shopper";', "→ 42 await prisma.example.update({",
+      '       data: { customerName: "Private Shopper", token: "invocation-value" }',
+      "})", "", foreignKey,
+    ].join("\n") },
+    // A safe-looking line inside an unfinished rendering is not an origin reason.
+    { code: "P2003", reason: undefined, message:
+      '\nInvalid `prisma.example.update()` invocation:\n\n{ data: {\n' +
+      'Foreign key constraint violated on the constraint: private-fake-constraint' },
+    // No database description: do not mistake the invocation for a failure reason.
+    { code: "P2003", reason: undefined, message:
+      '\nInvalid `prisma.example.update()` invocation:\n\n{ customerName: "Private Shopper", token: "invocation-value" }' },
+  ];
+  for (const method of ["GET", "PUT"]) {
+    for (const fixture of fixtures) {
+      const records: LogRecord[] = [];
+      const databaseError = new Prisma.PrismaClientKnownRequestError(fixture.message, {
+        code: fixture.code, clientVersion: "6.19.3",
+        meta: { query: "SELECT private-query", payload: { customer: "private-payload" } },
+      });
+      databaseError.stack = "private-stack";
+      const wrapped = new DiscountOffersError(409, "offers_conflict", { cause: databaseError });
+      const f = harness(method, "/v1/merchant/discount-offers",
+        method === "PUT" ? { recoveryOfferMode: "FIXED", selectedDiscountIds: ["coupon-one"] } : undefined,
+        false, wrapped, createLogger({ serviceName: "api006-discounts-test", environment: "test",
+          sink: record => records.push(record) }));
+      await f.route.handle(f.request, f.response);
+      assert.equal(f.output.status, 409);
+      assert.deepEqual(f.output.body, { error: "offers_conflict" });
+      assert.equal(f.output.headers?.["cache-control"], "no-store");
+      assert.equal(records.length, 1);
+      assert.equal(records[0]!.data?.databaseCode, fixture.code);
+      assert.equal(records[0]!.data?.redactionApplied, true);
+      const cause = records[0]!.data?.errorCause as { name: string; message: string };
+      assert.equal(cause.name, databaseError.name);
+      if (fixture.reason) assert.ok(cause.message.includes(fixture.reason), cause.message);
+      else assert.equal(cause.message.trim(), "[REDACTED]");
+      const privateLog = JSON.stringify(records);
+      for (const sensitive of ["Private Shopper", "Private Street", "invocation-value", "customer@example.invalid",
+        "private-argument", "private-fake-constraint", "customer-source.ts", "private-query", "private-payload", "private-stack", "prisma.example"]) {
+        assert.equal(privateLog.includes(sensitive), false, sensitive);
+      }
+      assert.equal(databaseError.message, fixture.message);
+      assert.equal(wrapped.cause, databaseError);
+    }
+  }
+});

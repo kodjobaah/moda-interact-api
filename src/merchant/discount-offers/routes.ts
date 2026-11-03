@@ -25,8 +25,30 @@ function safeErrorDiagnostic(error: unknown) {
   for (const [key, original] of [["error", error], ["errorCause", cause]] as const) {
     if (!original) continue;
     const redact = (text: string) => text
-      // Prisma invocation renderings can include application/query arguments.
-      .replace(/\bInvalid[\s\S]*?\binvocation\b[\s\S]*/gi, "[REDACTED]")
+      // Prisma renders arguments/code frames before its originating reason.
+      // Only retain an unindented final reason line for these database failures;
+      // quoted arguments, numbered source lines and unknown layouts stay private.
+      .replace(/\bInvalid[\s\S]*?\binvocation\b[\s\S]*/gi, invocation => {
+        const reasonPattern = code === "P2003"
+          ? /(?:^|\n)(Foreign key constraint (?:violated|failed)[^\r\n]*)\r?\n?$/
+          : code === "P2002"
+            ? /(?:^|\n)(Unique constraint failed[^\r\n]*)\r?\n?$/
+            : code === "P2034"
+              ? /(?:^|\n)(Transaction failed due to a write conflict or a deadlock[^\r\n]*)\r?\n?$/
+              : undefined;
+        const reason = reasonPattern?.exec(invocation)?.[1];
+        if (!reason) return "[REDACTED]";
+        const preamble = invocation.slice(0, invocation.lastIndexOf(reason));
+        const header = /^Invalid[^\r\n]*\binvocation(?::| in\r?\n[^\r\n]+)\r?\n/.exec(preamble);
+        if (!header) return "[REDACTED]";
+        const context = preamble.slice(header[0].length);
+        // Prisma emits either no context, a completed argument block followed
+        // by a blank line, or numbered source lines immediately before reason.
+        const complete = /^\s*$/.test(context)
+          || /(?:^|\n)[ \t]*(?:\}\)?|\))[ \t]*\r?\n[ \t]*\r?\n$/.test(context)
+          || /^(?:[ \t]*\r?\n)*(?:[ \t]*(?:→[ \t]*)?\d+[ \t]+[^\r\n]*\r?\n)+$/.test(context);
+        return complete ? `[REDACTED]\n${reason}` : "[REDACTED]";
+      })
       .replace(/\b(?:detail|context|query|parameters?|payload|customer)\s*[:=][\s\S]*/gi, "[REDACTED]")
       .replace(/\bBearer\s+[^\s,;]+/gi, "Bearer [REDACTED]")
       .replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED]")
