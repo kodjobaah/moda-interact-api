@@ -1,9 +1,9 @@
-import { CommerceAgentPromptScope, type CommerceEnvironment, type PrismaClient } from "@prisma/client";
+import { CommerceAgentPromptScope, type CommerceEnvironment, type Prisma } from "@prisma/client";
 import { localizeCategory, StoreCategoryReadError, type CategoryPresentationLocale } from "./locale.js";
 import type { StoreCategoryProfile } from "./schema.js";
 import { selectedMappingIds } from "./provenance.js";
 
-export type CategoryProfileDatabase = Pick<PrismaClient, "commerceShopProfile" | "commerceAgentConfiguration">;
+export type CategoryProfileDatabase = Pick<Prisma.TransactionClient, "commerceShopProfile" | "commerceAgentConfiguration">;
 
 /** Reads active/pending states separately; a missing profile is not an error. */
 export async function readStoreCategoryProfile(

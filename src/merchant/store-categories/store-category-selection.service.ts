@@ -125,7 +125,7 @@ export class StoreCategorySelectionService {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: 15_000 });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError &&
-        ["P2002", "P2034"].includes(error.code)) throw categoryConflict();
+        ["P2002", "P2034"].includes(error.code)) throw categoryConflict({ cause: error });
       throw error;
     }
   }

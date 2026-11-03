@@ -21,17 +21,19 @@ export function createMerchantFeaturePreferencesRoute(options: {
       const url = new URL(request.url ?? "/", "http://localhost");
       if (url.pathname !== MERCHANT_FEATURE_PREFERENCES_PATH || !["GET", "PUT"].includes(request.method ?? "")) return false;
       const started = now();
+      const timings: Record<string, number> = {};
       try {
         const principal = await authenticator.authenticate(request);
         if (url.search || (request.method === "GET" && hasFeaturePreferencesBody(request))) {
           throw new FeaturePreferencesRequestError(400, "invalid_request");
         }
-        const result = request.method === "GET" ? await service.read(principal)
-          : await service.update(principal, await readFeaturePreferencesUpdate(request));
+        const captureTimings = (phases: Readonly<Record<string, number>>) => Object.assign(timings, phases);
+        const result = request.method === "GET" ? await service.read(principal, captureTimings)
+          : await service.update(principal, await readFeaturePreferencesUpdate(request), captureTimings);
         if (!isFeaturePreferencesResponse(result)) throw new FeaturePreferencesIntegrityError();
         logger.info("merchant.feature_preferences.access", {
           shopId: principal.shopId, operation: request.method === "GET" ? "read" : "update",
-          featureCount: result.features.length, durationMs: Math.max(0, now() - started),
+          featureCount: result.features.length, durationMs: Math.max(0, now() - started), ...timings,
         });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
@@ -43,6 +45,7 @@ export function createMerchantFeaturePreferencesRoute(options: {
             errorMessage: error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
+            ...timings,
           });
           sendNoStoreJson(response, 409, { error: error.code });
         } else if (error instanceof FeaturePreferencesIntegrityError) {
@@ -51,6 +54,7 @@ export function createMerchantFeaturePreferencesRoute(options: {
             errorMessage: error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
+            ...timings,
           });
           sendNoStoreJson(response, 409, { error: "feature_preferences_integrity_invalid" });
         } else {
@@ -59,6 +63,7 @@ export function createMerchantFeaturePreferencesRoute(options: {
             errorMessage: error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
+            ...timings,
           });
           sendNoStoreJson(response, 500, { error: "internal_error" });
         }
