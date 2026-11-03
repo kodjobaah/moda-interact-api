@@ -105,7 +105,8 @@ test("ARCH-055 sender configuration reads use the active transaction and preserv
     await assert.rejects(db.$transaction(async tx => {
       await tx.$executeRawUnsafe(`ALTER TABLE "public"."PlatformConfiguration" RENAME TO "${renamedTable}"`);
       return readEligibleFollowUpChoices(tx, shop.id, senderFactory, new Date("2026-11-02T12:00:00.000Z"));
-    }), (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021");
+    }), (error: unknown) => error instanceof ApiPlatformConfigurationError && error.code === "DATABASE_UNAVAILABLE" &&
+      error.cause instanceof Prisma.PrismaClientKnownRequestError && error.cause.code === "P2021");
   } finally {
     await db.platformConfiguration.deleteMany({ where: { environment: "test", key: "messaging.sender" } });
     await db.$disconnect();
