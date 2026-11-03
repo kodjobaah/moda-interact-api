@@ -22,8 +22,14 @@ function database(): QueryLoggingClient {
 
 after(async () => {
   if (!prisma) return;
-  await prisma.shop.deleteMany({ where: { domain: `https://purchase-query-${suffix}.invalid` } });
-  await prisma.billingPlan.deleteMany({ where: { shopifyPlanHandle: `purchase-query-${suffix}` } });
+  await prisma.shop.deleteMany({ where: { domain: { in: [
+    `https://purchase-query-${suffix}.invalid`,
+    `https://purchase-query-five-${suffix}.invalid`,
+  ] } } });
+  await prisma.billingPlan.deleteMany({ where: { shopifyPlanHandle: { in: [
+    `purchase-query-${suffix}`,
+    `purchase-query-five-${suffix}`,
+  ] } } });
   await prisma.$disconnect();
 });
 
@@ -58,4 +64,53 @@ test("PostgreSQL purchase history skips its page query when the same snapshot co
   assert.equal(purchaseSelects.length, 1, purchaseSelects.join("\n"));
   assert.match(purchaseSelects[0]!, /COUNT\s*\(/i);
   assert.ok(plan.id);
+});
+
+test("PostgreSQL purchase history retains its page query for five matching purchases", {
+  skip: !databaseUrl,
+}, async () => {
+  const db = database();
+  const statements: string[] = [];
+  db.$on("query", (event) => statements.push(event.query));
+  const plan = await db.billingPlan.create({
+    data: { shopifyPlanHandle: `purchase-query-five-${suffix}`, name: "Query shape", kind: "FREE" },
+  });
+  const shop = await db.shop.create({
+    data: {
+      domain: `https://purchase-query-five-${suffix}.invalid`,
+      platform: "WOOCOMMERCE",
+      onboardingCompleted: true,
+    },
+  });
+  const createdAt = new Date("2026-11-02T12:00:00.000Z");
+  await db.recoveryCreditPurchase.createMany({
+    data: Array.from({ length: 5 }, (_, index) => ({
+      id: `purchase-query-five-${suffix}-${index}`,
+      shopId: shop.id,
+      planId: plan.id,
+      creditsGranted: 10,
+      provider: "WOOCOMMERCE",
+      createdAt: new Date(createdAt.getTime() + index),
+    })),
+  });
+  const principal: WooInstallationPrincipal = {
+    installationId: `purchase-query-five-install-${suffix}`,
+    shopId: shop.id,
+    canonicalSiteUrl: shop.domain,
+    credentialVersion: 1,
+  };
+  const start = statements.length;
+
+  const result = await new WooPurchaseHistoryReadService(db).read(principal, {
+    filter: "ALL", page: 1, pageSize: 5,
+  });
+
+  assert.equal(result.total, 5);
+  assert.equal(result.totalPages, 1);
+  assert.equal(result.purchases.length, 5);
+  const purchaseSelects = statements.slice(start).filter((sql) =>
+    /SELECT/i.test(sql) && /"billing"\."RecoveryCreditPurchase"/i.test(sql));
+  assert.equal(purchaseSelects.length, 2, purchaseSelects.join("\n"));
+  assert.match(purchaseSelects[0]!, /COUNT\s*\(/i);
+  assert.doesNotMatch(purchaseSelects[1]!, /COUNT\s*\(/i);
 });
