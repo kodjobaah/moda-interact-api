@@ -9,16 +9,38 @@ const principal: WooInstallationPrincipal = {
 };
 
 function mockDb(overrides: { settings?: unknown; override?: unknown; shop?: unknown; installation?: unknown } = {}) {
+  let queries = 0;
+  const shop = overrides.shop === undefined
+    ? { id: principal.shopId, domain: principal.canonicalSiteUrl, platform: "WOOCOMMERCE", shopifyShopId: null, status: "ACTIVE" }
+    : overrides.shop as Record<string, unknown> | null;
+  const installation = overrides.installation === undefined
+    ? { id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl,
+      status: "ACTIVE", credentialVersion: 2, revokedAt: null }
+    : overrides.installation as Record<string, unknown> | null;
+  const settings = overrides.settings as Record<string, unknown> | undefined;
+  const override = overrides.override as Record<string, unknown> | undefined;
+  const row = shop && {
+    shopId: shop.id, domain: shop.domain, platform: shop.platform, shopifyShopId: shop.shopifyShopId,
+    shopStatus: shop.status, installationId: installation?.id ?? null,
+    installationShopId: installation?.shopId ?? null, canonicalSiteUrl: installation?.canonicalSiteUrl ?? null,
+    credentialVersion: installation?.credentialVersion ?? null, installationStatus: installation?.status ?? null,
+    revokedAt: installation?.revokedAt ?? null,
+    merchantRecoveryDelayMinutes: settings?.recoveryDelayMinutes ?? null,
+    merchantRecoveryOfferMode: settings?.recoveryOfferMode ?? null,
+    merchantFixedDiscountId: settings?.fixedShopifyDiscountId ?? null,
+    merchantFollowUpEnabled: settings?.followUpEnabled ?? null,
+    merchantFollowUpDelayMinutes: settings?.followUpDelayMinutes ?? null,
+    overrideId: override ? "override_1" : null,
+    overrideRecoveryDelayMinutes: override?.recoveryDelayMinutes ?? null,
+    overrideRecoveryOfferMode: override?.recoveryOfferMode ?? null,
+    overrideFixedDiscountId: override?.fixedShopifyDiscountId ?? null,
+    overrideFollowUpEnabled: override?.followUpEnabled ?? null,
+    overrideFollowUpDelayMinutes: override?.followUpDelayMinutes ?? null,
+    overrideExpiresAt: override?.expiresAt ?? null,
+  };
   return {
-    shop: { findUnique: async () => overrides.shop === undefined
-      ? { id: principal.shopId, domain: principal.canonicalSiteUrl, platform: "WOOCOMMERCE", shopifyShopId: null, status: "ACTIVE" }
-      : overrides.shop },
-    wooCommerceInstallation: { findUnique: async () => overrides.installation === undefined
-      ? { id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl,
-        status: "ACTIVE", credentialVersion: 2, revokedAt: null }
-      : overrides.installation },
-    shopSettings: { findUnique: async () => overrides.settings ?? null },
-    shopRecoveryPolicyOverride: { findUnique: async () => overrides.override ?? null },
+    $queryRaw: async () => { queries += 1; return row ? [row] : []; },
+    queryCount: () => queries,
   };
 }
 
@@ -28,9 +50,11 @@ const merchant = {
 };
 
 test("unconfigured Woo shop returns the same default that Background will execute, without writes", async () => {
-  const result = await new MerchantRecoverySummaryService(mockDb() as never).read(principal);
+  const database = mockDb();
+  const result = await new MerchantRecoverySummaryService(database as never).read(principal);
   assert.deepEqual(result, { schemaVersion: 1, recoveryDelayMinutes: 30, recoveryOfferMode: "NONE",
     followUpEnabled: false, followUpDelayMinutes: null, source: "MERCHANT" });
+  assert.equal(database.queryCount(), 1);
 });
 
 test("uses merchant policy when there is no active override", async () => {

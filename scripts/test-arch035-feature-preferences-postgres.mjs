@@ -39,7 +39,8 @@ try {
   run("npx", ["--no-install", "prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"], { env, stdio: "inherit" });
   phase = "running feature-preference integration tests";
   run("node", ["--import", "tsx", "--test", "--test-concurrency=1",
-    "tests/integration/merchant/feature-preferences/service.postgres.test.ts"], { env, stdio: "inherit" });
+    "tests/integration/merchant/feature-preferences/service.postgres.test.ts",
+    "tests/integration/merchant/feature-preferences/arch055-admin-interleaving.postgres.test.ts"], { env, stdio: "inherit" });
 } catch {
   // Never print execFileSync error objects: Docker argv contains the disposable password.
   process.stderr.write(`ARCH-035 feature-preferences PostgreSQL validation failed while ${phase}.\n`);

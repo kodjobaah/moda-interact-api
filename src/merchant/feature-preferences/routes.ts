@@ -88,6 +88,7 @@ export function createMerchantFeaturePreferencesRoute(options: {
               typeof error.code === "string" ? error.code : undefined,
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
+            ...timings,
           });
           timeFeatureSync(timings, "responseDispatchMs", () => sendNoStoreJson(response, statusCode, { error: "internal_error" }));
         }

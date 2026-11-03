@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { Prisma } from "@prisma/client";
 import test from "node:test";
 import { MerchantFeaturePreferencesService } from "../../../../src/merchant/feature-preferences/service.js";
 import { FeaturePreferencesConflictError, FeaturePreferencesIntegrityError } from "../../../../src/merchant/feature-preferences/contract.js";
@@ -62,11 +63,26 @@ test("CAS rejects stale and denied changes without writes; identical current upd
   await assert.rejects(() => service.update(principal, { expectedRevision: initial.revision, changes: [{ featureId: "other_tenant", enabled: true }] }),
     FeaturePreferencesConflictError);
   assert.equal(getWrites(), 0);
-  const saved = await service.update(principal, { expectedRevision: initial.revision, changes: [{ featureId: optional.id, enabled: true }] });
+  const timingReports: Readonly<Record<string, number>>[] = [];
+  const saved = await service.update(principal,
+    { expectedRevision: initial.revision, changes: [{ featureId: optional.id, enabled: true }] },
+    (timings) => timingReports.push(timings));
   assert.notEqual(saved.revision, initial.revision);
   assert.equal(saved.features[0]?.effective, true);
   assert.equal(getWrites(), 1);
-  assert.equal((await service.update(principal, { expectedRevision: saved.revision, changes: [{ featureId: optional.id, enabled: true }] })).revision, saved.revision);
+  const phaseNames = ["subscriptionLookupMs", "featuresLookupMs", "preferencesLookupMs", "projectionMs"];
+  assert.equal(timingReports.length, 1);
+  for (const phase of ["initial", "final"]) for (const name of phaseNames) {
+    const key = `${phase}.${name}`;
+    assert.equal(Number.isFinite(timingReports[0]?.[key]), true);
+    assert.ok((timingReports[0]?.[key] ?? -1) >= 0);
+  }
+  const noopTimingReports: Readonly<Record<string, number>>[] = [];
+  assert.equal((await service.update(principal,
+    { expectedRevision: saved.revision, changes: [{ featureId: optional.id, enabled: true }] },
+    (timings) => noopTimingReports.push(timings))).revision, saved.revision);
+  assert.equal(noopTimingReports.length, 1);
+  assert.equal(Object.keys(noopTimingReports[0] ?? {}).some((key) => key.startsWith("final.")), false);
   assert.equal(getWrites(), 1);
   await assert.rejects(() => service.update(principal, { expectedRevision: initial.revision, changes: [] }),
     (error: unknown) => error instanceof FeaturePreferencesConflictError && error.code === "feature_preferences_conflict");
@@ -111,4 +127,14 @@ test("feature-preference writes report upsert time separately from the final rel
     changes: [{ featureId: optional.id, enabled: true }] }, timings);
   assert.equal(typeof timings.featureUpsertsMs, "number");
   assert.equal(typeof timings.transactionMs, "number");
+});
+
+test("database conflict wrappers preserve the original diagnostic cause", async () => {
+  const cause = new Prisma.PrismaClientKnownRequestError("database diagnostic", {
+    code: "P2034", clientVersion: "6.19.3",
+  });
+  const failingDatabase = { $transaction: async () => { throw cause; } };
+  const failingService = new MerchantFeaturePreferencesService(failingDatabase as never);
+  await assert.rejects(() => failingService.update(principal, { expectedRevision: "0".repeat(64), changes: [] }),
+    (error: unknown) => error instanceof FeaturePreferencesConflictError && error.cause === cause);
 });

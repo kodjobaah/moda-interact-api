@@ -8,6 +8,10 @@ import {
   isFeaturePreferencesResponse, type FeaturePreferencesResponse, type FeaturePreferencesUpdate,
 } from "./contract.js";
 import { elapsedFeatureMs, timeFeaturePhase, timeFeatureSync, type FeaturePreferencesTimings } from "./timing.js";
+import {
+  measureFeaturePreferencePhase, measureFeaturePreferenceProjection,
+  type FeaturePreferenceLoadPhase, type FeaturePreferenceLoadTimings, type FeaturePreferenceTimingSink,
+} from "./timing.js";
 
 type Database = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
@@ -49,11 +53,19 @@ async function assertInstallation(tx: Tx, principal: WooInstallationPrincipal, w
   });
 }
 
-async function load(tx: Tx, shopId: string, timings?: FeaturePreferencesTimings): Promise<FeaturePreferencesResponse> {
-  const subscription = await timeFeaturePhase(timings, "subscriptionLookupMs", async () => tx.subscription.findUnique({
-    where: { shopId },
-    include: { plan: { include: { features: { include: { feature: true }, orderBy: { featureId: "asc" } } } } },
-  }));
+async function load(tx: Tx, shopId: string, phase: FeaturePreferenceLoadPhase,
+  timings: FeaturePreferencesTimings | undefined, loadTimings: FeaturePreferenceLoadTimings): Promise<FeaturePreferencesResponse> {
+  const subscription = await measureFeaturePreferencePhase(loadTimings, phase, "subscriptionLookupMs", () =>
+      timeFeaturePhase(timings, "subscriptionLookupMs", async () => tx.subscription.findUnique({
+      where: { shopId },
+      select: {
+        id: true, status: true, planId: true,
+        plan: { select: { id: true, active: true, updatedAt: true, features: {
+          orderBy: { featureId: "asc" },
+          select: { featureId: true, enabled: true, feature: { select: { active: true, updatedAt: true } } },
+        } } },
+      },
+    })));
   const { activeSubscription, plan } = timeFeatureSync(timings, "subscriptionEligibilityMs", () => {
     if (!subscription || !["ACTIVE", "TRIALING"].includes(subscription.status) ||
       !subscription.plan || !subscription.plan.active) {
@@ -62,8 +74,14 @@ async function load(tx: Tx, shopId: string, timings?: FeaturePreferencesTimings)
     return { activeSubscription: subscription, plan: subscription.plan };
   });
   const [features, preferences] = await Promise.all([
-    timeFeaturePhase(timings, "featuresLookupMs", async () => tx.feature.findMany({ where: { active: true }, orderBy: [{ displayName: "asc" }, { id: "asc" }] })),
-    timeFeaturePhase(timings, "preferencesLookupMs", async () => tx.shopFeaturePreference.findMany({ where: { shopId }, orderBy: { featureId: "asc" } })),
+    measureFeaturePreferencePhase(loadTimings, phase, "featuresLookupMs", () => timeFeaturePhase(timings, "featuresLookupMs", async () => tx.feature.findMany({
+      where: { active: true }, orderBy: [{ displayName: "asc" }, { id: "asc" }],
+      select: { id: true, key: true, displayName: true, description: true, active: true,
+        activationMode: true, systemRequired: true, updatedAt: true },
+    }))),
+    measureFeaturePreferencePhase(loadTimings, phase, "preferencesLookupMs", () => timeFeaturePhase(timings, "preferencesLookupMs", async () => tx.shopFeaturePreference.findMany({
+      where: { shopId }, orderBy: { featureId: "asc" }, select: { featureId: true, enabled: true, updatedAt: true },
+    }))),
   ]);
   const mappingIds = new Set(plan.features.filter((mapping) => mapping.enabled && mapping.feature.active)
     .map((mapping) => mapping.featureId));
@@ -79,7 +97,7 @@ async function load(tx: Tx, shopId: string, timings?: FeaturePreferencesTimings)
   const selected = timeFeatureSync(timings, "capabilitySelectionMs", () => new Set(selectCapabilities(features.map((feature, position) => ({
     key: `feature_${position}`, featureId: feature.id, enabled: true, position,
   })), { features: facts })));
-  const response: FeaturePreferencesResponse = timeFeatureSync(timings, "projectionMs", () => ({
+  const response = measureFeaturePreferenceProjection(loadTimings, phase, () => timeFeatureSync(timings, "projectionMs", (): FeaturePreferencesResponse => ({
     schemaVersion: 1,
     revision: createHash("sha256").update(JSON.stringify({
       subscription: [activeSubscription.id, activeSubscription.status, activeSubscription.planId],
@@ -99,7 +117,7 @@ async function load(tx: Tx, shopId: string, timings?: FeaturePreferencesTimings)
         required, planEligible,
       };
     }),
-  }));
+  })));
   timeFeatureSync(timings, "responseValidationMs", () => {
     if (!isFeaturePreferencesResponse(response)) throw new FeaturePreferencesIntegrityError();
   });
@@ -131,19 +149,27 @@ async function runTransaction<T>(database: Database, isolationLevel: Prisma.Tran
 export class MerchantFeaturePreferencesService {
   constructor(private readonly database: Database) {}
 
-  async read(principal: WooInstallationPrincipal, timings?: FeaturePreferencesTimings): Promise<FeaturePreferencesResponse> {
+  async read(principal: WooInstallationPrincipal,
+    timingTarget?: FeaturePreferencesTimings | FeaturePreferenceTimingSink): Promise<FeaturePreferencesResponse> {
+    const timings = typeof timingTarget === "function" ? undefined : timingTarget;
+    const loadTimings: FeaturePreferenceLoadTimings = {};
     return runTransaction(this.database, Prisma.TransactionIsolationLevel.RepeatableRead, async (tx) => {
       await assertInstallation(tx, principal, false, timings);
-      return load(tx, principal.shopId, timings);
-    }, timings);
+      return load(tx, principal.shopId, "initial", timings, loadTimings);
+    }, timings).finally(() => {
+      if (typeof timingTarget === "function") timingTarget(loadTimings);
+      else if (timings) Object.assign(timings, loadTimings);
+    });
   }
 
   async update(principal: WooInstallationPrincipal, input: FeaturePreferencesUpdate,
-    timings?: FeaturePreferencesTimings): Promise<FeaturePreferencesResponse> {
+    timingTarget?: FeaturePreferencesTimings | FeaturePreferenceTimingSink): Promise<FeaturePreferencesResponse> {
+    const timings = typeof timingTarget === "function" ? undefined : timingTarget;
+    const loadTimings: FeaturePreferenceLoadTimings = {};
     try {
       return await runTransaction(this.database, Prisma.TransactionIsolationLevel.ReadCommitted, async (tx) => {
         await assertInstallation(tx, principal, true, timings);
-        const current = await load(tx, principal.shopId, timings);
+        const current = await load(tx, principal.shopId, "initial", timings, loadTimings);
         // Compare revisions before no-op checks: even identical stale requests must not bypass CAS.
         if (current.revision !== input.expectedRevision) {
           throw new FeaturePreferencesConflictError("feature_preferences_conflict");
@@ -165,13 +191,16 @@ export class MerchantFeaturePreferencesService {
             });
           }
         });
-        return load(tx, principal.shopId, timings);
+        return load(tx, principal.shopId, "final", timings, loadTimings);
       }, timings);
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code)) {
-        throw new FeaturePreferencesConflictError("feature_preferences_conflict");
+        throw new FeaturePreferencesConflictError("feature_preferences_conflict", { cause: error });
       }
       throw error;
+    } finally {
+      if (typeof timingTarget === "function") timingTarget(loadTimings);
+      else if (timings) Object.assign(timings, loadTimings);
     }
   }
 }
