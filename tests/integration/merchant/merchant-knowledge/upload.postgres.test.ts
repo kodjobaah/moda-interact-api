@@ -20,6 +20,11 @@ const checksum = createHash("sha256").update(bytes).digest("hex");
 const xlsxBytes = readFileSync(new URL("./fixtures/sample-knowledge.xlsx", import.meta.url));
 const xlsxChecksum = createHash("sha256").update(xlsxBytes).digest("hex");
 const xlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const deferred = <T = void,>() => {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+};
 
 test("migration-backed Woo upload: unique tenant asset, retries, replacement, reprocess, merchant-off and expiry",
   { skip: !connection }, async () => {
@@ -61,9 +66,16 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
     const platformConfiguration = createApiPlatformConfigurationReader({ prisma: db, environment: "test",
       unsealEnvironment: { MODA_CONFIG_UNSEAL_KEY: wrappingKeyJson, MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID: "wrapping" } });
     const objects = new Map<string, { bytes: Buffer; contentType: string; sha256: string }>();
+    let verificationTarget: string | null = null;
+    let verificationStarted = deferred();
+    let allowVerification = deferred();
     const r2: UploadR2 = {
       async sign({ key, contentType, sha256 }) { objects.set(key, { bytes: contentType === xlsxContentType ? xlsxBytes : bytes, contentType, sha256 }); return `https://r2.example.invalid/${key}`; },
       async verify({ key, sizeBytes, contentType, sha256 }) {
+        if (key === verificationTarget) {
+          verificationStarted.resolve();
+          await allowVerification.promise;
+        }
         const object = objects.get(key);
         assert.ok(object);
         assert.equal(object.bytes.length, sizeBytes);
@@ -147,6 +159,7 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
       const reprocessed = await service.reprocess(principal, created.sourceId);
       assert.equal(reprocessed.generation, 3);
       // Replaying an original intake after REPROCESS still returns its original identity.
+      await db.merchantKnowledgeUploadedAsset.update({ where: { id: first.assetId }, data: { intentPurposeKey: null } });
       const originalReplay = await service.finalize(principal, finalize);
       assert.deepEqual([originalReplay.sourceId, originalReplay.revisionId, originalReplay.generation],
         [created.sourceId, created.revisionId, created.generation]);
@@ -186,6 +199,26 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
       current = new Date("2026-10-17T09:11:00Z");
       await assert.rejects(() => service.finalize(principal, { ...finalize, assetId: expired.assetId }),
         (error: unknown) => error instanceof KnowledgeUploadError && error.code === "knowledge_upload_expired");
+      const replacementRace = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
+      const raceAsset = await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: replacementRace.assetId } });
+      verificationTarget = raceAsset.objectKey;
+      verificationStarted = deferred();
+      allowVerification = deferred();
+      const racingFinalize = service.finalize(principal, { ...finalize, assetId: replacementRace.assetId, sourceId: created.sourceId });
+      await verificationStarted.promise;
+      await db.$transaction(async (tx) => {
+        const advanced = await tx.merchantKnowledgeSource.updateMany({ where: { id: created.sourceId!, shopId: shop.id, currentGeneration: 3 },
+          data: { currentGeneration: 4 } });
+        assert.equal(advanced.count, 1);
+        await tx.merchantKnowledgeSourceRevision.create({ data: { sourceId: created.sourceId!, generation: 4,
+          reason: "REPROCESS", uploadedAssetId: first.assetId, status: "PENDING", requestedAt: current } });
+      });
+      allowVerification.resolve();
+      await assert.rejects(() => racingFinalize,
+        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 409);
+      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({ where: { id: created.sourceId! } })).currentGeneration, 4);
+      assert.equal((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: replacementRace.assetId } })).status, "PENDING_UPLOAD");
+      assert.equal(await db.merchantKnowledgeSourceRevision.count({ where: { uploadedAssetId: replacementRace.assetId } }), 0);
       const live = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
       assert.ok(live.assetId);
       const pendingCounts = await db.merchantKnowledgeUploadedAsset.groupBy({ by: ["status"], where: { shopId: shop.id }, _count: true });
