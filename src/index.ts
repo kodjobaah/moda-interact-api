@@ -24,7 +24,7 @@ async function main(): Promise<void> {
     const platformConfiguration = createApiPlatformConfigurationReader({
       prisma: database.prisma, environment: config.environment, logger,
     });
-    const supportTranslations = new MerchantSupportTranslationDispatcher(process.env.REDIS_URL);
+    const supportTranslations = new MerchantSupportTranslationDispatcher(process.env.REDIS_URL, logger);
     const merchant = createMerchantRoutes({
       prisma: database.prisma, authenticator, logger, environment: config.environment, platformConfiguration,
       supportTranslationDispatch: supportTranslations,
