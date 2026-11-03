@@ -1,13 +1,71 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
+import { resolve } from "node:path";
 import { performance } from "node:perf_hooks";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { MerchantRecoveryDetailService } from "../../../../../src/merchant/recoveries/detail/read.service.js";
 import { MerchantRecoveryListService } from "../../../../../src/merchant/recoveries/list.service.js";
 import { encodeDetailCursor } from "../../../../../src/merchant/recoveries/detail/cursor.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
+
+interface M06Counters {
+  logicalClientCalls: number;
+  transactionCalls: number;
+  transactionElapsedMs: number[];
+  delegateCalls: Record<string, number>;
+}
+
+function instrumentM06Client<T extends object>(client: T, counters: M06Counters): T {
+  return new Proxy(client, {
+    get(target, property) {
+      const value = Reflect.get(target, property, target) as unknown;
+      if (property === "$transaction" && typeof value === "function") {
+        return (...args: unknown[]) => {
+          const callback = args[0];
+          if (typeof callback !== "function") {
+            counters.logicalClientCalls += 1;
+            counters.delegateCalls.$transaction = (counters.delegateCalls.$transaction ?? 0) + 1;
+            return Reflect.apply(value, target, args);
+          }
+          counters.transactionCalls += 1;
+          const startedAt = performance.now();
+          return Reflect.apply(value, target, [
+            (tx: Prisma.TransactionClient) => callback(instrumentM06Client(tx, counters)), args[1],
+          ]).finally(() => counters.transactionElapsedMs.push(performance.now() - startedAt));
+        };
+      }
+      if (typeof property === "string" && property.startsWith("$") && typeof value === "function") {
+        return (...args: unknown[]) => {
+          counters.logicalClientCalls += 1;
+          counters.delegateCalls[property] = (counters.delegateCalls[property] ?? 0) + 1;
+          return Reflect.apply(value, target, args);
+        };
+      }
+      if (typeof property === "string" && value !== null && typeof value === "object") {
+        return new Proxy(value, {
+          get(delegate, method) {
+            const member = Reflect.get(delegate, method, delegate) as unknown;
+            if (typeof member !== "function") return member;
+            return (...args: unknown[]) => {
+              counters.logicalClientCalls += 1;
+              const label = `${property}.${String(method)}`;
+              counters.delegateCalls[label] = (counters.delegateCalls[label] ?? 0) + 1;
+              return Reflect.apply(member, delegate, args);
+            };
+          },
+        });
+      }
+      return value;
+    },
+  });
+}
+
+function normalizeSql(query: string): string {
+  return query.replace(/\$\d+/g, "?").replace(/\s+/g, " ").trim();
+}
 
 test("ARCH-055 bounded recovery message and related pagination", { skip: !databaseUrl }, async () => {
   assert.ok(databaseUrl);
@@ -61,69 +119,140 @@ test("ARCH-055 bounded recovery message and related pagination", { skip: !databa
       where: { shopId: shop.id, customerId: customer.id, id: { not: current.id } },
       orderBy: [{ detectedAt: "desc" }, { id: "desc" }], select: { id: true },
     });
-    const read = new MerchantRecoveryDetailService(db);
+    const sourceRoot = process.env.ARCH055_SOURCE_ROOT;
+    const detailModule = sourceRoot
+      ? await import(pathToFileURL(resolve(sourceRoot, "src/merchant/recoveries/detail/read.service.js")).href)
+      : { MerchantRecoveryDetailService };
+    const listModule = sourceRoot
+      ? await import(pathToFileURL(resolve(sourceRoot, "src/merchant/recoveries/list.service.js")).href)
+      : { MerchantRecoveryListService };
+    const DetailService = detailModule.MerchantRecoveryDetailService as typeof MerchantRecoveryDetailService;
+    const ListService = listModule.MerchantRecoveryListService as typeof MerchantRecoveryListService;
+    const read = new DetailService(db);
     const navFirst = await read.messages(principal, current.id, new URLSearchParams());
     const navNext = await read.messages(principal, current.id,
       new URLSearchParams({ cursor: navFirst!.nextCursor! }));
     const relatedNavFirst = await read.related(principal, current.id, new URLSearchParams());
     const relatedNavNext = await read.related(principal, current.id,
       new URLSearchParams({ cursor: relatedNavFirst!.nextCursor! }));
-    const profiles: Array<{ name: string; run: () => Promise<number> }> = [
-      { name: "messages.first", run: async () => (await read.messages(principal, current.id, new URLSearchParams()))!.items.length },
-      { name: "messages.latest", run: async () => (await read.messages(principal, current.id,
-        new URLSearchParams({ window: "latest" })))!.items.length },
-      { name: "messages.next", run: async () => (await read.messages(principal, current.id,
-        new URLSearchParams({ cursor: navFirst!.nextCursor! })))!.items.length },
-      { name: "messages.previous", run: async () => (await read.messages(principal, current.id,
-        new URLSearchParams({ cursor: navNext!.previousCursor! })))!.items.length },
-      { name: "related.first", run: async () => (await read.related(principal, current.id, new URLSearchParams()))!.items.length },
-      { name: "related.next", run: async () => (await read.related(principal, current.id,
-        new URLSearchParams({ cursor: relatedNavFirst!.nextCursor! })))!.items.length },
-      { name: "related.previous", run: async () => (await read.related(principal, current.id,
-        new URLSearchParams({ cursor: relatedNavNext!.previousCursor! })))!.items.length },
-      { name: "list.zero", run: async () => (await new MerchantRecoveryListService(db, () => now).read(
-        principal, new URLSearchParams({ from: "2026-10-01", to: "2026-10-02" }))).items.length },
+    const profiles: Array<{ name: string; run: (client: PrismaClient) => Promise<{
+      rows: number; ids: string[]; previousCursor: string | null; nextCursor: string | null; total?: number;
+    }> }> = [
+      { name: "messages.first", run: async client => {
+        const page = await new DetailService(client).messages(principal, current.id, new URLSearchParams());
+        return { rows: page!.items.length, ids: page!.items.map(item => item.id),
+          previousCursor: page!.previousCursor, nextCursor: page!.nextCursor };
+      } },
+      { name: "messages.latest", run: async client => {
+        const page = await new DetailService(client).messages(principal, current.id,
+          new URLSearchParams({ window: "latest" }));
+        return { rows: page!.items.length, ids: page!.items.map(item => item.id),
+          previousCursor: page!.previousCursor, nextCursor: page!.nextCursor };
+      } },
+      { name: "messages.next", run: async client => {
+        const page = await new DetailService(client).messages(principal, current.id,
+          new URLSearchParams({ cursor: navFirst!.nextCursor! }));
+        return { rows: page!.items.length, ids: page!.items.map(item => item.id),
+          previousCursor: page!.previousCursor, nextCursor: page!.nextCursor };
+      } },
+      { name: "messages.previous", run: async client => {
+        const page = await new DetailService(client).messages(principal, current.id,
+          new URLSearchParams({ cursor: navNext!.previousCursor! }));
+        return { rows: page!.items.length, ids: page!.items.map(item => item.id),
+          previousCursor: page!.previousCursor, nextCursor: page!.nextCursor };
+      } },
+      { name: "related.first", run: async client => {
+        const page = await new DetailService(client).related(principal, current.id, new URLSearchParams());
+        return { rows: page!.items.length, ids: page!.items.map(item => item.id),
+          previousCursor: page!.previousCursor, nextCursor: page!.nextCursor };
+      } },
+      { name: "related.next", run: async client => {
+        const page = await new DetailService(client).related(principal, current.id,
+          new URLSearchParams({ cursor: relatedNavFirst!.nextCursor! }));
+        return { rows: page!.items.length, ids: page!.items.map(item => item.id),
+          previousCursor: page!.previousCursor, nextCursor: page!.nextCursor };
+      } },
+      { name: "related.previous", run: async client => {
+        const page = await new DetailService(client).related(principal, current.id,
+          new URLSearchParams({ cursor: relatedNavNext!.previousCursor! }));
+        return { rows: page!.items.length, ids: page!.items.map(item => item.id),
+          previousCursor: page!.previousCursor, nextCursor: page!.nextCursor };
+      } },
+      { name: "list.zero", run: async client => {
+        const result = await new ListService(client, () => now).read(
+          principal, new URLSearchParams({ from: "2026-10-01", to: "2026-10-02" }));
+        return { rows: result.items.length, ids: result.items.map(item => item.id),
+          previousCursor: null, nextCursor: null, total: result.total };
+      } },
     ];
     if (process.env.ARCH055_MEASURE_VERSION) {
       const measurements = [];
       for (const profile of profiles) {
-        const samples: Array<{ elapsedMs: number; sql: Array<{ shape: string; durationMs: number }> }> = [];
-        let rowsReturned = 0;
+        const samples: Array<Record<string, unknown>> = [];
         for (let execution = 0; execution < 7; execution += 1) {
+          const beforeState = {
+            messageIds: (await db.conversationMessage.findMany({ where: { conversationId: conversation.id },
+              orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, createdAt: true } }))
+              .map(row => [row.id, row.createdAt.toISOString()]),
+            recoveryIds: (await db.checkoutRecovery.findMany({ where: { shopId: shop.id, customerId: customer.id },
+              orderBy: [{ detectedAt: "desc" }, { id: "desc" }], select: { id: true, detectedAt: true } }))
+              .map(row => [row.id, row.detectedAt.toISOString()]),
+          };
+          const counters: M06Counters = { logicalClientCalls: 0, transactionCalls: 0,
+            transactionElapsedMs: [], delegateCalls: {} };
+          const measuredClient = instrumentM06Client(db, counters);
           statements.length = 0;
           const startedAt = performance.now();
-          rowsReturned = await profile.run();
+          const result = await profile.run(measuredClient);
           const elapsedMs = performance.now() - startedAt;
-          if (execution >= 2) samples.push({ elapsedMs, sql: statements.map(statement => ({
-            shape: statement.query.replace(/\$\d+/g, "?").replace(/\s+/g, " ").trim(),
-            durationMs: statement.duration,
-          })) });
+          const emittedSql = statements.map(statement => ({ shape: normalizeSql(statement.query),
+            durationMs: statement.duration }));
+          const afterState = {
+            messageIds: (await db.conversationMessage.findMany({ where: { conversationId: conversation.id },
+              orderBy: [{ createdAt: "asc" }, { id: "asc" }], select: { id: true, createdAt: true } }))
+              .map(row => [row.id, row.createdAt.toISOString()]),
+            recoveryIds: (await db.checkoutRecovery.findMany({ where: { shopId: shop.id, customerId: customer.id },
+              orderBy: [{ detectedAt: "desc" }, { id: "desc" }], select: { id: true, detectedAt: true } }))
+              .map(row => [row.id, row.detectedAt.toISOString()]),
+          };
+          const stableState = JSON.stringify(beforeState) === JSON.stringify(afterState);
+          assert.equal(stableState, true, `${profile.name} changed persisted fixture state`);
+          const shapes = [...new Set(emittedSql.map(statement => statement.shape))];
+          const sample = {
+            execution: execution + 1,
+            elapsedMs: Number(elapsedMs.toFixed(2)),
+            returnedRows: result.rows,
+            returnedIds: result.ids,
+            cursors: { previous: result.previousCursor, next: result.nextCursor },
+            total: result.total ?? "not_applicable_for_history_page",
+            logicalClientCalls: counters.logicalClientCalls,
+            clientCallsByDelegate: counters.delegateCalls,
+            sqlCalls: emittedSql.length,
+            sqlStatements: emittedSql.map(statement => ({ shapeIndex: shapes.indexOf(statement.shape),
+              durationMs: statement.durationMs })),
+            distinctSqlShapes: shapes,
+            transactionControls: {
+              begin: emittedSql.filter(statement => /^BEGIN\b/i.test(statement.shape)).length,
+              isolation: emittedSql.filter(statement => /^(SET TRANSACTION|SET LOCAL)/i.test(statement.shape)).length,
+              commit: emittedSql.filter(statement => /^COMMIT\b/i.test(statement.shape)).length,
+              rollback: emittedSql.filter(statement => /^ROLLBACK\b/i.test(statement.shape)).length,
+            },
+            transactionCalls: counters.transactionCalls,
+            transactionElapsedMs: counters.transactionElapsedMs.map(value => Number(value.toFixed(2))),
+            persistedStateUnchanged: stableState,
+            affectedRows: stableState ? 0 : "unexpected_state_change",
+            retries: "not_applicable_read_service_has_no_retry_loop",
+            externalPortInvocations: "not_applicable_database_read_services_have_no_external_ports",
+          };
+          if (execution >= 2) samples.push(sample);
         }
-        const elapsed = samples.map(sample => sample.elapsedMs).sort((a, b) => a - b);
-        const sqlShapes = [...new Set(samples.flatMap(sample => sample.sql.map(query => query.shape)))];
-        measurements.push({ profile: profile.name, warmups: 2, clientCallsPerSample: 1,
-          rowsReturned, affectedRows: 0, elapsedMs: samples.map(sample => sample.elapsedMs),
-          sqlDurationSamples: samples.map(sample => sample.sql.map(query => query.durationMs)),
-          sqlShapes, sqlShapeIndexesPerSample: samples.map(sample => sample.sql.map(query =>
-            [sqlShapes.indexOf(query.shape), query.durationMs])),
+        const elapsed = samples.map(sample => sample.elapsedMs as number).sort((a, b) => a - b);
+        measurements.push({ profile: profile.name, warmups: 2, samples,
           minMs: elapsed[0], medianMs: elapsed[2], maxMs: elapsed[4] });
       }
       for (const measurement of measurements) {
-        const minimum = measurement.minMs ?? 0;
-        const median = measurement.medianMs ?? 0;
-        const maximum = measurement.maxMs ?? 0;
         console.log(`ARCH055-M06-${process.env.ARCH055_MEASURE_VERSION} ${measurement.profile} ` +
-          `rows=${measurement.rowsReturned} ms=${measurement.elapsedMs.map(value => value.toFixed(2)).join(",")} ` +
-          `range=${minimum.toFixed(2)}/${median.toFixed(2)}/${maximum.toFixed(2)} ` +
-          `clientCalls=1 affectedRows=0 externalCalls=0 ` +
-          `sqlCalls=${measurement.sqlShapeIndexesPerSample.map(sample => sample.length).join(",")} ` +
-          `sqlMs=${measurement.sqlDurationSamples.map(sample => sample.map(value => value.toFixed(2)).join(",")).join("/")} ` +
-          `sqlShapes=${measurement.sqlShapes.map(shape => {
-            const table = shape.match(/(?:FROM|UPDATE|INTO) "([^"]+)"\."([^"]+)"/)?.slice(1).join(".") ?? "transaction";
-            const operation = shape.startsWith("SELECT") ? (shape.includes("COUNT(") ? "count" : "select") :
-              shape.split(" ")[0]!.toLowerCase();
-            return `${table}:${operation}`;
-          }).join("|")}`);
+          JSON.stringify(measurement));
       }
     }
     statements.length = 0;

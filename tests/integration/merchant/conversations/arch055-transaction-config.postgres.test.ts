@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { performance } from "node:perf_hooks";
 import test from "node:test";
-import { PrismaClient } from "@prisma/client";
+import { Prisma, PrismaClient } from "@prisma/client";
 import { encryptCredential, parseCredentialKeyring } from
   "@modainteract/moda-interact-shared/security/credentials/node";
 import { createTransactionMessagingSenderFactory } from "../../../../src/platform-configuration/composition.js";
@@ -100,6 +100,12 @@ test("ARCH-055 sender configuration reads use the active transaction and preserv
     await assert.rejects(db.$transaction(tx => readEligibleFollowUpChoices(tx,
       shop.id, wrongKeyFactory, new Date("2026-11-02T12:00:00.000Z"))),
     (error: unknown) => error instanceof ApiPlatformConfigurationError && error.code === "UNSEAL_FAILED");
+
+    const renamedTable = `arch055_missing_configuration_${randomBytes(6).toString("hex")}`;
+    await assert.rejects(db.$transaction(async tx => {
+      await tx.$executeRawUnsafe(`ALTER TABLE "public"."PlatformConfiguration" RENAME TO "${renamedTable}"`);
+      return readEligibleFollowUpChoices(tx, shop.id, senderFactory, new Date("2026-11-02T12:00:00.000Z"));
+    }), (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2021");
   } finally {
     await db.platformConfiguration.deleteMany({ where: { environment: "test", key: "messaging.sender" } });
     await db.$disconnect();
