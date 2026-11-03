@@ -14,8 +14,11 @@ const databaseUrl = process.env.WOO_SHOP_BRAND_TEST_DATABASE_URL;
 
 function createTestDatabaseClient(): PrismaClient {
   if (!databaseUrl) throw new Error("WOO_SHOP_BRAND_TEST_DATABASE_URL is required");
-  return new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  const client = new PrismaClient({ datasources: { db: { url: databaseUrl } }, log: [{ emit: "event", level: "query" }] });
+  client.$on("query", event => queryEvents.push(event.query));
+  return client;
 }
+const queryEvents: string[] = [];
 const observed = "2026-10-27T11:55:00.000Z";
 const clock = new Date("2026-10-27T12:00:00.000Z");
 const logo = (url: string, id = 123) => ({
@@ -35,6 +38,10 @@ type Role = { source: { url: string | null; reference: string | null; fingerprin
   ready: null | Record<string, unknown> };
 type Media = { schemaVersion: 1; roles: Record<"LOGO" | "SQUARE_LOGO" | "COVER_IMAGE", Role> };
 const asMedia = (value: unknown): Media => value as Media;
+
+function statementsSince(offset: number): string[] {
+  return queryEvents.slice(offset).filter(query => !/^(BEGIN|COMMIT|ROLLBACK|SET TRANSACTION)\b/i.test(query.trim()));
+}
 
 async function setup(db: PrismaClient) {
   const shop = await db.shop.create({ data: {
@@ -153,6 +160,102 @@ test("real PostgreSQL: insert, duplicate/stale ordering, metadata-only refresh, 
       observedAt: "2026-10-27T12:05:01.000Z" }),
     (error: unknown) => error instanceof Error && error.message === "invalid_request");
   } finally { await db.$disconnect(); }
+});
+
+test("real PostgreSQL captures baseline and current SQL for first ShopBrand creation", {
+  skip: !databaseUrl,
+}, async () => {
+  const db = createTestDatabaseClient();
+  try {
+    const shop = await db.shop.create({ data: {
+      domain: `https://shop-brand-measure-${randomUUID()}.invalid`, platform: "WOOCOMMERCE", status: "ACTIVE",
+    } });
+    const secret = Buffer.alloc(32, 0x55);
+    const installation = await db.wooCommerceInstallation.create({ data: {
+      shopId: shop.id, canonicalSiteUrl: shop.domain, credentialDigest: Uint8Array.from(digestSecret(secret)),
+    } });
+    const request = { rawHeaders: [
+      "x-moda-installation-id", installation.id,
+      "authorization", `Bearer ${encodeSecret(secret)}`,
+    ] } as never;
+
+    const baselineStart = queryEvents.length;
+    const baselinePrincipal = await new WooInstallationAuthenticator(db).authenticate(request);
+    await db.$transaction(async tx => {
+      await tx.$queryRaw(Prisma.sql`
+        SELECT "id", "domain", "platform"::text AS "platform", "status"::text AS "status", "shopifyShopId"
+        FROM "commerce"."Shop" WHERE "id" = ${baselinePrincipal.shopId} FOR UPDATE
+      `);
+      await tx.$queryRaw(Prisma.sql`
+        SELECT "id", "shopId", "canonicalSiteUrl", "credentialVersion", "status"::text AS "status", "revokedAt"
+        FROM "woocommerce"."WooCommerceInstallation" WHERE "id" = ${baselinePrincipal.installationId} FOR SHARE
+      `);
+      const empty = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT "id", "brandName", "logoUrl", "logoAltText", "logoWidth", "logoHeight",
+          "squareLogoUrl", "squareLogoAltText", "coverImageUrl", "whatsAppMedia"
+        FROM "commerce"."ShopBrand" WHERE "shopId" = ${baselinePrincipal.shopId} FOR UPDATE
+      `);
+      assert.equal(empty.length, 0);
+      const created = await tx.shopBrand.create({ data: { shopId: baselinePrincipal.shopId } });
+      assert.ok(created.id);
+      const reread = await tx.$queryRaw<{ id: string }[]>(Prisma.sql`
+        SELECT "id", "brandName", "logoUrl", "logoAltText", "logoWidth", "logoHeight",
+          "squareLogoUrl", "squareLogoAltText", "coverImageUrl", "whatsAppMedia"
+        FROM "commerce"."ShopBrand" WHERE "shopId" = ${baselinePrincipal.shopId} FOR UPDATE
+      `);
+      assert.equal(reread.length, 1);
+      const media = JSON.stringify({ schemaVersion: 1, roles: {
+        LOGO: { source: { url: null, reference: null, fingerprint: null, generation: 1, observedAt: observed }, work: { status: "MISSING", attempts: 0, retryAfter: null, leaseOwner: null, leaseUntil: null, failureCode: null, lastCheckedAt: null }, ready: null },
+        SQUARE_LOGO: { source: { url: null, reference: null, fingerprint: null, generation: 1, observedAt: observed }, work: { status: "MISSING", attempts: 0, retryAfter: null, leaseOwner: null, leaseUntil: null, failureCode: null, lastCheckedAt: null }, ready: null },
+        COVER_IMAGE: { source: { url: null, reference: null, fingerprint: null, generation: 1, observedAt: observed }, work: { status: "MISSING", attempts: 0, retryAfter: null, leaseOwner: null, leaseUntil: null, failureCode: null, lastCheckedAt: null }, ready: null },
+      } });
+      const affected = await tx.$executeRaw(Prisma.sql`
+        UPDATE "commerce"."ShopBrand" SET
+          "brandName" = ${"Shop 1"}, "logoUrl" = ${null}, "logoAltText" = ${null},
+          "logoWidth" = ${null}, "logoHeight" = ${null}, "squareLogoUrl" = ${null},
+          "squareLogoAltText" = ${null}, "coverImageUrl" = ${null},
+          "whatsAppMedia" = CAST(${media} AS jsonb), "fetchedAt" = ${new Date(observed)},
+          "lastRefreshedAt" = ${clock}
+        WHERE "id" = ${created.id} AND "shopId" = ${baselinePrincipal.shopId}
+      `);
+      assert.equal(affected, 1);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 10_000 });
+    const baselineSql = statementsSince(baselineStart);
+    await db.shopBrand.deleteMany({ where: { shopId: shop.id } });
+
+    const currentStart = queryEvents.length;
+    const currentPrincipal = await new WooInstallationAuthenticator(db).authenticate(request);
+    const affectedRows: number[] = [];
+    const measuredDatabase = {
+      $transaction: (operation: (tx: Prisma.TransactionClient) => Promise<unknown>, options: unknown) =>
+        db.$transaction(tx => operation(new Proxy(tx, {
+          get(target, property, receiver) {
+            const value = Reflect.get(target, property, receiver) as unknown;
+            if (property === "$executeRaw" && typeof value === "function") {
+              return async (...args: unknown[]) => {
+                const result = await Reflect.apply(value, target, args) as number;
+                affectedRows.push(result);
+                return result;
+              };
+            }
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        }) as Prisma.TransactionClient), options as never),
+    };
+    assert.deepEqual(await new WooShopBrandService(measuredDatabase as never, () => clock).record(currentPrincipal, snapshot()),
+      { status: "updated" });
+    const currentSql = statementsSince(currentStart);
+    assert.equal(baselineSql.length, 8);
+    assert.equal(currentSql.length, 7);
+    assert.deepEqual(affectedRows, [1]);
+    assert.equal(await db.shopBrand.count({ where: { shopId: shop.id } }), 1);
+    console.info(`ARCH-055 first-brand SQL capture baseline statements=${baselineSql.length}, create returned rows=1, reread rows=1, UPDATE affected=1`);
+    baselineSql.forEach((query, index) => console.info(`BASELINE SQL ${index + 1}: ${query}`));
+    console.info(`ARCH-055 first-brand SQL capture current statements=${currentSql.length}, create projection rows=1, UPDATE affected=${affectedRows[0]}`);
+    currentSql.forEach((query, index) => console.info(`CURRENT SQL ${index + 1}: ${query}`));
+  } finally {
+    await db.$disconnect();
+  }
 });
 
 test("real PostgreSQL + actual installation HTTP auth: cross-tenant, revoked, suspended and malformed fail closed", {

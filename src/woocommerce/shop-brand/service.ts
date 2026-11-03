@@ -127,12 +127,19 @@ async function lockOrCreateBrand(tx: Tx, shopId: string): Promise<BrandRow> {
       "squareLogoUrl", "squareLogoAltText", "coverImageUrl", "whatsAppMedia"
     FROM "commerce"."ShopBrand" WHERE "shopId" = ${shopId} FOR UPDATE
   `);
-  let rows = await lock();
+  const rows = await lock();
   if (!rows.length) {
     // The Shop FOR UPDATE lock serialises first insertions per shop. Prisma
     // supplies ShopBrand's application-generated cuid and FK-safe create.
-    await tx.shopBrand.create({ data: { shopId } });
-    rows = await lock();
+    const created = await tx.shopBrand.create({
+      data: { shopId },
+      select: {
+        id: true, brandName: true, logoUrl: true, logoAltText: true, logoWidth: true,
+        logoHeight: true, squareLogoUrl: true, squareLogoAltText: true, coverImageUrl: true,
+        whatsAppMedia: true,
+      },
+    });
+    return created;
   }
   if (rows.length !== 1 || !rows[0]) throw new Error("shop_brand_missing_after_create");
   return rows[0];
