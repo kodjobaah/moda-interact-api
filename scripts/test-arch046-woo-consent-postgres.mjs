@@ -55,12 +55,22 @@ try {
   docker(["exec", "--env", `PGPASSWORD=${password}`, name, "psql", "-h", "127.0.0.1", "-U", user, "-d", database,
     "-v", "ON_ERROR_STOP=1", "-c",
     "SELECT 1 FROM \"commerce\".\"WhatsAppConsentEvidence\" LIMIT 1"]);
+  let comparisonEnv = env;
   if (process.env.ARCH055_M03_COMPARE_BASELINE === "1") {
+    // Clone the same migrated empty database for each version. Append-only
+    // evidence uses equivalent fresh trial fixtures in the same order in both.
+    for (const version of ["candidate", "baseline"]) {
+      docker(["exec", "--env", `PGPASSWORD=${password}`, name, "psql", "-h", "127.0.0.1",
+        "-U", user, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c",
+        `CREATE DATABASE "${database}_${version}" TEMPLATE "${database}"`]);
+    }
+    const candidateUrl = `${url.slice(0, url.lastIndexOf("/") + 1)}${database}_candidate`;
+    comparisonEnv = { ...env, DATABASE_URL: candidateUrl, WOO_CONSENT_TEST_DATABASE_URL: candidateUrl };
     phase = "measuring candidate ARCH-055 M03 profiles";
     const measurementTest = "tests/integration/woocommerce/consent/arch055-duplicate-and-selection.postgres.test.ts";
     run("node", ["--import", "tsx", "--test", "--test-concurrency=1", "--test-name-pattern",
       "ARCH-055 M03 paired SQL and affected-row profiles", measurementTest], {
-      env: { ...env, ARCH055_M03_VERSION: "candidate" }, stdio: "inherit",
+      env: { ...comparisonEnv, ARCH055_M03_VERSION: "candidate" }, stdio: "inherit",
     });
   } else {
     phase = "running Woo consent API integration suite";
@@ -83,9 +93,10 @@ try {
     mkdirSync(join(baselineDirectory, "tests/integration/woocommerce/consent"), { recursive: true });
     copyFileSync(join(original, measurementTest), join(baselineDirectory, measurementTest));
     symlinkSync(join(original, "node_modules"), join(baselineDirectory, "node_modules"), "dir");
+    const baselineUrl = `${url.slice(0, url.lastIndexOf("/") + 1)}${database}_baseline`;
     phase = "measuring pinned ARCH-055 M03 baseline";
     run("node", ["--import", "tsx", "--test", "--test-name-pattern", "ARCH-055 M03 paired SQL and affected-row profiles",
-      measurementTest], { cwd: baselineDirectory, env: { ...env, ARCH055_M03_VERSION: "baseline" }, stdio: "inherit" });
+      measurementTest], { cwd: baselineDirectory, env: { ...env, DATABASE_URL: baselineUrl, WOO_CONSENT_TEST_DATABASE_URL: baselineUrl, ARCH055_M03_VERSION: "baseline" }, stdio: "inherit" });
   }
 
   // Explicit opt-in: run the same independent performance scenario against the

@@ -99,6 +99,7 @@ test("recovery-selection GET reads through a held phone row lock", {
 type M03Transaction = { durationMs: number; outcome: "commit" | "rollback" };
 type M03Stats = {
   transactions: M03Transaction[];
+  callbackAttempts: number;
   returnedRows: number[];
   affectedRows: number[];
 };
@@ -126,7 +127,10 @@ function observedDatabase(db: PrismaClient, stats: M03Stats): Pick<PrismaClient,
   ): Promise<T> => {
     const started = performance.now();
     try {
-      const result = await db.$transaction(tx => callback(observeTransaction(tx, stats)), options);
+      const result = await db.$transaction(tx => {
+        stats.callbackAttempts++;
+        return callback(observeTransaction(tx, stats));
+      }, options);
       stats.transactions.push({ durationMs: performance.now() - started, outcome: "commit" });
       return result;
     } catch (error) {
@@ -139,13 +143,13 @@ function observedDatabase(db: PrismaClient, stats: M03Stats): Pick<PrismaClient,
 type M03Profile = "duplicate-replay" | "new-event-same-recipient" | "selection-get";
 
 async function seedM03Trial(db: PrismaClient, profile: M03Profile, trial: string) {
-  const suffix = `${measurementVersion}_${profile}_${trial}`.replaceAll("-", "_");
+  const suffix = `${profile}_${trial}`.replaceAll("-", "_");
   const shopId = `arch055_m03_${suffix}_shop`;
   const installationId = `arch055_m03_${suffix}_installation`;
   const customerId = `arch055_m03_${suffix}_customer`;
   const phoneId = `arch055_m03_${suffix}_phone`;
   const site = `https://${suffix}.arch055.invalid`;
-  const shop = await db.shop.create({ data: {
+  await db.shop.create({ data: {
     id: shopId, domain: site, platform: "WOOCOMMERCE", onboardingCompleted: true,
   } });
   const installation = await db.wooCommerceInstallation.create({ data: {
@@ -177,13 +181,7 @@ async function seedM03Trial(db: PrismaClient, profile: M03Profile, trial: string
 }
 
 async function m03PhoneState(db: PrismaClient, phoneId: string) {
-  return db.customerPhone.findUniqueOrThrow({ where: { id: phoneId }, select: {
-    whatsappConsentDecision: true, whatsappConsentSource: true,
-    whatsappConsentProviderObservedAt: true, whatsappConsentRevision: true,
-    whatsappConsentDecisionSequence: true, whatsappNoContact: true,
-    whatsappNoContactReason: true, whatsappNoContactRevision: true,
-    updatedAt: true,
-  } });
+  return db.customerPhone.findUniqueOrThrow({ where: { id: phoneId } });
 }
 
 function normalizeSql(query: string): string {
@@ -222,8 +220,10 @@ test("ARCH-055 M03 paired SQL and affected-row profiles", {
         const trial = `${warmup ? "warmup" : "sample"}_${warmup ? index : index - 2}`;
         const fixture = await seedM03Trial(db, profile, trial);
         const beforePhone = await m03PhoneState(db, fixture.phoneId);
-        const beforeEvidence = await db.whatsAppConsentEvidence.count({ where: { shopId: fixture.shopId } });
-        const stats: M03Stats = { transactions: [], returnedRows: [], affectedRows: [] };
+        const beforeEvidence = await db.whatsAppConsentEvidence.findMany({
+          where: { shopId: fixture.shopId }, orderBy: { eventId: "asc" },
+        });
+        const stats: M03Stats = { transactions: [], callbackAttempts: 0, returnedRows: [], affectedRows: [] };
         queryEvents.length = 0;
         const started = performance.now();
         let result: unknown;
@@ -232,26 +232,32 @@ test("ARCH-055 M03 paired SQL and affected-row profiles", {
         if (profile === "duplicate-replay") {
           result = await new WooConsentService(observedDatabase(db, stats), () => m03Now)
             .record(fixture.principal, fixture.grant);
-          assert.deepEqual(result, { ...fixture.grantResult, status: "duplicate" });
         } else if (profile === "new-event-same-recipient") {
           result = await new WooConsentService(observedDatabase(db, stats), () => m03Now)
             .record(fixture.principal, event(`m03-${profile}-${trial}`, "REVOKE", 60, m03Now));
-          assert.equal((result as { status: string }).status, "recorded");
         } else {
           result = await new WooRecoverySelectionService(observedDatabase(db, stats), () => m03Now)
             .read(fixture.principal, phone);
-          assert.equal((result as { phoneEligibleForRecovery: boolean }).phoneEligibleForRecovery, true);
         }
 
         const wallMs = performance.now() - started;
         captureQueries = false;
         const statements = [...queryEvents];
+        if (profile === "duplicate-replay") {
+          assert.deepEqual(result, { ...fixture.grantResult, status: "duplicate" });
+        } else if (profile === "new-event-same-recipient") {
+          assert.equal((result as { status: string }).status, "recorded");
+        } else {
+          assert.equal((result as { phoneEligibleForRecovery: boolean }).phoneEligibleForRecovery, true);
+        }
         const afterPhone = await m03PhoneState(db, fixture.phoneId);
-        const afterEvidence = await db.whatsAppConsentEvidence.count({ where: { shopId: fixture.shopId } });
+        const afterEvidence = await db.whatsAppConsentEvidence.findMany({
+          where: { shopId: fixture.shopId }, orderBy: { eventId: "asc" },
+        });
         const phoneRowsChanged = Number(JSON.stringify(beforePhone, (_, value) =>
           typeof value === "bigint" ? value.toString() : value) !== JSON.stringify(afterPhone, (_, value) =>
           typeof value === "bigint" ? value.toString() : value));
-        const evidenceRowsChanged = afterEvidence - beforeEvidence;
+        const evidenceRowsChanged = afterEvidence.length - beforeEvidence.length;
         const affectedTargetRows = phoneRowsChanged + evidenceRowsChanged;
         const normalized = statements.map(item => normalizeSql(item.query));
         const advisoryLocks = normalized.filter(query => /pg_advisory_xact_lock/i.test(query)).length;
@@ -269,7 +275,28 @@ test("ARCH-055 M03 paired SQL and affected-row profiles", {
           assert.equal(advisoryLocks, 2);
         } else {
           assert.equal(advisoryLocks, measurementVersion === "baseline" ? 1 : 0);
-          assert.equal(forUpdate, 0);
+          assert.equal(forUpdate, measurementVersion === "baseline" ? 1 : 0);
+        }
+
+        assert.deepEqual(stats.affectedRows, profile === "new-event-same-recipient" ? [1, 1] : []);
+        if (profile !== "new-event-same-recipient") {
+          assert.deepEqual(afterPhone, beforePhone, "read/replay must preserve every phone field and timestamp");
+          assert.deepEqual(afterEvidence, beforeEvidence, "read/replay must preserve immutable evidence");
+        } else {
+          assert.equal(afterPhone.whatsappConsentDecision, "REVOKED");
+          assert.equal(afterPhone.whatsappConsentRevision, beforePhone.whatsappConsentRevision + 1n);
+          assert.equal(afterPhone.whatsappConsentDecisionSequence, beforePhone.whatsappConsentDecisionSequence + 1n);
+          for (const key of ["whatsappNoContact", "whatsappNoContactReason", "whatsappNoContactAt",
+            "whatsappNoContactClearedAt", "whatsappNoContactRevision"] as const) {
+            assert.deepEqual(afterPhone[key], beforePhone[key]);
+          }
+          const inserted = afterEvidence.find(row => !beforeEvidence.some(previous => previous.id === row.id));
+          assert.ok(inserted);
+          assert.equal(inserted.customerPhoneId, fixture.phoneId);
+          assert.equal(inserted.decision, "REVOKE");
+          assert.equal(inserted.phoneConsentRevision, afterPhone.whatsappConsentRevision);
+          assert.equal(inserted.decisionSequence, afterPhone.whatsappConsentDecisionSequence);
+          assert.deepEqual(afterEvidence.filter(row => row.id !== inserted.id), beforeEvidence);
         }
 
         const controlStatements = normalized.reduce((counts, query) => {
@@ -283,7 +310,10 @@ test("ARCH-055 M03 paired SQL and affected-row profiles", {
         for (const query of normalized) grouped.set(query, (grouped.get(query) ?? 0) + 1);
         const sample = {
           version: measurementVersion, profile, sample: warmup ? `warmup-${index}` : `recorded-${index - 2}`,
-          logicalClientCalls: 1, sqlStatementCount: normalized.length,
+          serviceCalls: 1,
+          logicalClientCalls: 1 + stats.returnedRows.length + stats.affectedRows.length,
+          transactionClientCalls: 1, rawQueryClientCalls: stats.returnedRows.length,
+          rawExecuteClientCalls: stats.affectedRows.length, sqlStatementCount: normalized.length,
           sqlShapes: [...grouped].map(([sql, count]) => ({ count, sql })),
           rawQueryReturnedRows: stats.returnedRows, rawExecuteAffectedRows: stats.affectedRows,
           affectedTargetRows, advisoryLockStatements: advisoryLocks, forUpdateStatements: forUpdate,
@@ -291,7 +321,9 @@ test("ARCH-055 M03 paired SQL and affected-row profiles", {
           transactionMs: Number(stats.transactions[0]!.durationMs.toFixed(2)),
           operationMs: Number(wallMs.toFixed(2)), transactionControlSqlEvents: controlStatements,
           statementDurationMs: Number(statements.reduce((sum, item) => sum + item.duration, 0).toFixed(2)),
-          retries: 0, externalPortInvocations: 0, wireBytes: "not measured",
+          retries: Math.max(0, stats.callbackAttempts - 1),
+          externalPortInvocations: "not measured (selected services have no external ports)",
+          triggerInternalWork: "not measured", wireBytes: "not measured",
         };
         console.log(`ARCH055_M03_SAMPLE ${JSON.stringify(sample)}`);
         if (!warmup) {
