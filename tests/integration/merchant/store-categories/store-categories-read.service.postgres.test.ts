@@ -31,12 +31,12 @@ test("disposable PostgreSQL category catalogue read retains active Shop profile 
     const admin = await database().platformAdmin.create({ data: { email: adminEmail } });
     adminId = admin.id;
     const category = await database().commercePromptTemplateCategory.create({ data: {
-      slug: randomUUID(), displayName: "Fashion", description: "Apparel", enabled: false,
+      slug: `fashion-${randomUUID()}`, displayName: "Fashion", description: "Apparel", enabled: false,
       createdByAdminId: adminId, updatedByAdminId: adminId,
     } });
     categoryId = category.id;
     const prompt = await database().commercePromptTemplate.create({ data: {
-      key: randomUUID(), categoryId, displayName: "Store prompt", promptText: "You assist apparel shoppers.",
+      key: `store-prompt-${randomUUID()}`, categoryId, displayName: "Store prompt", promptText: "You assist apparel shoppers.",
       createdByAdminId: adminId, updatedByAdminId: adminId,
     } });
     templateId = prompt.id;
@@ -53,7 +53,7 @@ test("disposable PostgreSQL category catalogue read retains active Shop profile 
       mappingId: mapping.id, locale: "en", displayName: "Footwear",
     } });
     await database().commerceShopProfile.create({ data: {
-      shopId, activeCategoryId: categoryId, pendingSelectionGeneration: 2,
+      shopId, activeCategoryId: categoryId, activeCategoryActivatedAt: new Date(), pendingSelectionGeneration: 2,
     } });
     const initialProfile = await database().commerceShopProfile.findUnique({ where: { shopId } });
     const initialInstallation = await database().wooCommerceInstallation.findUnique({ where: { id: installation.id } });
@@ -75,11 +75,7 @@ test("disposable PostgreSQL category catalogue read retains active Shop profile 
     assert.equal(await database().shopEntitlementCounter.count({ where: { shopId } }), 0);
     await assert.rejects(service.read({ ...principal, credentialVersion: 2 }), StoreCategoryReadError);
   } finally {
-    if (shopId) await database().shop.deleteMany({ where: { id: shopId } });
-    if (categoryId) await database().commercePromptTemplateCategory.update({ where: { id: categoryId }, data: { defaultTemplateId: null } });
-    if (templateId) await database().commercePromptTemplate.deleteMany({ where: { id: templateId } });
-    if (categoryId) await database().commercePromptTemplateCategory.deleteMany({ where: { id: categoryId } });
-    if (adminId) await database().platformAdmin.deleteMany({ where: { id: adminId } });
+    // Canonical templates/categories are immutable; the runner removes this isolated database.
   }
 });
 

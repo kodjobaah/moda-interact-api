@@ -76,7 +76,7 @@ test("PostgreSQL bootstrap projects active and pending category identities witho
 }, async () => {
   const domain = siteUrl();
   const email = `${randomUUID()}@bootstrap.invalid`;
-  const categorySlugs = [randomUUID(), randomUUID()];
+  const categorySlugs = [`bootstrap-active-${randomUUID()}`, `bootstrap-pending-${randomUUID()}`];
   let shopId: string | undefined;
   let adminId: string | undefined;
   let categoryIds: string[] = [];
@@ -97,11 +97,17 @@ test("PostgreSQL bootstrap projects active and pending category identities witho
       select: { id: true, slug: true, displayName: true },
     });
     categoryIds = [active.id, pending.id];
+    const prompt = await database().commerceAgentPrompt.create({ data: { scope: "SHOP", shopId } });
+    const pendingRevision = await database().commerceAgentPromptRevision.create({ data: {
+      promptId: prompt.id, revisionNumber: 1, status: "DRAFT", promptText: "Pending category prompt",
+    } });
     await database().commerceShopProfile.create({
       data: {
         shopId,
         activeCategoryId: active.id,
+        activeCategoryActivatedAt: new Date("2026-10-02T12:30:00.000Z"),
         pendingCategoryId: pending.id,
+        pendingPromptRevisionId: pendingRevision.id,
         pendingSelectionGeneration: 3,
         pendingSelectedAt: new Date("2026-10-03T12:30:00.000Z"),
       },
@@ -118,9 +124,7 @@ test("PostgreSQL bootstrap projects active and pending category identities witho
     });
     assert.deepEqual(afterRead, before);
   } finally {
-    if (shopId) await removeShop(shopId);
-    if (categoryIds.length) await database().commercePromptTemplateCategory.deleteMany({ where: { id: { in: categoryIds } } });
-    if (adminId) await database().platformAdmin.deleteMany({ where: { id: adminId } });
+    // Canonical templates/categories are immutable; the runner removes this isolated database.
   }
 });
 

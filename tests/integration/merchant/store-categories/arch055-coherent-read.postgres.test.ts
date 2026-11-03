@@ -10,13 +10,15 @@ const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 type QueryEventClient = { $on(event: "query", listener: (event: { query: string }) => void): void };
 type CategoryFixture = { id: string; mappingId: string };
 let prisma: PrismaClient | undefined;
+let readerClient: PrismaClient | undefined;
 const revisionHistorySelects: string[] = [];
 const revisionUpdates: string[] = [];
 const db = () => {
   if (!prisma) {
     prisma = new PrismaClient({ datasources: { db: { url: databaseUrl! } }, log: [{ emit: "event", level: "query" }] });
     (prisma as unknown as QueryEventClient).$on("query", (event) => {
-      if (/^\s*SELECT/i.test(event.query) && event.query.includes('"CommerceAgentPromptRevision"')) {
+      if (/^\s*SELECT/i.test(event.query) && event.query.includes('"CommerceAgentPromptRevision"') &&
+        (event.query.includes('"status"') || event.query.includes('"revisionNumber"'))) {
         revisionHistorySelects.push(event.query);
       }
       if (/^\s*UPDATE/i.test(event.query) && event.query.includes('"CommerceAgentPromptRevision"')) {
@@ -40,6 +42,7 @@ test("ARCH-055 category GET returns a coherent pre-publication snapshot", { skip
   let planId: string | undefined;
   let reachedProfileRead!: () => void;
   let releaseProfileRead!: () => void;
+  let pendingRead: ReturnType<StoreCategoriesReadService["read"]> | undefined;
   const atProfileRead = new Promise<void>((resolve) => { reachedProfileRead = resolve; });
   const profileReadGate = new Promise<void>((resolve) => { releaseProfileRead = resolve; });
   try {
@@ -90,13 +93,11 @@ test("ARCH-055 category GET returns a coherent pre-publication snapshot", { skip
     assert.equal(revisionHistorySelects.length - beforeFirstPublicationReads, 0);
     assert.equal(initial.activeCategoryId, categories[0]!.id);
     const beforeExistingPublicationReads = revisionHistorySelects.length;
-    const next = await select(1, 1);
-    assert.equal(revisionHistorySelects.length - beforeExistingPublicationReads, 2);
-    assert.equal(next.activeCategoryId, categories[1]!.id);
 
+    readerClient = new PrismaClient({ datasources: { db: { url: databaseUrl! } } });
     const readDatabase = {
       $transaction: (callback: (tx: Prisma.TransactionClient) => Promise<unknown>, options: { isolationLevel: Prisma.TransactionIsolationLevel }) =>
-        db().$transaction((tx) => callback(new Proxy(tx, { get(target, property, receiver) {
+        readerClient!.$transaction((tx) => callback(new Proxy(tx, { get(target, property, receiver) {
           if (property === "commerceShopProfile") {
             return new Proxy(target.commerceShopProfile, { get(delegate, method, delegateReceiver) {
               if (method === "findUnique") return async (...args: Parameters<typeof delegate.findUnique>) => {
@@ -111,8 +112,12 @@ test("ARCH-055 category GET returns a coherent pre-publication snapshot", { skip
         } })) as Promise<unknown>, options),
     };
     const read = new StoreCategoriesReadService(readDatabase as never, CommerceEnvironment.TEST);
-    const pendingRead = read.read(principal);
+    pendingRead = read.read(principal);
     await atProfileRead;
+    const next = await select(1, 1);
+    assert.equal(revisionHistorySelects.length - beforeExistingPublicationReads, 2,
+      JSON.stringify(revisionHistorySelects.slice(beforeExistingPublicationReads)));
+    assert.equal(next.activeCategoryId, categories[1]!.id);
     releaseProfileRead();
     const raced = await pendingRead;
     assert.equal(raced.storeProfile.activeCategory?.id, categories[0]!.id);
@@ -177,25 +182,9 @@ test("ARCH-055 category GET returns a coherent pre-publication snapshot", { skip
     assert.equal((await db().commerceAgentPromptRevision.findUniqueOrThrow({ where: { id: foreignDraft.id } })).status, "DRAFT");
   } finally {
     releaseProfileRead?.();
-    if (shopId) {
-      await db().commerceAgentConfiguration.deleteMany({ where: { shopId } });
-      await db().commerceShopProfile.deleteMany({ where: { shopId } });
-      const prompts = await db().commerceAgentPrompt.findMany({ where: { shopId }, select: { id: true } });
-      await db().commerceAgentPromptRevision.deleteMany({ where: { promptId: { in: prompts.map((row) => row.id) } } });
-      await db().commerceAgentPrompt.deleteMany({ where: { shopId } });
-      await db().shop.deleteMany({ where: { id: shopId } });
-    }
-    if (foreignDraftId) await db().commerceAgentPromptRevision.deleteMany({ where: { id: foreignDraftId } });
-    if (foreignPromptId) await db().commerceAgentPrompt.deleteMany({ where: { id: foreignPromptId } });
-    if (categoryIds.length) {
-      await db().commercePromptTemplateCategory.updateMany({ where: { id: { in: categoryIds } }, data: { defaultTemplateId: null } });
-      await db().commerceStoreCategoryTaxonomyMapping.deleteMany({ where: { id: { in: mappingIds } } });
-      await db().commercePromptTemplate.deleteMany({ where: { id: { in: templateIds } } });
-      await db().commercePromptTemplateCategory.deleteMany({ where: { id: { in: categoryIds } } });
-    }
-    if (adminId) await db().platformAdmin.deleteMany({ where: { id: adminId } });
-    if (planId) await db().billingPlan.deleteMany({ where: { id: planId } });
+    await pendingRead?.catch(() => undefined);
+    // Prompt revisions are immutable; the canonical runner drops this isolated database after the suite.
   }
 });
 
-after(async () => { await prisma?.$disconnect(); });
+after(async () => { await Promise.all([prisma?.$disconnect(), readerClient?.$disconnect()]); });

@@ -78,7 +78,7 @@ test("PostgreSQL writes only the context snapshot, round-trips via bootstrap and
     assert.equal(shopUpdateSql.length - beforeStalePrincipalSql, 1);
     await database().wooCommerceInstallation.update({ where: { id: installation.id }, data: { credentialVersion: { increment: 1 } } });
     await assert.rejects(() => service.update(principal, snapshot), MerchantStoreContextConflictError);
-    await database().wooCommerceInstallation.update({ where: { id: installation.id }, data: { revokedAt: new Date() } });
+    await database().wooCommerceInstallation.update({ where: { id: installation.id }, data: { status: "REVOKED", revokedAt: new Date() } });
     await assert.rejects(() => service.update({ ...principal, credentialVersion: 3 }, snapshot), MerchantStoreContextConflictError);
     assert.deepEqual((await new MerchantBootstrapReadService(database()).read(principal)).internationalContext, {
       storeLocale: null, languageTag: null, timeZone: null, countryCode: null,
