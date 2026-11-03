@@ -100,8 +100,9 @@ export class MerchantDiscountOffersService {
       const page: CatalogueRow[] = [];
       const batchSize = 100;
       let cursor = query.cursor;
-      // The worker bounds complete provider scans to 5,000 coupons. Continue
-      // until there are limit+1 genuinely sendable rows or no further rows.
+      // The worker scan defaults to 5,000 coupons and can be configured up to
+      // 20,000. This read assumes neither cap: continue until limit+1
+      // genuinely sendable rows are found or the persisted catalogue ends.
       while (page.length <= query.limit) {
         const rows = await tx.shopifyDiscount.findMany({
           where: { AND: [...filters, ...(cursor ? [{ id: { gt: cursor } }] : [])] },

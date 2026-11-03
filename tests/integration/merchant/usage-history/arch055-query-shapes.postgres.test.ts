@@ -164,7 +164,7 @@ test("PostgreSQL usage history preserves the M13 30-period signed v1/v2 projecti
         sourceType: "PAID_CORRECTION",
         billingPeriodId: period.id,
         correctionOfUsageEventId: baseEvents[eventIndex]!.id,
-        occurredAt: new Date(period.periodEnd.getTime() + eventIndex * 1_000),
+        occurredAt: new Date((periodIndex === 0 ? period.periodStart.getTime() + 30_000 : period.periodEnd.getTime()) + eventIndex * 1_000),
         idempotencyKey: `usage-m13-${suffix}-${periodIndex}-correction-${eventIndex}`,
       })),
     ] });
@@ -193,7 +193,10 @@ test("PostgreSQL usage history preserves the M13 30-period signed v1/v2 projecti
     await readAndAssert({ ...query, pageSize: 50 }, 1);
     const defaultPast = await service.read(principal, { ...query, view: "past", pageSize: 50 });
     assert.equal(defaultPast.periodPage.items.length, 25);
-    assert.equal(defaultPast.usagePagination.total, 0);
+    assert.equal(defaultPast.usagePagination.total, 31);
+    assert.equal(defaultPast.usagePagination.totalQuantity, 56);
+    await readAndAssert({ ...query, pageSize: 50, responseVersion: 2 }, 1);
+    await readAndAssert({ ...query, view: "past", pageSize: 50, responseVersion: 2 }, 1);
     const rankTwoV1 = await readAndAssert({ ...query, view: "past", periodId: periods[1]!.id, pageSize: 50 }, 1);
     assert.equal(rankTwoV1.usagePagination.billId, periods[1]!.id);
     const rankThirtyV1 = await readAndAssert({ ...query, view: "past", periodId: periods[29]!.id, pageSize: 50 }, 2);
