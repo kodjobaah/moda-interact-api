@@ -11,6 +11,7 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
   close(): Promise<void>;
 } {
   let redis: Redis | undefined;
+  let lastRedisError: Error | undefined;
   let checkoutQueue: Queue<WooCheckoutJob> | undefined;
   let orderQueue: Queue<WooOrderJob> | undefined;
   function connection(): Redis {
@@ -29,7 +30,7 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
       maxRetriesPerRequest: 1,
       retryStrategy: (attempt: number) => Math.min(attempt * 250, 2_000),
     });
-    redis.on("error", () => { /* request failure is reported by Queue operations */ });
+    redis.on("error", (error) => { lastRedisError = error; });
     return redis;
   }
   /** BullMQ may wait indefinitely for its first Redis ready event. Check
@@ -40,7 +41,9 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
     const client = connection();
     if (client.status === "ready") return;
     await new Promise<void>((resolve, reject) => {
-      const unavailable = () => new Error("woo_activity_redis_unavailable");
+      const unavailable = () => new Error("woo_activity_redis_unavailable", {
+        cause: lastRedisError,
+      });
       const done = (error?: Error) => {
         clearTimeout(timeout);
         client.off("ready", onReady);
@@ -48,7 +51,10 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
         if (error) reject(error);
         else resolve();
       };
-      const onReady = () => done();
+      const onReady = () => {
+        lastRedisError = undefined;
+        done();
+      };
       const onEnd = () => done(unavailable());
       const timeout = setTimeout(() => done(unavailable()), 2_000);
       client.once("ready", onReady);

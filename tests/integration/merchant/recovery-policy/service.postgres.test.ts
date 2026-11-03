@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import test from "node:test";
 import { MerchantRecoveryPolicyService } from "../../../../src/merchant/recovery-policy/service.js";
+import { MerchantRecoverySummaryService } from "../../../../src/merchant/recovery-summary/recovery-summary.service.js";
 import { RecoveryPolicyConflictError, RecoveryPolicyIntegrityError } from "../../../../src/merchant/recovery-policy/contract.js";
 import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
 
@@ -13,7 +14,12 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
   skip: !databaseUrl,
 }, async () => {
   if (!databaseUrl) return;
-  const db = new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  const db = new PrismaClient({ datasources: { db: { url: databaseUrl } }, log: [{ emit: "event", level: "query" }] });
+  const summaryStatements: string[] = [];
+  db.$on("query", (event) => {
+    if (/^\s*SELECT/i.test(event.query) && event.query.includes('"ShopSettings"') &&
+      event.query.includes('"ShopRecoveryPolicyOverride"')) summaryStatements.push(event.query);
+  });
   const domain = `https://${randomUUID()}.woo-policy.invalid`;
   const adminEmail = `${randomUUID()}@woo-policy.invalid`;
   let shopId: string | undefined;
@@ -31,12 +37,18 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
       shopId: persistedShopId, canonicalSiteUrl: domain, installationId: installation.id, credentialVersion: installation.credentialVersion,
     };
     const service = new MerchantRecoveryPolicyService(db);
+    const summaryService = new MerchantRecoverySummaryService(db);
     const initial = await service.read(principal);
     assert.equal(initial.revision, "UNCONFIGURED");
     assert.equal(initial.merchant.recoveryDelayMinutes, 30);
     assert.equal(initial.schemaVersion, 2);
     assert.equal(initial.notifyOnInitialRecoveryOutreach, false);
     assert.equal(await db.shopSettings.count({ where: { shopId: persistedShopId } }), 0);
+    const emptySummary = await summaryService.read(principal);
+    assert.equal(emptySummary.recoveryDelayMinutes, 30);
+    assert.equal(summaryStatements.length, 1);
+    assert.match(summaryStatements[0]!, /LEFT JOIN/);
+    assert.match(summaryStatements[0]!, /WHERE s\."id" = \$2/);
 
     const first = await service.update(principal, {
       expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,
@@ -94,6 +106,10 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
     assert.equal(changed.effective.recoveryDelayMinutes, 90);
     assert.equal(changed.notifyOnInitialRecoveryOutreach, false);
     assert.equal(await db.shopRecoveryPolicyOverride.count({ where: { shopId: persistedShopId } }), 1);
+    const activeOverrideSummary = await summaryService.read(principal);
+    assert.equal(activeOverrideSummary.source, "ADMIN_OVERRIDE");
+    assert.equal(activeOverrideSummary.recoveryDelayMinutes, 90);
+    assert.equal(summaryStatements.length, 2);
 
     const notificationOnly = await service.update(principal, {
       expectedRevision: changed.revision, recoveryDelayMinutes: 20, followUpEnabled: false,
@@ -108,6 +124,10 @@ test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override p
     assert.equal(expired.source, "MERCHANT");
     assert.equal(expired.effective.recoveryDelayMinutes, 20);
     assert.equal(expired.notifyOnInitialRecoveryOutreach, true);
+    const expiredOverrideSummary = await summaryService.read(principal);
+    assert.equal(expiredOverrideSummary.source, "MERCHANT");
+    assert.equal(expiredOverrideSummary.recoveryDelayMinutes, 20);
+    assert.equal(summaryStatements.length, 3);
 
     await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { credentialVersion: { increment: 1 } } });
     await assert.rejects(() => service.update(principal, { expectedRevision: expired.revision,

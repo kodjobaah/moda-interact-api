@@ -51,6 +51,17 @@ test("authentication derives the principal only from the active installation row
   assert.deepEqual(query.where, { id: "install_123" });
   assert.equal(typeof query.select.shop, "object");
 });
+test("optional installation lookup timing includes the database read but no credential material", async () => {
+  const { authenticator } = makeAuthenticator();
+  const durations: number[] = [];
+  await authenticator.authenticate(request(["X-Moda-Installation-Id", "install_123", "Authorization", credentialHeader]), {
+    onInstallationLookupMs: (ms) => durations.push(ms),
+  });
+  assert.equal(durations.length, 1);
+  assert.ok(Number.isFinite(durations[0]));
+  assert.ok(durations[0]! >= 0);
+  assert.equal(typeof durations[0], "number");
+});
 
 test("malformed, missing and duplicate authentication headers share the same failure", async () => {
   const { authenticator, queries } = makeAuthenticator();

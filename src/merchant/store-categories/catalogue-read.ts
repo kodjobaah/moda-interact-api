@@ -1,8 +1,8 @@
-import type { PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import { localizeCategory, localizeMapping, StoreCategoryReadError, type CategoryPresentationLocale } from "./locale.js";
 import type { StoreCategoryChoice } from "./schema.js";
 
-export type CategoryCatalogueDatabase = Pick<PrismaClient, "commercePromptTemplateCategory">;
+export type CategoryCatalogueDatabase = Pick<Prisma.TransactionClient, "commercePromptTemplateCategory">;
 const MAX_CATEGORIES = 100;
 const MAX_MAPPINGS_PER_CATEGORY = 50;
 const CONDITION_KEY_PATTERN = /^[a-z][a-z0-9_]{0,127}$/;

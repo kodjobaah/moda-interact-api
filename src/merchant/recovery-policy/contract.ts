@@ -36,8 +36,8 @@ export class RecoveryPolicyRequestError extends Error {
 }
 
 export class RecoveryPolicyConflictError extends Error {
-  constructor(readonly code: "recovery_policy_conflict" | "recovery_offer_unsupported") {
-    super(code);
+  constructor(readonly code: "recovery_policy_conflict" | "recovery_offer_unsupported", options?: ErrorOptions) {
+    super(code, options);
   }
 }
 

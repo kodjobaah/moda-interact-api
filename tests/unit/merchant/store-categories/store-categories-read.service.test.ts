@@ -19,7 +19,7 @@ const baseCategory = {
 
 function setup(overrides: { categories?: unknown[]; profile?: unknown; configurations?: unknown[]; shop?: object | null; installation?: object | null } = {}) {
   const calls: string[] = [];
-  const database = {
+  const delegates = {
     shop: { findUnique: async () => {
       calls.push("shop.findUnique");
       return overrides.shop === undefined ? { id: principal.shopId, domain: principal.canonicalSiteUrl,
@@ -44,6 +44,17 @@ function setup(overrides: { categories?: unknown[]; profile?: unknown; configura
       return overrides.configurations ?? [];
     } },
   };
+  const database = {
+    ...delegates,
+    $executeRaw: async () => { calls.push("transaction.readOnly"); return 0; },
+    $transaction: async (callback: unknown, options: { isolationLevel?: unknown }) => {
+      calls.push(`transaction:${String(options.isolationLevel)}`);
+      return (callback as (tx: typeof delegates & { $executeRaw: () => Promise<number> }) => Promise<unknown>)({
+        ...delegates,
+        $executeRaw: async () => { calls.push("transaction.readOnly"); return 0; },
+      });
+    },
+  };
   return { service: new StoreCategoriesReadService(database as never, CommerceEnvironment.DEVELOPMENT), calls };
 }
 
@@ -61,7 +72,9 @@ test("read-only empty profile, enabled category and translated mapping options",
     pendingSelectionGeneration: 0, pendingSelectedAt: null,
     activeMappingIds: [], pendingMappingIds: [], pendingState: "NONE", pendingTemplate: null,
   });
-  assert.equal(calls.length, 5);
+  assert.equal(calls[0], "transaction:RepeatableRead");
+  assert.equal(calls.includes("transaction.readOnly"), true);
+  assert.equal(calls.filter((call) => call === "transaction:RepeatableRead").length, 1);
   assert.equal(calls.some((value) => /write|update|create/i.test(value)), false);
 });
 
