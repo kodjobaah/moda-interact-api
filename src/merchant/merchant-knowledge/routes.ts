@@ -3,6 +3,7 @@ import type { StructuredLogger } from "@modainteract/moda-interact-shared/loggin
 import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
 import { sendNoStoreJson } from "../../http/response.js";
 import { MERCHANT_KNOWLEDGE_PATH, MerchantKnowledgeReadError } from "./contract.js";
+import { safeKnowledgeErrorFields } from "./diagnostics.js";
 import type { MerchantKnowledgeReadService } from "./read.service.js";
 import { timeKnowledgePhase, type KnowledgeTimings } from "./timing.js";
 
@@ -56,19 +57,13 @@ export function createMerchantKnowledgeRoute(options: {
         } else if (error instanceof MerchantKnowledgeReadError) {
           if (error.status !== 400) logger.warn("merchant.knowledge.read.failed", {
             reason: error.code, ...timings, durationMs: Math.max(0, now() - started),
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeKnowledgeErrorFields(error),
           });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
           logger.error("merchant.knowledge.read.failed", {
             reason: "internal", ...timings, durationMs: Math.max(0, now() - started),
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...safeKnowledgeErrorFields(error),
           });
           sendNoStoreJson(response, 503, { error: "merchant_knowledge_unavailable" });
         }

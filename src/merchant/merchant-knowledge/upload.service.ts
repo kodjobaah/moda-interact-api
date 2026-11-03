@@ -11,7 +11,6 @@ import { MerchantKnowledgeReadError } from "./contract.js";
 import { timeKnowledgePhase, type KnowledgeTimings } from "./timing.js";
 
 type Tx = Prisma.TransactionClient;
-const pairKey = (purpose: string, format: string) => `${purpose}\u0000${format}`;
 const nowDate = () => new Date();
 
 async function assertWoo(tx: Tx, principal: WooInstallationPrincipal): Promise<string> {
@@ -64,23 +63,45 @@ async function allowedPair(tx: Tx, config: Awaited<ReturnType<typeof entitlement
   return { ...pair, contentTypes: contentTypes as string[] };
 }
 
-async function eligibleSources(tx: Tx, shopId: string, config: Awaited<ReturnType<typeof entitlement>>) {
-  const rows = await tx.merchantKnowledgeSource.findMany({ where: { shopId }, orderBy: [{ position: "asc" }, { id: "asc" }],
-    select: { id: true, position: true,
-      purpose: { select: { key: true, active: true } }, dataFormat: { select: { key: true, active: true } } } });
-  const allowed = new Set(config.allowedSourceTypes.map((pair) => pairKey(pair.purposeKey, pair.dataFormatKey)));
-  return { rows, eligible: rows.filter((source) => source.purpose.active && source.dataFormat.active &&
-    allowed.has(pairKey(source.purpose.key, source.dataFormat.key))) };
+function allowedSourceWhere(shopId: string, config: Awaited<ReturnType<typeof entitlement>>) {
+  return { shopId, OR: config.allowedSourceTypes.map(({ purposeKey, dataFormatKey }) => ({
+    purpose: { is: { key: purposeKey, active: true } },
+    dataFormat: { is: { key: dataFormatKey, active: true } },
+  })) };
 }
 
 async function eligibleSource(tx: Tx, shopId: string, sourceId: string, config: Awaited<ReturnType<typeof entitlement>>) {
-  const { eligible } = await eligibleSources(tx, shopId, config);
-  if (!eligible.slice(0, config.maxKnowledgeSources).some((source) => source.id === sourceId)) throw denied();
-  const source = await tx.merchantKnowledgeSource.findFirst({ where: { id: sourceId, shopId },
-    select: { id: true, purposeId: true, dataFormatId: true, currentGeneration: true,
+  if (config.allowedSourceTypes.length === 0 || config.maxKnowledgeSources === 0) throw denied();
+  const candidates = await tx.merchantKnowledgeSource.findMany({ where: allowedSourceWhere(shopId, config),
+    orderBy: [{ position: "asc" }, { id: "asc" }], take: config.maxKnowledgeSources,
+    select: { id: true, position: true, purposeId: true, dataFormatId: true, currentGeneration: true,
       purpose: { select: { key: true } }, dataFormat: { select: { key: true, inputKind: true } } } });
+  const source = candidates.find((candidate) => candidate.id === sourceId);
   if (!source || source.dataFormat.inputKind !== "UPLOAD") throw denied();
   return source;
+}
+
+async function originalIntakeReplay(tx: Tx, assetId: string, shopId: string, purposeKey: string,
+  dataFormatId: string, sourceId?: string) {
+  const rows = await tx.merchantKnowledgeSourceRevision.findMany({ where: {
+    uploadedAssetId: assetId, reason: { in: ["CREATE", "FILE_REPLACE"] },
+  }, take: 2, select: { id: true, sourceId: true, generation: true, reason: true,
+    source: { select: { shopId: true, purpose: { select: { key: true } }, dataFormatId: true } } } });
+  if (rows.length !== 1) throw conflict();
+  const revision = rows[0]!;
+  if (revision.source.shopId !== shopId || revision.source.purpose.key !== purposeKey || revision.source.dataFormatId !== dataFormatId ||
+      (sourceId !== undefined && sourceId !== revision.sourceId)) throw conflict();
+  return { revisionId: revision.id, sourceId: revision.sourceId, generation: revision.generation };
+}
+
+async function sourcePositions(tx: Tx, shopId: string) {
+  return tx.merchantKnowledgeSource.findMany({ where: { shopId }, orderBy: [{ position: "asc" }, { id: "asc" }],
+    select: { id: true, position: true } });
+}
+
+async function eligibleSourceCount(tx: Tx, shopId: string, config: Awaited<ReturnType<typeof entitlement>>) {
+  if (config.allowedSourceTypes.length === 0) return 0;
+  return tx.merchantKnowledgeSource.count({ where: allowedSourceWhere(shopId, config) });
 }
 
 export interface UploadServiceOptions {
@@ -131,6 +152,7 @@ export class MerchantKnowledgeUploadService {
         if (existing.shopId !== principal.shopId ||
           !isWooObjectKeyForAsset(existing.objectKey, environment, principal.shopId, assetId, request.dataFormatKey) ||
           existing.status !== "PENDING_UPLOAD" || existing.dataFormatId !== pair.dataFormatId ||
+          existing.intentPurposeKey !== request.purposeKey ||
           existing.originalFileName !== request.originalFileName || existing.contentType !== request.contentType ||
           existing.sizeBytes !== BigInt(request.sizeBytes) || existing.sha256 !== request.sha256) throw conflict();
         if (existing.uploadExpiresAt <= this.now()) throw new KnowledgeUploadError(409, "knowledge_upload_expired");
@@ -144,7 +166,7 @@ export class MerchantKnowledgeUploadService {
       const expiresAt = new Date(createdAt.getTime() + UPLOAD_TTL_SECONDS * 1000);
       const objectKey = wooObjectKey(environment, principal.shopId, shopDomain, assetId, request.dataFormatKey, createdAt);
       await tx.merchantKnowledgeUploadedAsset.create({ data: { id: assetId, shopId: principal.shopId,
-        dataFormatId: pair.dataFormatId, status: "PENDING_UPLOAD", objectKey,
+        dataFormatId: pair.dataFormatId, intentPurposeKey: request.purposeKey, status: "PENDING_UPLOAD", objectKey,
         originalFileName: request.originalFileName, contentType: request.contentType,
         sizeBytes: BigInt(request.sizeBytes), sha256: request.sha256, uploadExpiresAt: expiresAt } });
       return { expiresAt, objectKey };
@@ -170,6 +192,7 @@ export class MerchantKnowledgeUploadService {
       const asset = await tx.merchantKnowledgeUploadedAsset.findFirst({ where: { id: request.assetId, shopId: principal.shopId },
         select: { id: true, status: true, shopId: true, objectKey: true, uploadExpiresAt: true,
           dataFormatId: true, contentType: true, sizeBytes: true, sha256: true,
+          intentPurposeKey: true,
           dataFormat: { select: { key: true, inputKind: true } } } });
       if (!asset) throw new KnowledgeUploadError(404, "knowledge_upload_not_found");
       if (asset.dataFormat.inputKind !== "UPLOAD" || !["CSV", "XLSX"].includes(asset.dataFormat.key) ||
@@ -179,16 +202,20 @@ export class MerchantKnowledgeUploadService {
       const pair = await allowedPair(tx, configCurrent, request.purposeKey, asset.dataFormat.key);
       if (pair.dataFormatId !== asset.dataFormatId || !pair.contentTypes.some((value) => value.toLowerCase() === request.contentType)) throw denied();
       if (asset.status === "AVAILABLE") {
-        const revision = await tx.merchantKnowledgeSourceRevision.findFirst({ where: { uploadedAssetId: asset.id },
-          select: { id: true, sourceId: true, generation: true,
-            source: { select: { shopId: true, purpose: { select: { key: true } } } } } });
-        if (!revision || revision.source.shopId !== principal.shopId || revision.source.purpose.key !== request.purposeKey ||
-            (request.sourceId && request.sourceId !== revision.sourceId)) throw conflict();
-        return { completed: true as const, sourceId: revision.sourceId, revisionId: revision.id, generation: revision.generation };
+        const replay = await originalIntakeReplay(tx, asset.id, principal.shopId, request.purposeKey, asset.dataFormatId, request.sourceId);
+        if (asset.intentPurposeKey !== null && asset.intentPurposeKey !== request.purposeKey) throw conflict();
+        return { completed: true as const, ...replay };
       }
       if (asset.status !== "PENDING_UPLOAD") throw conflict();
+      if (asset.intentPurposeKey !== request.purposeKey) throw conflict();
       if (asset.uploadExpiresAt <= this.now()) throw new KnowledgeUploadError(409, "knowledge_upload_expired");
-      return { completed: false as const, objectKey: asset.objectKey };
+      let expectedGeneration: number | undefined;
+      if (request.sourceId) {
+        const source = await eligibleSource(tx, principal.shopId, request.sourceId, configCurrent);
+        if (source.purposeId !== pair.purposeId || source.dataFormatId !== pair.dataFormatId) throw denied();
+        expectedGeneration = source.currentGeneration;
+      }
+      return { completed: false as const, objectKey: asset.objectKey, expectedGeneration };
     }));
     if (preliminary.completed) return { schemaVersion: 1 as const, sourceId: preliminary.sourceId,
       revisionId: preliminary.revisionId, generation: preliminary.generation, status: "ACCEPTED" as const };
@@ -199,26 +226,38 @@ export class MerchantKnowledgeUploadService {
     }, timings));
     return timeKnowledgePhase(timings, "commitTransactionMs", () => this.database.$transaction(async (tx) => {
       await assertWoo(tx, principal);
-      const currentConfig = await entitlement(tx, principal.shopId);
+      const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT "id" FROM "commerce"."MerchantKnowledgeUploadedAsset"
+        WHERE "id" = ${request.assetId} AND "shopId" = ${principal.shopId} FOR NO KEY UPDATE
+      `);
+      if (locked.length !== 1) throw denied();
       const asset = await tx.merchantKnowledgeUploadedAsset.findFirst({ where: { id: request.assetId, shopId: principal.shopId },
         include: { dataFormat: { select: { key: true, inputKind: true } } } });
       if (!asset) throw denied();
-      if (asset.status === "AVAILABLE") {
-        const previous = await tx.merchantKnowledgeSourceRevision.findFirst({ where: { uploadedAssetId: asset.id },
-          select: { id: true, sourceId: true, generation: true, source: { select: { shopId: true, purpose: { select: { key: true } } } } } });
-        if (!previous || previous.source.shopId !== principal.shopId || previous.source.purpose.key !== request.purposeKey ||
-            (request.sourceId && request.sourceId !== previous.sourceId)) throw conflict();
-        return { schemaVersion: 1 as const, sourceId: previous.sourceId, revisionId: previous.id,
-          generation: previous.generation, status: "ACCEPTED" as const };
-      }
-      if (asset.status !== "PENDING_UPLOAD" || asset.uploadExpiresAt <= this.now()) throw conflict();
-      if (asset.contentType !== request.contentType || asset.sizeBytes !== BigInt(request.sizeBytes) || asset.sha256 !== request.sha256) throw integrity();
+      const currentConfig = await entitlement(tx, principal.shopId);
+      if (asset.dataFormat.inputKind !== "UPLOAD" || !["CSV", "XLSX"].includes(asset.dataFormat.key) ||
+          asset.contentType !== request.contentType || asset.sizeBytes !== BigInt(request.sizeBytes) ||
+          asset.sha256 !== request.sha256) throw integrity();
       const pair = await allowedPair(tx, currentConfig, request.purposeKey, asset.dataFormat.key);
-      if (pair.dataFormatId !== asset.dataFormatId) throw denied();
+      if (pair.dataFormatId !== asset.dataFormatId || !pair.contentTypes.some((value) => value.toLowerCase() === request.contentType)) throw denied();
+      if (asset.intentPurposeKey !== null && asset.intentPurposeKey !== request.purposeKey) throw conflict();
+      if (asset.status === "AVAILABLE") {
+        const previous = await originalIntakeReplay(tx, asset.id, principal.shopId, request.purposeKey, asset.dataFormatId, request.sourceId);
+        return { schemaVersion: 1 as const, ...previous, status: "ACCEPTED" as const };
+      }
+      if (asset.status !== "PENDING_UPLOAD") throw conflict();
+      if (asset.uploadExpiresAt <= this.now()) throw new KnowledgeUploadError(409, "knowledge_upload_expired");
+      if (asset.intentPurposeKey !== request.purposeKey) throw conflict();
       let sourceId = request.sourceId;
       let generation: number;
       let reason: "CREATE" | "FILE_REPLACE";
       if (sourceId) {
+        const sourceLocks = await tx.$queryRaw<Array<{ id: string; currentGeneration: number }>>(Prisma.sql`
+          SELECT "id", "currentGeneration" FROM "commerce"."MerchantKnowledgeSource"
+          WHERE "id" = ${sourceId} AND "shopId" = ${principal.shopId} FOR UPDATE
+        `);
+        if (sourceLocks.length !== 1 || preliminary.expectedGeneration === undefined ||
+            sourceLocks[0]!.currentGeneration !== preliminary.expectedGeneration) throw conflict();
         const existing = await eligibleSource(tx, principal.shopId, sourceId, currentConfig);
         if (existing.purposeId !== pair.purposeId || existing.dataFormatId !== pair.dataFormatId) throw denied();
         generation = existing.currentGeneration + 1;
@@ -228,8 +267,10 @@ export class MerchantKnowledgeUploadService {
           name: request.name, languageTag: request.languageTag, currentGeneration: generation,
         } });
       } else {
-        const { rows, eligible } = await eligibleSources(tx, principal.shopId, currentConfig);
-        if (eligible.length >= currentConfig.maxKnowledgeSources) throw denied();
+        const [rows, eligibleCount] = await Promise.all([
+          sourcePositions(tx, principal.shopId), eligibleSourceCount(tx, principal.shopId, currentConfig),
+        ]);
+        if (eligibleCount >= currentConfig.maxKnowledgeSources) throw denied();
         const position = rows.reduce((highest, source) => Math.max(highest, source.position), -1) + 1;
         if (position > 2147483647) throw conflict();
         sourceId = randomUUID();
@@ -256,7 +297,8 @@ export class MerchantKnowledgeUploadService {
       const configuration = await entitlement(tx, principal.shopId);
       const source = await eligibleSource(tx, principal.shopId, sourceId, configuration);
       await allowedPair(tx, configuration, source.purpose.key, source.dataFormat.key);
-      await tx.merchantKnowledgeSource.update({ where: { id: sourceId }, data: change });
+      const updated = source.name !== change.name || source.languageTag !== change.languageTag;
+      if (updated) await tx.merchantKnowledgeSource.update({ where: { id: sourceId }, data: change });
       return { schemaVersion: 1 as const, sourceId, updated: true as const };
     });
   }
