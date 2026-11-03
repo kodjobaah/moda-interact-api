@@ -56,10 +56,15 @@ function mockTx(rows: ReturnType<typeof makeRows>) {
     const key = "conversationId" in query.where ? "createdAt" : "detectedAt";
     return execute(rows, query.where, key).length;
   };
+  const findFirst = async (query: { where: Record<string, unknown> }) => {
+    const key = "conversationId" in query.where ? "createdAt" : "detectedAt";
+    const row = execute(rows, query.where, key)[0];
+    return row ? { id: row.id } : null;
+  };
   return {
     $queryRaw: async () => [],
-    conversationMessage: { findMany: find, count },
-    checkoutRecovery: { findMany: find, count },
+    conversationMessage: { findMany: find, findFirst, count },
+    checkoutRecovery: { findMany: find, findFirst, count },
   } as never;
 }
 

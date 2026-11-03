@@ -103,13 +103,13 @@ export class MerchantRecoveryListService {
       if (!Number.isSafeInteger(total) || total < 0) throw new RecoveryListIntegrityError();
       const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
       const page = Math.min(query.page, totalPages);
-      const records = await tx.checkoutRecovery.findMany({
-        where,
-        orderBy: [{ detectedAt: "desc" }, { id: "desc" }],
-        skip: (page - 1) * query.pageSize,
-        take: query.pageSize,
-        select: recoverySelect,
-      });
+      const records = total === 0 ? [] : await tx.checkoutRecovery.findMany({
+          where,
+          orderBy: [{ detectedAt: "desc" }, { id: "desc" }],
+          skip: (page - 1) * query.pageSize,
+          take: query.pageSize,
+          select: recoverySelect,
+        });
       return {
         schemaVersion: 1,
         timeZone: query.timeZone,

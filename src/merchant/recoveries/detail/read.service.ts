@@ -35,13 +35,19 @@ const recoverySelect = {
   } },
 } as const satisfies Prisma.CheckoutRecoverySelect;
 
-export type OwnedRecovery = Prisma.CheckoutRecoveryGetPayload<{ select: typeof recoverySelect }>;
+const pageOwnershipSelect = {
+  id: true,
+  shopId: true,
+  customerId: true,
+  customer: { select: { shopId: true } },
+  conversation: { select: { id: true, shopId: true, customerId: true, checkoutRecoveryId: true } },
+} as const satisfies Prisma.CheckoutRecoverySelect;
 
 type ReadTransaction = Prisma.TransactionClient;
 
-interface ReadContext {
+interface ReadContext<Select extends Prisma.CheckoutRecoverySelect> {
   tx: ReadTransaction;
-  owned: OwnedRecovery;
+  owned: Prisma.CheckoutRecoveryGetPayload<{ select: Select }>;
   timeZone: string;
 }
 
@@ -51,7 +57,8 @@ export class MerchantRecoveryDetailService {
   private async withOwned<T>(
     principal: WooInstallationPrincipal,
     recoveryId: string,
-    read: (context: ReadContext) => Promise<T>,
+    select: Prisma.CheckoutRecoverySelect,
+    read: (context: ReadContext<typeof select>) => Promise<T>,
   ): Promise<T | null> {
     if (!validRecoveryId(recoveryId)) return null;
     return this.database.$transaction(async (tx: ReadTransaction) => {
@@ -82,7 +89,7 @@ export class MerchantRecoveryDetailService {
       }
       const owned = await tx.checkoutRecovery.findFirst({
         where: { id: recoveryId, shopId: principal.shopId },
-        select: recoverySelect,
+        select,
       });
       if (!owned) return null;
       if (owned.shopId !== principal.shopId ||
@@ -97,7 +104,7 @@ export class MerchantRecoveryDetailService {
   }
 
   async summary(principal: WooInstallationPrincipal, recoveryId: string): Promise<RecoveryDetailSummary | null> {
-    return this.withOwned(principal, recoveryId, async ({ tx, owned, timeZone }) => {
+    return this.withOwned(principal, recoveryId, recoverySelect, async ({ tx, owned, timeZone }) => {
       const now = new Date();
       const [restriction, conversation] = await Promise.all([
         tx.shopHumanMessagingRestriction.findUnique({ where: { shopId: principal.shopId },
@@ -137,7 +144,7 @@ export class MerchantRecoveryDetailService {
     params: URLSearchParams,
   ): Promise<RecoveryDetailPage<RecoveryDetailMessage> | null> {
     const navigation = parseDetailNavigation(principal.shopId, recoveryId, "messages", params);
-    return this.withOwned(principal, recoveryId, async ({ tx, owned }) => {
+    return this.withOwned(principal, recoveryId, pageOwnershipSelect, async ({ tx, owned }) => {
       if (!owned.conversation) {
         const empty: RecoveryDetailPage<RecoveryDetailMessage> = {
           schemaVersion: 1, items: [], previousCursor: null, nextCursor: null,
@@ -154,7 +161,7 @@ export class MerchantRecoveryDetailService {
     params: URLSearchParams,
   ): Promise<RecoveryDetailPage<RecoveryRelatedItem> | null> {
     const navigation = parseDetailNavigation(principal.shopId, recoveryId, "related", params);
-    return this.withOwned(principal, recoveryId, async ({ tx, owned }) => {
+    return this.withOwned(principal, recoveryId, pageOwnershipSelect, async ({ tx, owned }) => {
       if (!owned.customerId) {
         const empty: RecoveryDetailPage<RecoveryRelatedItem> = {
           schemaVersion: 1, items: [], previousCursor: null, nextCursor: null,
