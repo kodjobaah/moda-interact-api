@@ -52,7 +52,7 @@ export function createWooRecoveryRestoreRoute(options: {
   };
 }
 
-function safeErrorDetails(error: unknown, submittedToken: string | undefined) {
+function safeErrorDetails(error: unknown, submittedToken: string | undefined, depth = 0) {
   if (!(error instanceof Error)) {
     return { name: typeof error, message: "[REDACTED]", redactionApplied: true, truncated: false };
   }
@@ -66,10 +66,27 @@ function safeErrorDetails(error: unknown, submittedToken: string | undefined) {
     .replace(/\+?\d(?:[\d ().-]{5,}\d)/g, "[REDACTED]")
     .replace(/\b[A-Z0-9][A-Z0-9_-]{3,}\b/g, "[REDACTED]");
   const truncated = message.length > 1024;
-  return {
+  const details: Record<string, unknown> = {
     name: error.name.slice(0, 128),
     message: truncated ? message.slice(0, 1024) : message,
     redactionApplied: message !== originalMessage,
     truncated,
   };
+  const code = (error as Error & { code?: unknown }).code;
+  if (typeof code === "string" && /^[A-Z][A-Z0-9]{1,9}$/.test(code)) details.code = code;
+  const meta = (error as Error & { meta?: unknown }).meta;
+  if (meta && typeof meta === "object" && !Array.isArray(meta)) {
+    const safeMeta: Record<string, string> = {};
+    for (const key of ["code", "constraint", "modelName", "table", "column"] as const) {
+      const value = (meta as Record<string, unknown>)[key];
+      if (typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/.test(value)) {
+        safeMeta[key] = value;
+      }
+    }
+    if (Object.keys(safeMeta).length) details.meta = safeMeta;
+  }
+  if (depth < 2 && error.cause !== undefined) {
+    details.cause = safeErrorDetails(error.cause, submittedToken, depth + 1);
+  }
+  return details;
 }

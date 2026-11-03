@@ -26,14 +26,23 @@ function response() {
 }
 function factory(options: { failAuth?: boolean; fail?: Error; corrupt?: boolean } = {}) {
   const calls: string[] = [];
-  return { calls, route: createMerchantFeaturePreferencesRoute({
-    authenticator: { authenticate: async () => { calls.push("authenticate"); if (options.failAuth) throw new WooUnauthenticatedError(); return principal; } } as never,
+  const logs: Array<{ level: string; event: string; data: Record<string, unknown> }> = [];
+  return { calls, logs, route: createMerchantFeaturePreferencesRoute({
+    authenticator: { authenticate: async (_request: unknown, hooks: { onInstallationLookupMs?: (ms: number) => void }) => {
+      calls.push("authenticate");
+      hooks?.onInstallationLookupMs?.(3.25);
+      if (options.failAuth) throw new WooUnauthenticatedError(); return principal;
+    } } as never,
     service: {
       read: async () => { calls.push("read"); if (options.fail) throw options.fail;
         return options.corrupt ? { ...readResult, privateKey: "not-for-browser" } : readResult; },
       update: async (p: unknown, body: unknown) => { calls.push("update"); assert.deepEqual(p, principal);
         assert.deepEqual(body, update); if (options.fail) throw options.fail; return readResult; },
-    } as never, logger: { info() {}, warn() {}, error() {} } as never,
+    } as never, logger: {
+      info(event: string, data: Record<string, unknown>) { logs.push({ level: "info", event, data }); },
+      warn(event: string, data: Record<string, unknown>) { logs.push({ level: "warn", event, data }); },
+      error(event: string, data: Record<string, unknown>) { logs.push({ level: "error", event, data }); },
+    } as never,
   }) };
 }
 test("GET and PUT are authenticated, return no-store and exact DTO", async () => {
@@ -73,6 +82,10 @@ test("conflict and malformed responses cannot leak secrets", async () => {
   ] as const) {
     const t = factory(options); const r = response(); await t.route.handle(request("GET"), r.output);
     assert.equal(r.result().status, status); assert.deepEqual(r.result().body, { error: code });
+    const timing = t.logs.find((log) => log.event === "merchant.feature_preferences.timing")?.data;
+    assert.equal(timing?.statusCode, status);
+    assert.equal(timing?.outcome, status === 500 ? "error" : "rejected");
+    if ("corrupt" in options) assert.equal(timing?.failedPhase, "routeResponseValidationMs");
   }
 });
 test("unknown methods or paths fall through without authentication", async () => {
@@ -80,4 +93,49 @@ test("unknown methods or paths fall through without authentication", async () =>
   assert.equal(await t.route.handle(request("GET", update, { url: "/other" }), r.output), false);
   assert.equal(await t.route.handle(Object.assign(request("GET"), { method: "PATCH" }), r.output), false);
   assert.deepEqual(t.calls, []);
+  assert.deepEqual(t.logs, []);
+});
+test("feature-preference timings identify authentication, lookup, service and response without changing the DTO", async () => {
+  const t = factory(); const r = response();
+  await t.route.handle(request("GET"), r.output);
+  const timing = t.logs.find((row) => row.event === "merchant.feature_preferences.timing")?.data;
+  const access = t.logs.find((row) => row.event === "merchant.feature_preferences.access")?.data;
+  assert.ok(timing);
+  assert.equal(timing.operation, "read");
+  assert.equal(timing.outcome, "success");
+  assert.equal(timing.statusCode, 200);
+  assert.equal(timing.shopId, principal.shopId);
+  assert.equal(timing.authenticationLookupMs, 3.25);
+  assert.equal(typeof timing.authenticationOtherMs, "number");
+  for (const phase of ["authenticationMs", "requestValidationMs", "serviceMs", "routeResponseValidationMs", "responseDispatchMs", "durationMs"]) {
+    assert.equal(typeof timing[phase], "number", phase);
+    assert.ok(Number(timing[phase]) >= 0);
+  }
+  assert.match(String(timing.diagnosticId), /^[0-9a-f-]{36}$/);
+  assert.equal(timing.diagnosticId, access?.diagnosticId);
+  assert.deepEqual(r.result().body, readResult);
+  assert.equal(JSON.stringify(timing).includes("secret"), false);
+});
+test("failed auth and unexpected errors still emit timings and retain original error diagnostics", async () => {
+  const unauthorized = factory({ failAuth: true }); const u = response();
+  await unauthorized.route.handle(request("GET"), u.output);
+  const authTiming = unauthorized.logs.find((log) => log.event === "merchant.feature_preferences.timing")?.data;
+  assert.equal(authTiming?.statusCode, 401);
+  assert.equal(authTiming?.outcome, "rejected");
+  assert.equal(authTiming?.failedPhase, "authenticationMs");
+  assert.equal(authTiming?.shopId, undefined);
+
+  const providerError = Object.assign(new Error("Prisma provider connection timed out"), { code: "P2028" });
+  const failure = factory({ fail: providerError }); const r = response();
+  await failure.route.handle(request("GET"), r.output);
+  assert.equal(r.result().status, 500);
+  assert.deepEqual(r.result().body, { error: "internal_error" });
+  const failedLog = failure.logs.find((log) => log.event === "merchant.feature_preferences.access.failed")?.data;
+  const timing = failure.logs.find((log) => log.event === "merchant.feature_preferences.timing")?.data;
+  assert.equal(failedLog?.errorMessage, providerError.message);
+  assert.equal(failedLog?.errorCode, providerError.code);
+  assert.equal(failedLog?.diagnosticId, timing?.diagnosticId);
+  assert.equal(timing?.outcome, "error");
+  assert.equal(timing?.statusCode, 500);
+  assert.equal(timing?.failedPhase, "serviceMs");
 });

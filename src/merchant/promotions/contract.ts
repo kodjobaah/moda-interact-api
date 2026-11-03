@@ -84,8 +84,9 @@ export class PromotionRequestError extends Error {
 export class PromotionDomainError extends Error {
   constructor(readonly status: 409 | 422, readonly code:
     "promotion_unavailable" | "promotion_revision_conflict" | "promotion_selection_locked" |
-    "promotion_not_eligible" | "promotion_exhausted" | "promotion_integrity_invalid") {
-    super(code);
+    "promotion_not_eligible" | "promotion_exhausted" | "promotion_integrity_invalid",
+    options?: ErrorOptions) {
+    super(code, options);
   }
 }
 

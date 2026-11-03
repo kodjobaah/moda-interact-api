@@ -33,10 +33,19 @@ try {
   }
   if (!ready) throw new Error("PostgreSQL not ready");
   const url = `postgresql://${user}:${password}@127.0.0.1:${port}/${database}`;
+  phase = "enabling pgvector";
+  docker(["exec", name, "psql", "-U", user, "-d", database, "-v", "ON_ERROR_STOP=1", "-c",
+    "CREATE EXTENSION IF NOT EXISTS vector"]);
+  const env = { ...process.env, DATABASE_URL: url };
+  phase = "deploying canonical migrations";
+  run("npx", ["--no-install", "prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"], {
+    env, stdio: "inherit",
+  });
   phase = "running resolver PostgreSQL integration suite";
   run("node", ["--import", "tsx", "--test", "--test-concurrency=1",
-    "tests/integration/woocommerce/recovery-restore/service.postgres.test.ts"], {
-    env: { ...process.env, ARCH053_WOO_RESTORE_TEST_DATABASE_URL: url }, stdio: "inherit",
+    "tests/integration/woocommerce/recovery-restore/service.postgres.test.ts",
+    "tests/integration/woocommerce/recovery-restore/arch055-revalidation.postgres.test.ts"], {
+    env: { ...env, ARCH053_WOO_RESTORE_TEST_DATABASE_URL: url }, stdio: "inherit",
   });
 } catch {
   process.stderr.write(`ARCH-053 recovery restore PostgreSQL validation failed while ${phase}.\n`);

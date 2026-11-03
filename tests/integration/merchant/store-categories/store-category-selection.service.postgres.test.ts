@@ -32,11 +32,11 @@ interface Fixture {
 
 async function makeCategory(adminId: string, label: string): Promise<CategoryFixture> {
   const category = await db().commercePromptTemplateCategory.create({ data: {
-    slug: randomUUID(), displayName: label, enabled: false,
+    slug: `category-${randomUUID()}`, displayName: label, enabled: false,
     createdByAdminId: adminId, updatedByAdminId: adminId,
   } });
   const template = await db().commercePromptTemplate.create({ data: {
-    key: randomUUID(), categoryId: category.id, displayName: label,
+    key: `template-${randomUUID()}`, categoryId: category.id, displayName: label,
     promptText: `Welcome to ${label}. {% if mappings.shoes %}Footwear available.{% else %}General products.{% endif %}`,
     createdByAdminId: adminId, updatedByAdminId: adminId,
   } });
@@ -73,21 +73,8 @@ async function fixture(): Promise<Fixture> {
 }
 
 async function cleanup(f: Fixture): Promise<void> {
-  await db().commerceAgentConfiguration.deleteMany({ where: { shopId: f.shopId } });
-  await db().commerceShopProfile.deleteMany({ where: { shopId: f.shopId } });
-  const prompts = await db().commerceAgentPrompt.findMany({ where: { shopId: f.shopId }, select: { id: true } });
-  const promptIds = prompts.map((prompt) => prompt.id);
-  await db().commerceAgentPromptRevision.deleteMany({ where: { promptId: { in: promptIds } } });
-  await db().commerceAgentPrompt.deleteMany({ where: { id: { in: promptIds } } });
-  await db().shop.delete({ where: { id: f.shopId } });
-  for (const category of [f.first, f.second]) {
-    await db().commercePromptTemplateCategory.update({ where: { id: category.id }, data: { defaultTemplateId: null } });
-    await db().commerceStoreCategoryTaxonomyMapping.deleteMany({ where: { categoryId: category.id } });
-    await db().commercePromptTemplate.deleteMany({ where: { id: category.templateId } });
-    await db().commercePromptTemplateCategory.deleteMany({ where: { id: category.id } });
-  }
-  await db().platformAdmin.delete({ where: { id: f.adminId } });
-  await db().billingPlan.delete({ where: { id: f.planId } });
+  void f;
+  // Prompt revisions, templates and categories are immutable; the runner drops the isolated database.
 }
 
 function service() { return new StoreCategorySelectionService(db(), environment); }

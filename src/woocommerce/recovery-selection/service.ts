@@ -28,7 +28,8 @@ async function lockRecipient(tx: Tx, shopId: string, canonicalPhone: string): Pr
     hashtext(${shopId}), hashtext(${`phone:${canonicalPhone}`}))`);
 }
 
-async function locatePhone(tx: Tx, shopId: string, canonicalPhone: string): Promise<Phone> {
+async function locatePhone(tx: Tx, shopId: string, canonicalPhone: string, forUpdate = false): Promise<Phone> {
+  const lockClause = forUpdate ? Prisma.sql`FOR UPDATE OF cp` : Prisma.empty;
   const rows = await tx.$queryRaw<Phone[]>(Prisma.sql`
     SELECT cp."id", cp."whatsappCanonicalPhone",
       cp."whatsappConsentDecision"::text AS "whatsappConsentDecision",
@@ -39,7 +40,7 @@ async function locatePhone(tx: Tx, shopId: string, canonicalPhone: string): Prom
     INNER JOIN "commerce"."Customer" c ON c."id" = cp."customerId"
     WHERE c."shopId" = ${shopId} AND cp."endedAt" IS NULL
       AND (cp."whatsappCanonicalPhone" = ${canonicalPhone} OR cp."phone" = ${`+${canonicalPhone}`})
-    ORDER BY cp."id" LIMIT 2 FOR UPDATE OF cp
+    ORDER BY cp."id" LIMIT 2 ${lockClause}
   `);
   if (rows.length > 1) throw conflict("ambiguous_customer_phone");
   const phone = rows[0];
@@ -84,7 +85,6 @@ export class WooRecoverySelectionService {
   async read(principal: WooInstallationPrincipal, canonicalPhone: string): Promise<WooRecoverySelectionStatus> {
     return this.db.$transaction(async tx => {
       await assertSupportInstallation(tx, principal, { write: false, allowSuspended: false });
-      await lockRecipient(tx, principal.shopId, canonicalPhone);
       return result(await locatePhone(tx, principal.shopId, canonicalPhone));
     }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 10_000 });
   }
@@ -95,7 +95,7 @@ export class WooRecoverySelectionService {
       return await this.db.$transaction(async tx => {
         await assertSupportInstallation(tx, principal, { write: false, allowSuspended: false });
         await lockRecipient(tx, principal.shopId, command.canonicalPhone);
-        const phone = await locatePhone(tx, principal.shopId, command.canonicalPhone);
+        const phone = await locatePhone(tx, principal.shopId, command.canonicalPhone, true);
         const expected = BigInt(command.expectedNoContactRevision);
         const current = phone.whatsappNoContactRevision;
         // No stale command may operate on a changed CustomerPhone. Only the
@@ -148,7 +148,11 @@ export class WooRecoverySelectionService {
       }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 10_000 });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError &&
-        ["P2002", "P2034"].includes(error.code)) throw conflict("selection_write_conflict");
+        ["P2002", "P2034"].includes(error.code)) {
+        const mapped = conflict("selection_write_conflict");
+        Object.defineProperty(mapped, "cause", { value: error, configurable: true });
+        throw mapped;
+      }
       throw error;
     }
   }

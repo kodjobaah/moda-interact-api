@@ -20,10 +20,18 @@ export async function readPeriodPage(
   tx: Prisma.TransactionClient,
   input: { shopId: string; view: UsageView; cursor: string | null; key: Uint8Array; currentPeriod: PeriodRow | null },
 ): Promise<UsageHistoryResponse["periodPage"]> {
+  return (await readPeriodPageSnapshot(tx, input)).page;
+}
+
+export async function readPeriodPageSnapshot(
+  tx: Prisma.TransactionClient,
+  input: { shopId: string; view: UsageView; cursor: string | null; key: Uint8Array; currentPeriod: PeriodRow | null },
+): Promise<{ page: UsageHistoryResponse["periodPage"]; rows: PeriodRow[] }> {
   const { shopId, view, cursor, key, currentPeriod } = input;
   if (view === "current") {
     if (cursor !== null) throw new UsageHistoryRequestError("invalid_cursor");
-    return { items: currentPeriod ? [projectPeriod(currentPeriod)] : [], previousCursor: null, nextCursor: null };
+    return { page: { items: currentPeriod ? [projectPeriod(currentPeriod)] : [], previousCursor: null, nextCursor: null },
+      rows: currentPeriod ? [currentPeriod] : [] };
   }
   const boundary = decodePeriodCursor(cursor, shopId, view, key);
   const status: BillingPeriodStatus = "CLOSED";
@@ -49,11 +57,14 @@ export async function readPeriodPage(
   const first = visible[0];
   const last = visible.at(-1);
   return {
-    items: visible.map(projectPeriod),
-    previousCursor: first && (newer ? hasMore : boundary !== null)
-      ? encodePeriodCursor(shopId, view, { direction: "previous", start: first.periodStart, id: first.id }, key) : null,
-    nextCursor: last && (newer ? boundary !== null : hasMore)
-      ? encodePeriodCursor(shopId, view, { direction: "next", start: last.periodStart, id: last.id }, key) : null,
+    rows: visible,
+    page: {
+      items: visible.map(projectPeriod),
+      previousCursor: first && (newer ? hasMore : boundary !== null)
+        ? encodePeriodCursor(shopId, view, { direction: "previous", start: first.periodStart, id: first.id }, key) : null,
+      nextCursor: last && (newer ? boundary !== null : hasMore)
+        ? encodePeriodCursor(shopId, view, { direction: "next", start: last.periodStart, id: last.id }, key) : null,
+    },
   };
 }
 

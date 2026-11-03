@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient, type ShopSettings } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import type { MerchantAiResponseDelayReadV1, MerchantAiResponseDelayWriteV1 } from "@modainteract/moda-interact-shared/ai-response-delay";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import {
@@ -9,6 +9,7 @@ import {
 
 type Database = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
+type DelaySettings = Prisma.ShopSettingsGetPayload<{ select: { aiResponseDelayMinutes: true; updatedAt: true } }>;
 
 interface ShopIdentity {
   id: string;
@@ -59,7 +60,7 @@ async function assertCurrentShop(tx: Tx, principal: WooInstallationPrincipal, lo
   return shop;
 }
 
-function response(settings: ShopSettings | null): MerchantAiResponseDelayReadV1 {
+function response(settings: DelaySettings | null): MerchantAiResponseDelayReadV1 {
   const revision = settings?.updatedAt.toISOString() ?? "UNCONFIGURED";
   const value = {
     schemaVersion: 1 as const,
@@ -79,7 +80,8 @@ export class MerchantAiResponseDelayService {
   async read(principal: WooInstallationPrincipal): Promise<MerchantAiResponseDelayReadV1> {
     return this.database.$transaction(async (tx) => {
       await assertCurrentShop(tx, principal, false);
-      const settings = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId } });
+      const settings = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId },
+        select: { aiResponseDelayMinutes: true, updatedAt: true } });
       return response(settings);
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
@@ -88,7 +90,8 @@ export class MerchantAiResponseDelayService {
     try {
       return await this.database.$transaction(async (tx) => {
         const shop = await assertCurrentShop(tx, principal, true);
-        const current = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId } });
+        const current = await tx.shopSettings.findUnique({ where: { shopId: principal.shopId },
+          select: { aiResponseDelayMinutes: true, updatedAt: true } });
         const currentResponse = response(current);
         if (currentResponse.revision !== input.expectedRevision) throw new AiResponseDelayConflictError();
         if (currentResponse.aiResponseDelayMinutes === input.aiResponseDelayMinutes) return currentResponse;
@@ -118,7 +121,7 @@ export class MerchantAiResponseDelayService {
       });
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002", "P2034"].includes(error.code)) {
-        throw new AiResponseDelayConflictError();
+        throw new AiResponseDelayConflictError({ cause: error });
       }
       throw error;
     }

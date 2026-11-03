@@ -68,7 +68,8 @@ function fixture(config: {
       findMany: async (args: unknown) => { queries.push({ operation: "findMany", args }); return rows; },
       count: async (args: unknown) => { queries.push({ operation: "count", args }); return rows.length; },
       aggregate: async (args: unknown) => { queries.push({ operation: "aggregate", args });
-        return { _sum: { quantity: rows.reduce((n, item) => n.plus(item.quantity as Prisma.Decimal), new Prisma.Decimal(0)) } }; },
+        return { _count: { _all: rows.length },
+          _sum: { quantity: rows.reduce((n, item) => n.plus(item.quantity as Prisma.Decimal), new Prisma.Decimal(0)) } }; },
     },
     checkoutRecovery: {
       findMany: async (args: unknown) => { queries.push({ operation: "sources", args }); return config.recoveryRows ?? []; },

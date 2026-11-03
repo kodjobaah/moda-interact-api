@@ -4,7 +4,7 @@ import {
   UsageHistoryIntegrityError, UsageHistoryRequestError,
   type UsageHistoryQuery, type UsageHistoryResponse,
 } from "./contract.js";
-import { readPeriodPage, periodSelect, type PeriodRow } from "./periods.js";
+import { readPeriodPageSnapshot, periodSelect, type PeriodRow } from "./periods.js";
 import { readUsageRecoverySources } from "./sources.js";
 import { readUsageChargeSources } from "./attribution.js";
 
@@ -113,34 +113,33 @@ export class MerchantUsageHistoryService {
         throw new UsageHistoryIntegrityError();
       }
       const now = this.now();
-      const current = isPaid && subscription?.billingPeriodId
+      const current = query.view === "current" && isPaid && subscription?.billingPeriodId
         ? await tx.billingPeriod.findFirst({
             where: { id: subscription.billingPeriodId, shopId: principal.shopId }, select: periodSelect,
           }) : null;
       const currentPeriod = isPaid && subscription && periodValid(current, subscription, principal.shopId, now)
         ? current : null;
-      const periodPage = await readPeriodPage(tx, {
+      const periodSnapshot = await readPeriodPageSnapshot(tx, {
         shopId: principal.shopId, view: query.view, cursor: query.periodCursor,
         key: installation.credentialDigest, currentPeriod,
       });
+      const periodPage = periodSnapshot.page;
       let selected: PeriodRow | null = null;
       if (query.periodId !== null) {
         if (query.view === "current") {
           if (query.periodId !== currentPeriod?.id) throw new UsageHistoryRequestError("invalid_period");
           selected = currentPeriod;
         } else {
-          selected = await tx.billingPeriod.findFirst({
-            where: { id: query.periodId, shopId: principal.shopId, status: "CLOSED" }, select: periodSelect,
-          });
+          selected = periodSnapshot.rows.find((period) => period.id === query.periodId) ??
+            await tx.billingPeriod.findFirst({
+              where: { id: query.periodId, shopId: principal.shopId, status: "CLOSED" }, select: periodSelect,
+            });
           if (!selected) throw new UsageHistoryRequestError("invalid_period");
         }
       } else if (query.view === "current") {
         selected = currentPeriod;
       } else {
-        const first = periodPage.items[0];
-        if (first) selected = await tx.billingPeriod.findFirst({
-          where: { id: first.id, shopId: principal.shopId, status: "CLOSED" }, select: periodSelect,
-        });
+        selected = periodSnapshot.rows[0] ?? null;
       }
       const freeLifetime = query.view === "current" && isFree;
       const available = freeLifetime || selected !== null;
@@ -154,13 +153,13 @@ export class MerchantUsageHistoryService {
           : { schemaVersion: 1, ...common };
       }
       const where = usageWhere(principal.shopId, query, selected, freeLifetime);
-      const [events, total, aggregated] = await Promise.all([
+      const [events, aggregated] = await Promise.all([
         tx.usageEvent.findMany({ where, select: usageSelect,
           orderBy: [{ occurredAt: "desc" }, { id: "desc" }],
           skip: (query.page - 1) * query.pageSize, take: query.pageSize }),
-        tx.usageEvent.count({ where }),
-        tx.usageEvent.aggregate({ where, _sum: { quantity: true } }),
+        tx.usageEvent.aggregate({ where, _count: { _all: true }, _sum: { quantity: true } }),
       ]);
+      const total = aggregated._count._all;
       if (!Number.isSafeInteger(total) || total < 0) throw new UsageHistoryIntegrityError();
       const sources = await readUsageRecoverySources(tx, principal.shopId, events);
       const chargedAgainst = query.responseVersion === 2

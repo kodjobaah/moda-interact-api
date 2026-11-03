@@ -164,7 +164,7 @@ test("pending plan, cancellation at period end and NO_CONTRACT states are unchan
     merchantPricingPlanId: "catalogue_next", providerReference: "opaque", createdAt: now,
   }];
   pending.operationTargetPlan = {
-    id: "catalogue_next", displayName: "Next", currency: "USD",
+    id: "catalogue_next", shopifyPlanHandle: "next", displayName: "Next", currency: "USD",
     recurringAmountMinor: 5900, billingPeriod: "EVERY_30_DAYS",
   };
   assert.deepEqual(evaluate(pending).pendingPlan, {
