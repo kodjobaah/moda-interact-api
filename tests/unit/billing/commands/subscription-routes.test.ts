@@ -1,3 +1,5 @@
+import { createLogger, type LogRecord } from "@modainteract/moda-interact-shared/logging";
+import { WooBillingClient } from "../../../../src/woocommerce/billing/woo-billing-client.js";
 import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
@@ -108,7 +110,7 @@ test("recurring provider-unavailable and known errors preserve status, safe erro
   assert.equal(unavailable.events[0]?.data.reason, "billing_provider_unavailable");
   const errorService = {
     async create() { throw new RecurringBillingCommandError(502, "billing_provider_outcome_unknown", "op-safe", "PROVIDER_SAFE"); },
-    async switchPlan() { throw new Error("secret internal provider information"); },
+    async switchPlan() { throw new Error("distinct unexpected recurring diagnostic"); },
     async cancel() { throw new Error("must not be reached"); },
   };
   const { router, events } = commandFixture({ recurring: errorService });
@@ -125,7 +127,7 @@ test("recurring provider-unavailable and known errors preserve status, safe erro
     ["error", "billing.recurring.command.failed", "internal"],
   ]);
   assert.equal(JSON.stringify(events).includes("PROVIDER_SAFE"), false);
-  assert.equal(JSON.stringify(events).includes("secret internal provider information"), false);
+  assert.equal(JSON.stringify(events).includes("distinct unexpected recurring diagnostic"), true);
 });
 
 test("recurring auth failures cannot reach provider services and unmatched methods always fall through", async () => {
@@ -153,4 +155,46 @@ test("recurring auth failures cannot reach provider services and unmatched metho
   ]) {
     assert.equal(await router.handle({ method, url } as IncomingMessage, {} as ServerResponse), false);
   }
+});
+
+test("all recurring admission mismatch envelopes omit durable/provider identifiers", async () => {
+  const mismatch = new RecurringBillingCommandError(409, "billing_shop_invalid", undefined, undefined, { cause: new Error("helper mismatch") });
+  const fail = async () => { throw mismatch; };
+  const { router } = commandFixture({ recurring: { create: fail, switchPlan: fail, cancel: fail } });
+  await withCommandRouter(router, async origin => {
+    for (const [path, method, body] of [[subscriptionPath, "POST", planBody], [switchPath, "POST", planBody], [subscriptionPath, "DELETE", undefined]] as const) {
+      const reply = await fetch(origin + path, { method, headers: authorizedHeaders, ...(body ? { body } : {}) });
+      assert.equal(reply.status, 409); assert.deepEqual(await reply.json(), { error: "billing_shop_invalid" });
+    }
+  });
+});
+
+test("shared logger emits bounded provider details and omits fabricated provider evidence", async () => {
+  const records: LogRecord[] = [];
+  const logger = createLogger({ serviceName: "api-test", environment: "test", sink: record => { records.push(record); } });
+  const client = new WooBillingClient({
+    environment: "production", baseUrl: "https://woocommerce.com/wp-json/wccom/billing/1.0/",
+    apiKey: "private-key-value", apiSecret: "private-secret-value",
+  }, async () => new Response(JSON.stringify({
+    code: "upstream_refused", message: "distinct real decline private-secret-value https://woocommerce.com/private-confirmation",
+    email: "private-buyer@example.invalid", phone: "+15555550123",
+  }), { status: 422, headers: { "content-type": "application/json" } }));
+  let providerFailure: unknown;
+  try { await client.createCharge({ name: "Credits", price: "1.00", return_url: "https://merchant.invalid" }); }
+  catch (error) { providerFailure = error; }
+  let domainFailure = new RecurringBillingCommandError(502, "billing_provider_outcome_unknown", "operation", "PROVIDER_REJECTED", { cause: providerFailure });
+  const fail = async () => { throw domainFailure; };
+  const { router } = commandFixture({ logger, recurring: { create: fail, switchPlan: fail, cancel: fail } });
+  await withCommandRouter(router, async origin => {
+    const reply = await fetch(origin + subscriptionPath, { method: "POST", headers: authorizedHeaders, body: planBody });
+    assert.equal(reply.status, 502);
+    assert.deepEqual(await reply.json(), { error: "billing_provider_outcome_unknown", operationId: "operation", providerErrorCode: "PROVIDER_REJECTED" });
+    domainFailure = new RecurringBillingCommandError(409, "billing_shop_invalid");
+    const other = await fetch(origin + subscriptionPath, { method: "POST", headers: authorizedHeaders, body: planBody });
+    assert.equal(other.status, 409);
+  });
+  assert.equal((records[0]?.data?.providerError as { httpStatus: number }).httpStatus, 422);
+  assert.match(JSON.stringify(records[0]), /distinct real decline/);
+  assert.doesNotMatch(JSON.stringify(records), /private-secret-value|private-confirmation|private-key-value|private-buyer|15555550123/);
+  assert.equal(Object.hasOwn(records[1]?.data ?? {}, "providerError"), false);
 });

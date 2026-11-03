@@ -46,14 +46,14 @@ export class InitialFreeActivationConflictError extends Error {
 }
 
 export class RetryFreeActivationTransactionError extends Error {
-  constructor() {
-    super("retry_free_activation_transaction");
+  constructor(options?: ErrorOptions) {
+    super("retry_free_activation_transaction", options);
     this.name = "RetryFreeActivationTransactionError";
   }
 }
 
 export type OperationalCataloguePlan = MerchantPricingPlan & {
-  features: Array<{
+  features?: Array<{
     featureId: string;
     configuration: Prisma.JsonValue;
     feature: { key: string; systemRequired: boolean } | null;
@@ -149,7 +149,7 @@ export class InitialWooFreeActivationService {
           },
         });
       } catch (error) {
-        if (isPrismaCode(error, "P2002")) throw new RetryFreeActivationTransactionError();
+        if (isPrismaCode(error, "P2002")) throw new RetryFreeActivationTransactionError({ cause: error });
         throw error;
       }
     }
@@ -191,7 +191,12 @@ export class InitialWooFreeActivationService {
       return existing;
     }
 
-    if (!(await isValidMaterializationConfiguration(transaction, catalogue))) {
+    const features = catalogue.features ?? await transaction.merchantPricingPlanFeature.findMany({
+      where: { merchantPricingPlanId: catalogue.id },
+      select: { featureId: true, configuration: true, feature: { select: { key: true, systemRequired: true } } },
+    });
+    const materializationCatalogue = { ...catalogue, features };
+    if (!(await isValidMaterializationConfiguration(transaction, materializationCatalogue))) {
       throw new FreePlanConfigurationUnavailableError(
         expectedKind === BillingPlanKind.FREE ? "free_feature_configuration_invalid" : "paid_feature_configuration_invalid",
       );
@@ -213,7 +218,7 @@ export class InitialWooFreeActivationService {
           recoveryCreditsPerPack: null,
           shopifyRecoveryCreditPackEventHandle: null,
           features: {
-            create: catalogue.features.map((mapping) => ({
+            create: features.map((mapping) => ({
               featureId: mapping.featureId,
               enabled: true,
               configuration: mapping.configuration === null
@@ -226,7 +231,7 @@ export class InitialWooFreeActivationService {
       await markCatalogueMaterialized(transaction, catalogue);
       return plan;
     } catch (error) {
-      if (isPrismaCode(error, "P2002")) throw new RetryFreeActivationTransactionError();
+      if (isPrismaCode(error, "P2002")) throw new RetryFreeActivationTransactionError({ cause: error });
       throw error;
     }
   }
@@ -278,7 +283,7 @@ function isEmptyInitialSubscription(subscription: {
 
 async function isValidMaterializationConfiguration(
   transaction: Prisma.TransactionClient,
-  catalogue: OperationalCataloguePlan,
+  catalogue: OperationalCataloguePlan & { features: NonNullable<OperationalCataloguePlan["features"]> },
 ): Promise<boolean> {
   if (
     !catalogue.features.some((mapping) =>

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { createServer, request as httpRequest, type IncomingMessage } from "node:http";
 import { createBillingCommandRoutes } from "../../../../src/billing/commands/routes.js";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
@@ -12,6 +13,7 @@ export const authorizedHeaders = {
 
 export type LogEvent = { level: "info" | "warn" | "error"; name: string; data: Record<string, unknown> };
 export type CommandFixtureOptions = {
+  logger?: StructuredLogger;
   authError?: Error;
   recurring?: {
     create: (...args: unknown[]) => Promise<unknown>;
@@ -51,7 +53,7 @@ export function commandFixture(options: CommandFixtureOptions = {}) {
     ...(options.recurring ? { recurringSubscriptionCommandService: options.recurring as never } : {}),
     ...(options.credit ? { recoveryCreditPurchaseCommandService: options.credit as never } : {}),
     authenticator: authenticator as never,
-    logger: logger as never,
+    logger: options.logger ?? logger as never,
     now: () => 1_000,
   });
   return { router, calls, events };

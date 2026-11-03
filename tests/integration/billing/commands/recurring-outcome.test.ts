@@ -11,7 +11,7 @@ const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 test("PostgreSQL serializes simultaneous provider-reference collisions across merchants", {
   skip: !databaseUrl,
 }, async () => {
-  const db = new PrismaClient({ datasources: { db: { url: databaseUrl! } } });
+  const db = new PrismaClient({ transactionOptions: { timeout: 30_000, maxWait: 30_000 }, datasources: { db: { url: databaseUrl! } } });
   const suffix = randomUUID().replaceAll("-", "");
   const shopDomains: string[] = [];
   const planId = `api005_plan_${suffix}`;

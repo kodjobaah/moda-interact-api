@@ -13,6 +13,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { timingSafeEqual } from "node:crypto";
+import { requireCurrentWooMutationPrincipal, WooMutationPrincipalConflictError } from "../../auth/woo-installation/current-mutation-principal.js";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import {
   FreePlanConfigurationUnavailableError,
@@ -31,15 +32,6 @@ import {
 // transaction. Provider calls and operation outcomes stay in the orchestrator.
 type BillingDatabase = Pick<PrismaClient, "$transaction">;
 export type MaterializedPlanResolver = Pick<InitialWooFreeActivationService, "resolvePaidPlan">;
-
-interface LockedShop {
-  id: string;
-  domain: string;
-  platform: string;
-  shopifyShopId: string | null;
-  status: string;
-  onboardingCompleted: boolean;
-}
 
 export interface RecurringCommandIntent {
   operation: BillingOperation;
@@ -63,17 +55,8 @@ export class RecurringIntentPersistence {
   ): Promise<RecurringCommandIntent> {
     try {
       return await this.database.$transaction(async (transaction) => {
-        await transaction.$queryRaw(Prisma.sql`
-          SELECT "id" FROM "commerce"."Shop" WHERE "id" = ${principal.shopId} FOR UPDATE
-        `);
-        const shop = await transaction.shop.findUnique({
-          where: { id: principal.shopId },
-          select: { id: true, domain: true, platform: true, shopifyShopId: true, status: true, onboardingCompleted: true },
-        }) as LockedShop | null;
-        if (
-          !shop || shop.id !== principal.shopId || shop.domain !== principal.canonicalSiteUrl ||
-          shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null || shop.status !== "ACTIVE"
-        ) throw new RecurringBillingCommandError(409, "billing_shop_invalid");
+        const currentPrincipal = await requireCurrentWooMutationPrincipal(transaction, principal);
+        const shop = { id: currentPrincipal.shopId, domain: currentPrincipal.shopDomain, onboardingCompleted: currentPrincipal.onboardingCompleted };
         if (!shop.onboardingCompleted) throw new RecurringBillingCommandError(409, "billing_not_initialized");
 
         await transaction.$queryRaw(Prisma.sql`
@@ -103,35 +86,30 @@ export class RecurringIntentPersistence {
           return replayIntent(existing, kind, shop.domain, merchantPricingPlanId, replayCatalogue);
         }
 
-        const operations = await transaction.billingOperation.findMany({
-          where: {
-            shopId: shop.id,
-            kind: { in: [BillingOperationKind.SUBSCRIPTION_CREATE, BillingOperationKind.PLAN_SWITCH, BillingOperationKind.CANCEL] },
-          },
-          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
-          select: { kind: true, state: true, providerReference: true },
-        });
-        const hasUnresolvedOperation = operations.some((operation) =>
-          operation.state === BillingOperationState.INITIATING ||
-          operation.state === BillingOperationState.AWAITING_CONFIRMATION ||
-          operation.state === BillingOperationState.OUTCOME_UNKNOWN,
-        );
         const currentProviderReference = nonBlank(subscription?.providerSubscriptionId ?? null);
-        const hasConfirmedCancellationForCurrentContract = operations.some((operation) =>
-          operation.kind === BillingOperationKind.CANCEL && operation.state === BillingOperationState.CONFIRMED &&
-          (subscription?.cancelAtPeriodEnd === true || !currentProviderReference ||
-            operation.providerReference === currentProviderReference),
-        );
         const canCreateAfterTerminalCancellation = kind === "SUBSCRIPTION_CREATE" &&
           subscription?.status === SubscriptionProjectionStatus.ACTIVE &&
           subscription?.plan?.kind === BillingPlanKind.FREE &&
           subscription.providerSubscriptionId === null &&
           subscription.billingPeriodId === null &&
           !subscription.cancelAtPeriodEnd;
-        if (hasUnresolvedOperation ||
-          (hasConfirmedCancellationForCurrentContract && !canCreateAfterTerminalCancellation)) {
-          throw new RecurringBillingCommandError(409, "billing_operation_conflict");
-        }
+        const blocker = await transaction.billingOperation.findFirst({
+          where: {
+            shopId: shop.id,
+            kind: { in: [BillingOperationKind.SUBSCRIPTION_CREATE, BillingOperationKind.PLAN_SWITCH, BillingOperationKind.CANCEL] },
+            OR: [
+              { state: { in: [BillingOperationState.INITIATING, BillingOperationState.AWAITING_CONFIRMATION, BillingOperationState.OUTCOME_UNKNOWN] } },
+              ...(!canCreateAfterTerminalCancellation ? [{
+                kind: BillingOperationKind.CANCEL,
+                state: BillingOperationState.CONFIRMED,
+                ...(subscription?.cancelAtPeriodEnd === true || !currentProviderReference
+                  ? {} : { providerReference: currentProviderReference }),
+              }] : []),
+            ],
+          },
+          select: { id: true },
+        });
+        if (blocker) throw new RecurringBillingCommandError(409, "billing_operation_conflict");
         if (!subscription?.plan || subscription.planId !== subscription.plan.id) {
           throw new RecurringBillingCommandError(409, "billing_subscription_invalid");
         }
@@ -142,7 +120,6 @@ export class RecurringIntentPersistence {
           if (!merchantPricingPlanId) throw new RecurringBillingCommandError(400, "invalid_request");
           target = await transaction.merchantPricingPlan.findUnique({
             where: { id: merchantPricingPlanId },
-            include: { features: { include: { feature: true } } },
           });
           if (target?.planKind === MerchantPricingPlanKind.FREE) {
             throw new RecurringBillingCommandError(409, "free_plan_uses_cancellation");
@@ -214,18 +191,21 @@ export class RecurringIntentPersistence {
         return { operation, canonicalSiteUrl: shop.domain, targetPlan: target, replay: false };
       }, { isolationLevel: "ReadCommitted" });
     } catch (error) {
+      if (error instanceof WooMutationPrincipalConflictError) {
+        throw new RecurringBillingCommandError(409, "billing_shop_invalid", undefined, undefined, { cause: error });
+      }
       if (error instanceof RecurringBillingCommandError) throw error;
       if (error instanceof FreePlanConfigurationUnavailableError) {
-        throw new RecurringBillingCommandError(409, "billing_plan_materialization_invalid");
+        throw new RecurringBillingCommandError(409, "billing_plan_materialization_invalid", undefined, undefined, { cause: error });
       }
       if (error instanceof RetryFreeActivationTransactionError) {
         if (materializationRetry === 0) {
           return this.persistIntent(principal, kind, requestKey, merchantPricingPlanId, 1);
         }
-        throw new RecurringBillingCommandError(409, "billing_plan_materialization_conflict");
+        throw new RecurringBillingCommandError(409, "billing_plan_materialization_conflict", undefined, undefined, { cause: error });
       }
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new RecurringBillingCommandError(409, "billing_operation_conflict");
+        throw new RecurringBillingCommandError(409, "billing_operation_conflict", undefined, undefined, { cause: error });
       }
       throw error;
     }

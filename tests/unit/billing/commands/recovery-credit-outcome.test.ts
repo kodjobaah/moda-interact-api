@@ -37,7 +37,7 @@ function fixture(state: BillingOperationState = BillingOperationState.INITIATING
         events.push("read.collision");
         return rows.find((row) => row.providerReference === query.where.providerReference && row.shopId !== query.where.shopId.not) ?? null;
       },
-      updateMany: async (query: {
+      updateManyAndReturn: async (query: {
         where: { id: string; state: BillingOperationState; providerReference?: null; confirmationUrl?: null };
         data: Partial<BillingOperation>;
       }) => {
@@ -45,9 +45,9 @@ function fixture(state: BillingOperationState = BillingOperationState.INITIATING
         const row = rows.find((candidate) => candidate.id === query.where.id);
         if (!row || row.state !== query.where.state ||
           ("providerReference" in query.where && row.providerReference !== query.where.providerReference) ||
-          ("confirmationUrl" in query.where && row.confirmationUrl !== query.where.confirmationUrl)) return { count: 0 };
+          ("confirmationUrl" in query.where && row.confirmationUrl !== query.where.confirmationUrl)) return [];
         Object.assign(row, query.data);
-        return { count: 1 };
+        return [row];
       },
       findUnique: async (query: { where: { id: string } }) => {
         events.push("read.current");
@@ -134,7 +134,7 @@ test("successful outcome obtains the provider-reference advisory lock before che
   assert.equal(operation.confirmationUrl, confirmationUrl);
   assert.equal(operation.lastErrorCode, null);
   assert.deepEqual(h.events, [
-    "transaction.begin", "lock.reference", "read.collision", "update.operation", "read.current", "transaction.end",
+    "transaction.begin", "lock.reference", "read.collision", "update.operation", "transaction.end",
   ]);
   assert.equal(h.inTransaction(), false);
   assert.deepEqual(operationResponse(operation), {
@@ -195,7 +195,7 @@ test("definitive Woo provider rejection persists FAILED, preserves REQUESTED cre
   assert.equal(h.operation.state, BillingOperationState.FAILED);
   assert.equal(h.operation.lastErrorCode, "PROVIDER_REJECTED");
   assert.equal(h.operation.providerReference, null);
-  assert.deepEqual(h.events, ["transaction.begin", "update.operation", "read.current", "transaction.end"]);
+  assert.deepEqual(h.events, ["transaction.begin", "update.operation", "transaction.end"]);
   await expectError(Promise.resolve().then(() => replayOperation(h.operation)),
     409, "billing_operation_failed", "PROVIDER_REJECTED");
 });
@@ -237,4 +237,15 @@ test("missing operation fails closed, and empty purchase evidence cannot form an
   invalid.recoveryCreditPurchaseId = null;
   assert.throws(() => operationResponse(invalid), (error: unknown) =>
     error instanceof RecoveryCreditPurchaseCommandError && error.statusCode === 409);
+});
+
+test("purchase provider failure retains the original diagnostic chain", async () => {
+  const h = fixture();
+  const original = new Error("distinct purchase transport diagnostic");
+  const provider = new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_TRANSPORT_ERROR", { cause: original });
+  await assert.rejects(h.outcome.failProviderOperation(h.operation, provider), (error: unknown) => {
+    assert.ok(error instanceof RecoveryCreditPurchaseCommandError);
+    assert.equal(error.cause, provider); assert.equal(provider.cause, original);
+    return true;
+  });
 });

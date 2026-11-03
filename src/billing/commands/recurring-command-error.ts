@@ -4,8 +4,9 @@ export class RecurringBillingCommandError extends Error {
     readonly code: string,
     readonly operationId?: string,
     readonly safeProviderCode?: string,
+    options?: ErrorOptions,
   ) {
-    super(code);
+    super(code, options);
     this.name = "RecurringBillingCommandError";
   }
 }

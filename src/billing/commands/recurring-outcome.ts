@@ -73,8 +73,15 @@ export class RecurringOutcomePersistence {
       state: outcome === "DEFINITE_REJECTION" ? BillingOperationState.FAILED : BillingOperationState.OUTCOME_UNKNOWN,
       lastErrorCode: safeCode,
     });
-    if (result.error) throw result.error;
-    throw providerOutcomeError(result.operation);
+    if (result.error) throw new RecurringBillingCommandError(
+      result.error.statusCode, result.error.code, result.error.operationId,
+      result.error.safeProviderCode, { cause: error },
+    );
+    throw new RecurringBillingCommandError(
+      result.operation.state === BillingOperationState.FAILED ? 422 : 502,
+      result.operation.state === BillingOperationState.FAILED ? "billing_provider_rejected" : "billing_provider_outcome_unknown",
+      result.operation.id, result.operation.lastErrorCode ?? undefined, { cause: error },
+    );
   }
 
   private async confirmSubscriptionOperation(
@@ -94,12 +101,12 @@ export class RecurringOutcomePersistence {
           select: { id: true },
         });
         if (collision) {
-          const changed = await transaction.billingOperation.updateMany({
+          const changed = await transaction.billingOperation.updateManyAndReturn({
             where: { id: operation.id, state: BillingOperationState.INITIATING },
             data: { state: BillingOperationState.OUTCOME_UNKNOWN, lastErrorCode: "PROVIDER_CONTRACT_COLLISION" },
           });
-          if (changed.count === 1) {
-            const current = await requiredOperation(transaction, operation.id);
+          if (changed.length === 1) {
+            const current = changed[0]!;
             return {
               operation: current,
               error: new RecurringBillingCommandError(502, "billing_provider_outcome_unknown", operation.id, current.lastErrorCode ?? undefined),
@@ -107,7 +114,7 @@ export class RecurringOutcomePersistence {
           }
           return readOperationResult(transaction, operation.id);
         }
-        const changed = await transaction.billingOperation.updateMany({
+        const changed = await transaction.billingOperation.updateManyAndReturn({
           where: { id: operation.id, state: BillingOperationState.INITIATING, providerReference: null },
           data: {
             state: BillingOperationState.AWAITING_CONFIRMATION,
@@ -116,8 +123,8 @@ export class RecurringOutcomePersistence {
             lastErrorCode: null,
           },
         });
-        return changed.count === 1
-          ? { operation: await requiredOperation(transaction, operation.id) }
+        return changed.length === 1
+          ? { operation: changed[0]! }
           : readOperationResult(transaction, operation.id);
       });
     }
@@ -139,12 +146,12 @@ export class RecurringOutcomePersistence {
     data: { state: BillingOperationState; confirmationUrl?: string; lastErrorCode: string | null },
   ): Promise<OperationResult> {
     return this.database.$transaction(async (transaction) => {
-      const changed = await transaction.billingOperation.updateMany({
+      const changed = await transaction.billingOperation.updateManyAndReturn({
         where: { id: operationId, state: BillingOperationState.INITIATING },
         data,
       });
-      return changed.count === 1
-        ? { operation: await requiredOperation(transaction, operationId) }
+      return changed.length === 1
+        ? { operation: changed[0]! }
         : readOperationResult(transaction, operationId);
     });
   }
@@ -193,12 +200,6 @@ function operationStateError(operation: BillingOperation): RecurringBillingComma
   return new RecurringBillingCommandError(409, "billing_operation_failed", operation.id, operation.lastErrorCode ?? undefined);
 }
 
-function providerOutcomeError(operation: BillingOperation): RecurringBillingCommandError {
-  return operation.state === BillingOperationState.FAILED
-    ? new RecurringBillingCommandError(422, "billing_provider_rejected", operation.id, operation.lastErrorCode ?? undefined)
-    : new RecurringBillingCommandError(502, "billing_provider_outcome_unknown", operation.id, operation.lastErrorCode ?? undefined);
-}
-
 function operationResponse(operation: BillingOperation): RecurringCommandResponse {
   if (operation.state !== BillingOperationState.AWAITING_CONFIRMATION && operation.state !== BillingOperationState.CONFIRMED) {
     throw operationStateError(operation);
@@ -244,8 +245,8 @@ function validateSubscriptionResponse(
   let confirmationUrl: URL;
   try {
     confirmationUrl = new URL(response.confirmation_url);
-  } catch {
-    throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID");
+  } catch (cause) {
+    throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID", { cause });
   }
   const expectedHost = environment === "sandbox" ? "sandbox.woocommerce.com" : "woocommerce.com";
   if (

@@ -46,17 +46,17 @@ function fixture(
         events.push("collision-lookup");
         return collisionShop && args.where.shopId.not !== collisionShop ? { id: "other-operation" } : null;
       },
-      updateMany: async (args: OperationMutation) => {
+      updateManyAndReturn: async (args: OperationMutation) => {
         events.push("update-CAS");
         updates.push(args);
         beforeUpdate?.();
         beforeUpdate = undefined;
         if (args.where.id !== current.id || args.where.state !== current.state ||
           ("providerReference" in args.where && current.providerReference !== args.where.providerReference)) {
-          return { count: 0 };
+          return [];
         }
         current = { ...current, ...args.data };
-        return { count: 1 };
+        return [current];
       },
       findUnique: async (args: { where: { id: string } }) => {
         events.push("read-current");
@@ -126,7 +126,7 @@ test("create confirmation locks provider reference before collision lookup and g
     state: "AWAITING_CONFIRMATION", confirmationUrl: evidence.confirmationUrl,
   });
   assert.deepEqual(h.events, [
-    "transaction-begin", "lock-provider-reference", "collision-lookup", "update-CAS", "read-current", "transaction-commit",
+    "transaction-begin", "lock-provider-reference", "collision-lookup", "update-CAS", "transaction-commit",
   ]);
   assert.deepEqual(h.updates[0]?.where, {
     id: "operation-1", state: BillingOperationState.INITIATING, providerReference: null,
@@ -247,4 +247,15 @@ test("replay of terminal states never enters an outcome transaction", () => {
   assert.throws(() => h.outcomes.replayOperation(h.current()),
     (error: unknown) => assertCommandError(error, 409, "billing_operation_failed"));
   assert.equal(h.events.length, 0);
+});
+
+test("recurring provider failure retains the original diagnostic chain", async () => {
+  const h = fixture();
+  const original = new Error("distinct transport diagnostic");
+  const provider = new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_TRANSPORT_ERROR", { cause: original });
+  await assert.rejects(h.outcomes.failProviderOperation("operation-1", provider), (error: unknown) => {
+    assert.ok(error instanceof RecurringBillingCommandError);
+    assert.equal(error.cause, provider); assert.equal(provider.cause, original);
+    return true;
+  });
 });
