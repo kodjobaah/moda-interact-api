@@ -44,7 +44,7 @@ export async function readPromotions(
   const offersPagination = pagination(options.offerPage, offerCount);
   const historyPagination = pagination(options.historyPage, historyCount);
   const [campaigns, grants] = await Promise.all([
-    tx.promotionCampaign.findMany({
+    offerCount === 0 ? Promise.resolve([]) : tx.promotionCampaign.findMany({
       where: offersWhere,
       orderBy: [{ expiresAt: "asc" }, { createdAt: "desc" }, { id: "desc" }],
       skip: (offersPagination.page - 1) * PROMOTION_PAGE_SIZE,
@@ -61,7 +61,7 @@ export async function readPromotions(
         },
       },
     }),
-    tx.promotionalCreditGrant.findMany({
+    historyCount === 0 ? Promise.resolve([]) : tx.promotionalCreditGrant.findMany({
       where: { shopId },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       skip: (historyPagination.page - 1) * PROMOTION_PAGE_SIZE,

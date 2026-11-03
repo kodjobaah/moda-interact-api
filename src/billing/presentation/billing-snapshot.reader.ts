@@ -191,14 +191,14 @@ export class BillingSnapshotReader {
   readCataloguePlanById(id: string) {
     return this.transaction.merchantPricingPlan.findUnique({
       where: { id },
-      select: { id: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
+      select: { id: true, shopifyPlanHandle: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
     });
   }
 
   readCataloguePlanByHandle(shopifyPlanHandle: string) {
     return this.transaction.merchantPricingPlan.findUnique({
       where: { shopifyPlanHandle },
-      select: { id: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
+      select: { id: true, shopifyPlanHandle: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
     });
   }
 

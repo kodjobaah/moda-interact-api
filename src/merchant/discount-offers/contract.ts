@@ -8,8 +8,9 @@ export type OfferMode = "NONE" | "FIXED" | "AI_BEST_APPLICABLE";
 export class DiscountOffersError extends Error {
   constructor(readonly status: 400 | 409 | 413 | 422 | 503, readonly code:
     "invalid_request" | "request_too_large" | "shop_unavailable" | "catalogue_not_current" |
-    "offers_conflict" | "selected_coupon_not_found" | "selection_required" | "selection_limit_exceeded") {
-    super(code);
+    "offers_conflict" | "selected_coupon_not_found" | "selection_required" | "selection_limit_exceeded",
+    options?: ErrorOptions) {
+    super(code, options);
   }
 }
 

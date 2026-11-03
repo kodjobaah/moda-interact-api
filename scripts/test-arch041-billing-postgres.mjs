@@ -1,5 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { copyFileSync, mkdtempSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import process from "node:process";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -12,6 +15,7 @@ const user = `arch041_${suffix.slice(16, 28)}`;
 const password = randomUUID();
 const initialSuites = [
   "tests/integration/billing/presentation/billing-read.postgres.test.ts",
+  "tests/integration/billing/purchase-history/arch055-history.postgres.test.ts",
   "tests/integration/billing/commands/recurring-subscription-command.postgres.test.ts",
   "tests/integration/billing/commands/recovery-credit-purchase-command.postgres.test.ts",
   "tests/integration/billing/commands/recurring-outcome.test.ts",
@@ -25,6 +29,7 @@ for (const file of additionalSuites) {
 }
 
 let started = false;
+let baselineDirectory;
 let phase = "starting PostgreSQL";
 const run = (command, args, options = {}) =>
   execFileSync(command, args, { encoding: "utf8", stdio: "pipe", ...options });
@@ -70,16 +75,45 @@ try {
   run("npx", ["--no-install", "prisma", "migrate", "deploy", "--schema", "database/prisma/schema.prisma"], {
     env, stdio: "inherit",
   });
-  phase = "running billing PostgreSQL suites";
-  run("node", ["--import", "tsx", "--test", "--test-concurrency=1", ...initialSuites, ...additionalSuites], {
-    env, stdio: "inherit",
-  });
+  if (process.env.ARCH055_COMMERCIAL_COMPARE_BASELINE === "1") {
+    const measurementTest = initialSuites[1];
+    const baselineRef = "fa2a857ed2ccfd629a7c9f2749ce4a38cc143ff0";
+    phase = "preparing isolated ARCH-055 commercial baseline";
+    baselineDirectory = mkdtempSync(join(tmpdir(), "moda-api006-paired-"));
+    const archive = execFileSync("git", ["archive", baselineRef], { maxBuffer: 100 * 1024 * 1024 });
+    execFileSync("tar", ["-xf", "-", "-C", baselineDirectory], { input: archive });
+    execFileSync("mkdir", ["-p", join(baselineDirectory, "tests/integration/billing/purchase-history")]);
+    copyFileSync(measurementTest, join(baselineDirectory, measurementTest));
+    symlinkSync(join(process.cwd(), "node_modules"), join(baselineDirectory, "node_modules"), "dir");
+    // Identical canonical schema; isolated DBs prevent fixture growth in one
+    // version contaminating the other's append-only accounting evidence.
+    for (const version of ["candidate", "baseline"]) {
+      docker(["exec", name, "psql", "-U", user, "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c",
+        `CREATE DATABASE "${database}_${version}" TEMPLATE "${database}"`]);
+    }
+    for (const version of ["candidate", "baseline"]) {
+      const versionUrl = `postgresql://${user}:${password}@127.0.0.1:${mappedPort}/${database}_${version}`;
+      phase = `measuring ARCH-055 commercial ${version}`;
+      run("node", ["--import", "tsx", "--test", "--test-concurrency=1", "--test-name-pattern",
+        "ARCH-055 commercial paired M11-M14 profiles", measurementTest], {
+        cwd: version === "baseline" ? baselineDirectory : process.cwd(),
+        env: { ...env, DATABASE_URL: versionUrl, WOO_INSTALLATION_TEST_DATABASE_URL: versionUrl,
+          ARCH055_COMMERCIAL_VERSION: version }, stdio: "inherit",
+      });
+    }
+  } else {
+    phase = "running billing PostgreSQL suites";
+    run("node", ["--import", "tsx", "--test", "--test-concurrency=1", ...initialSuites, ...additionalSuites], {
+      env, stdio: "inherit",
+    });
+  }
 } catch {
   // execFileSync exceptions can include the full Docker argv, including the
   // generated POSTGRES_PASSWORD. Never print that error object or its stack.
   process.stderr.write(`ARCH-041 billing PostgreSQL validation failed while ${phase}.\n`);
   process.exitCode = 1;
 } finally {
+  if (baselineDirectory) rmSync(baselineDirectory, { recursive: true, force: true });
   if (started) {
     try {
       // Cleanup is required even when migrations or any suite fails.

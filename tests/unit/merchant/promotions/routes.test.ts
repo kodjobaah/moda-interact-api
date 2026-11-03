@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import test from "node:test";
+import { Prisma } from "@prisma/client";
+import { createLogger, LOG_VALUE_LIMITS, type StructuredLogger, type LogRecord } from "@modainteract/moda-interact-shared/logging";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import {
   PROMOTIONS_PATH, PROMOTION_SELECTION_PATH, PromotionDomainError,
@@ -25,7 +27,7 @@ function response() {
   } as unknown as ServerResponse;
   return { raw, result: () => ({ status, headers, body: JSON.parse(body) as Record<string, unknown> }) };
 }
-function factory(options: { unauthorized?: boolean; fail?: Error; corrupt?: boolean } = {}) {
+function factory(options: { unauthorized?: boolean; fail?: Error; corrupt?: boolean; logger?: StructuredLogger } = {}) {
   const calls: string[] = []; const logs: Record<string, unknown>[] = [];
   const route = createMerchantPromotionsRoutes({
     authenticator: { authenticate: async () => { calls.push("auth");
@@ -39,7 +41,7 @@ function factory(options: { unauthorized?: boolean; fail?: Error; corrupt?: bool
         assert.deepEqual(value, payload); if (options.fail) throw options.fail;
         return { schemaVersion: 1, revision, selection }; },
     } as never,
-    logger: { info: (_: string, data: Record<string, unknown>) => logs.push(data),
+    logger: options.logger ?? { info: (_: string, data: Record<string, unknown>) => logs.push(data),
       warn: (_: string, data: Record<string, unknown>) => logs.push(data),
       error: (_: string, data: Record<string, unknown>) => logs.push(data) } as never,
   });
@@ -99,4 +101,150 @@ test("unknown paths and HTTP methods fall through untouched", async () => {
   assert.equal(await f.route.handle(request("POST", PROMOTIONS_PATH), r.raw), false);
   assert.equal(await f.route.handle(request("GET", "/outside"), r.raw), false);
   assert.deepEqual(f.calls, []);
+});
+
+
+test("promotion routes retain wrapped database cause/code through the real Shared sink", async () => {
+  for (const method of ["GET", "PUT"]) {
+    const records: LogRecord[] = [];
+    const databaseError = new Prisma.PrismaClientKnownRequestError(
+      "Original serialization failure while selecting promotional credits",
+      { code: "P2034", clientVersion: "test" },
+    );
+    const wrapped = new PromotionDomainError(409, "promotion_revision_conflict", { cause: databaseError });
+    const f = factory({ fail: wrapped, logger: createLogger({
+      serviceName: "api006-promotions-test", environment: "test", sink: record => records.push(record),
+    }) });
+    const r = response();
+    await f.route.handle(request(method, method === "GET" ? PROMOTIONS_PATH : PROMOTION_SELECTION_PATH), r.raw);
+    assert.equal(r.result().status, 409);
+    assert.deepEqual(r.result().body, { error: "promotion_revision_conflict" });
+    assert.equal(r.result().headers["cache-control"], "private, no-store");
+    assert.equal(records.length, 1);
+    assert.equal(records[0]!.event, "merchant.promotions.access.denied");
+    assert.equal(records[0]!.data?.databaseCode, "P2034");
+    assert.deepEqual(records[0]!.data?.errorCause, {
+      name: databaseError.name, message: databaseError.message,
+    });
+    assert.equal(wrapped.cause, databaseError);
+    assert.equal(records[0]!.data?.redactionApplied, false);
+    assert.ok(!JSON.stringify(r.result().body).includes(databaseError.message));
+  }
+});
+
+test("promotion diagnostics redact sensitive cause text and omit arbitrary database payloads", async () => {
+  const records: LogRecord[] = [];
+  const original = "Original serialization failure; postgres://reader:db-password@private/db " +
+    "Bearer bearer-value; token=token-value; password=password-value; user@example.invalid +447700900123";
+  const databaseError = new Prisma.PrismaClientKnownRequestError(original, {
+    code: "P2034", clientVersion: "test",
+    meta: { query: "SELECT customer-body", password: "meta-value", payload: { customer: "customer-value" } },
+  });
+  const wrapped = new PromotionDomainError(409, "promotion_revision_conflict", { cause: databaseError });
+  const f = factory({ fail: wrapped, logger: createLogger({
+    serviceName: "api006-promotions-test", environment: "test", sink: record => records.push(record),
+  }) });
+  const r = response();
+  await f.route.handle(request("PUT", PROMOTION_SELECTION_PATH), r.raw);
+  const privateLog = JSON.stringify(records);
+  for (const sensitive of ["postgres://", "db-password", "bearer-value", "token-value", "password-value",
+    "user@example.invalid", "447700900123", "customer-body", "meta-value", "customer-value"]) {
+    assert.equal(privateLog.includes(sensitive), false, sensitive);
+  }
+  assert.ok(privateLog.includes("Original serialization failure"));
+  assert.equal(records[0]!.data?.databaseCode, "P2034");
+  assert.equal(records[0]!.data?.redactionApplied, true);
+  assert.deepEqual(r.result().body, { error: "promotion_revision_conflict" });
+  assert.equal(databaseError.message, original);
+  assert.equal(wrapped.cause, databaseError);
+
+  const longError = new Error("x".repeat(LOG_VALUE_LIMITS.maxStringLength - 8) + " token=" + "boundary-value".repeat(100));
+  const boundedRecords: LogRecord[] = [];
+  const bounded = factory({ fail: new PromotionDomainError(409, "promotion_revision_conflict", { cause: longError }),
+    logger: createLogger({ serviceName: "api006-promotions-test", environment: "test",
+      sink: record => boundedRecords.push(record) }) });
+  const boundedResponse = response();
+  await bounded.route.handle(request("PUT", PROMOTION_SELECTION_PATH), boundedResponse.raw);
+  assert.equal(boundedResponse.result().status, 409);
+  assert.equal(JSON.stringify(boundedRecords).includes("boundary-value"), false);
+  const cause = boundedRecords[0]!.data?.errorCause as { message: string };
+  assert.ok(cause.message.length <= LOG_VALUE_LIMITS.maxStringLength + 20);
+  assert.equal(boundedRecords[0]!.data?.databaseCode, undefined, "no database code may be invented");
+});
+
+
+test("promotions Prisma multiline diagnostics retain failure reasons without invocation/customer context", async () => {
+  const foreignKey = "Foreign key constraint violated on the constraint: safe_fk_constraint";
+  const transaction = "Transaction failed due to a write conflict or a deadlock. Please retry your transaction";
+  const fixtures = [
+    { code: "P2003", reason: foreignKey, message: [
+      "", "Invalid `prisma.example.update()` invocation:", "", "{", "  data: {",
+      '    customerName: "Private Shopper",', '    customerAddress: "Private Street",',
+      '    token: "invocation-value",', '    email: "customer@example.invalid",',
+      '    misleading: "Foreign key constraint violated on the constraint: private-fake-constraint",',
+      '    notes: "' + "private-argument".repeat(LOG_VALUE_LIMITS.maxStringLength) + '",',
+      "  }", "}", "", foreignKey,
+    ].join("\n") },
+    { code: "P2034", reason: transaction, message: [
+      "", "Invalid `prisma.example.update()` invocation in", "/private/customer-source.ts:42:17", "",
+      '  39 const customerName = "Private Shopper";',
+      '  40 const customerAddress = "Private Street";',
+      '  41 const token = "invocation-value"; // Transaction failed due to a write conflict or a deadlock: private-fake-constraint',
+      "→ 42 await prisma.example.update(", transaction,
+    ].join("\n") },
+    { code: "P2003", reason: foreignKey, message:
+      "\nInvalid `prisma.example.update()` invocation:\n\n\n" + foreignKey },
+    { code: "P2002", reason: "Unique constraint failed on the fields: (`safe_unique_field`)", message:
+      "\nInvalid `prisma.example.update()` invocation:\r\n\r\n" +
+      "Unique constraint failed on the fields: (`safe_unique_field`)\r\n" },
+    { code: "P2003", reason: foreignKey, message: [
+      "", "Invalid `prisma.example.update()` invocation in", "/private/customer-source.ts:42:17", "",
+      '  41 const customerName = "Private Shopper";', "→ 42 await prisma.example.update(", foreignKey,
+    ].join("\n") },
+    { code: "P2003", reason: foreignKey, message: [
+      "", "Invalid `prisma.example.update()` invocation in", "/private/customer-source.ts:42:17", "",
+      '  41 const customerName = "Private Shopper";', "→ 42 await prisma.example.update({",
+      '       data: { customerName: "Private Shopper", token: "invocation-value" }',
+      "})", "", foreignKey,
+    ].join("\n") },
+    // A safe-looking line inside an unfinished rendering is not an origin reason.
+    { code: "P2003", reason: undefined, message:
+      '\nInvalid `prisma.example.update()` invocation:\n\n{ data: {\n' +
+      'Foreign key constraint violated on the constraint: private-fake-constraint' },
+    // No database description: do not mistake the invocation for a failure reason.
+    { code: "P2003", reason: undefined, message:
+      '\nInvalid `prisma.example.update()` invocation:\n\n{ customerName: "Private Shopper", token: "invocation-value" }' },
+  ];
+  for (const method of ["GET", "PUT"]) {
+    for (const fixture of fixtures) {
+      const records: LogRecord[] = [];
+      const databaseError = new Prisma.PrismaClientKnownRequestError(fixture.message, {
+        code: fixture.code, clientVersion: "6.19.3",
+        meta: { query: "SELECT private-query", payload: { customer: "private-payload" } },
+      });
+      databaseError.stack = "private-stack";
+      const wrapped = new PromotionDomainError(409, "promotion_revision_conflict", { cause: databaseError });
+      const f = factory({ fail: wrapped, logger: createLogger({ serviceName: "api006-promotions-test",
+        environment: "test", sink: record => records.push(record) }) });
+      const r = response();
+      await f.route.handle(request(method, method === "GET" ? PROMOTIONS_PATH : PROMOTION_SELECTION_PATH), r.raw);
+      assert.equal(r.result().status, 409);
+      assert.deepEqual(r.result().body, { error: "promotion_revision_conflict" });
+      assert.equal(r.result().headers["cache-control"], "private, no-store");
+      assert.equal(records.length, 1);
+      assert.equal(records[0]!.data?.databaseCode, fixture.code);
+      assert.equal(records[0]!.data?.redactionApplied, true);
+      const cause = records[0]!.data?.errorCause as { name: string; message: string };
+      assert.equal(cause.name, databaseError.name);
+      if (fixture.reason) assert.ok(cause.message.includes(fixture.reason), cause.message);
+      else assert.equal(cause.message.trim(), "[REDACTED]");
+      const privateLog = JSON.stringify(records);
+      for (const sensitive of ["Private Shopper", "Private Street", "invocation-value", "customer@example.invalid",
+        "private-argument", "private-fake-constraint", "customer-source.ts", "private-query", "private-payload", "private-stack", "prisma.example"]) {
+        assert.equal(privateLog.includes(sensitive), false, sensitive);
+      }
+      assert.equal(databaseError.message, fixture.message);
+      assert.equal(wrapped.cause, databaseError);
+    }
+  }
 });

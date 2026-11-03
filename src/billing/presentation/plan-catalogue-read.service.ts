@@ -79,6 +79,7 @@ async function readCatalogueSnapshot(
   ) throw new BillingPresentationError("billing_integrity_invalid");
   if (!shop.onboardingCompleted) throw new BillingPresentationError("billing_not_initialized");
 
+  const candidates = localeCandidates(requestedLocale, shop.defaultLanguageTag);
   const plans = await transaction.merchantPricingPlan.findMany({
     where: { isActive: true },
     orderBy: [{ cataloguePosition: "asc" }, { id: "asc" }],
@@ -94,14 +95,14 @@ async function readCatalogueSnapshot(
       billingPeriod: true,
       recurringAmountMinor: true,
       currency: true,
-      translations: { select: { locale: true, merchantDescription: true } },
+      translations: { where: { locale: { in: candidates } }, select: { locale: true, merchantDescription: true } },
       highlights: {
         orderBy: [{ position: "asc" }, { contentKey: "asc" }],
         take: 101,
         select: {
           contentKey: true,
           position: true,
-          translations: { select: { locale: true, merchantTitle: true, merchantDescription: true } },
+          translations: { where: { locale: { in: candidates } }, select: { locale: true, merchantTitle: true, merchantDescription: true } },
         },
       },
     },
@@ -153,7 +154,6 @@ async function readCatalogueSnapshot(
     }
   }
 
-  const candidates = localeCandidates(requestedLocale, shop.defaultLanguageTag);
   const resolvedLocale = candidates.find((candidate) => selectable.every((plan) =>
     isCompletePlanTranslation(plan, candidate),
   ));
@@ -275,13 +275,13 @@ type CataloguePlanRow = Prisma.MerchantPricingPlanGetPayload<{
     billingPeriod: true;
     recurringAmountMinor: true;
     currency: true;
-    translations: { select: { locale: true; merchantDescription: true } };
+    translations: { where: { locale: { in: string[] } }; select: { locale: true; merchantDescription: true } };
     highlights: {
       orderBy: [{ position: "asc" }, { contentKey: "asc" }];
       select: {
         contentKey: true;
         position: true;
-        translations: { select: { locale: true; merchantTitle: true; merchantDescription: true } };
+          translations: { where: { locale: { in: string[] } }; select: { locale: true; merchantTitle: true; merchantDescription: true } };
       };
     };
   };

@@ -30,6 +30,9 @@ try{
   run("npx",["--no-install","prisma","generate","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
   phase="deploying migrations";
   run("npx",["--no-install","prisma","migrate","deploy","--schema","database/prisma/schema.prisma"],{env,stdio:"inherit"});
+  phase="running Usage History query-shape integration";
+  run("node",["--import","tsx","--test","--test-concurrency=1",
+    "tests/integration/merchant/usage-history/arch055-query-shapes.postgres.test.ts"],{env,stdio:"inherit"});
   phase="running Usage History integration";
   run("node",["--import","tsx","--test","--test-concurrency=1",
     "tests/integration/merchant/usage-history/usage-history.postgres.test.ts"],{env,stdio:"inherit"});

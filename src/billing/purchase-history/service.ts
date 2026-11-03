@@ -30,7 +30,7 @@ export class WooPurchaseHistoryReadService {
       const total = await tx.recoveryCreditPurchase.count({ where });
       const totalPages = Math.max(1, Math.ceil(total / query.pageSize));
       const page = Math.min(query.page, totalPages);
-      const purchases = await tx.recoveryCreditPurchase.findMany({
+      const purchases = total === 0 ? [] : await tx.recoveryCreditPurchase.findMany({
         where,
         orderBy: [{ createdAt: "desc" }, { id: "desc" }],
         skip: (page - 1) * query.pageSize,

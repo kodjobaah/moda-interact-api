@@ -92,7 +92,7 @@ export class MerchantPromotionsService {
       } catch (error) {
         if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2034", "P2002"].includes(error.code)) {
           if (attempt < 2) continue;
-          throw new PromotionDomainError(409, "promotion_revision_conflict");
+          throw new PromotionDomainError(409, "promotion_revision_conflict", { cause: error });
         }
         throw error;
       }

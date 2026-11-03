@@ -11,14 +11,14 @@ const wooRows = (shopId: string): Prisma.ShopifyDiscountWhereInput => ({
   providerType: { startsWith: "WooCoupon:" },
 });
 
-type ShopRow = { id: string; domain: string; status: string; platform: string; shopifyShopId: string | null };
+type ShopRow = { id: string; domain: string; status: string; platform: string; shopifyShopId: string | null; onboardingCompleted: boolean };
 
-async function authenticatedShop(tx: Tx, principal: WooInstallationPrincipal, lock: boolean): Promise<void> {
+async function authenticatedShop(tx: Tx, principal: WooInstallationPrincipal, lock: boolean): Promise<ShopRow> {
   const shops = lock ? await tx.$queryRaw<ShopRow[]>(Prisma.sql`
-    SELECT "id", "domain", "status", "platform", "shopifyShopId" FROM "commerce"."Shop"
+    SELECT "id", "domain", "status", "platform", "shopifyShopId", "onboardingCompleted" FROM "commerce"."Shop"
     WHERE "id"=${principal.shopId} FOR UPDATE
   `) : await tx.$queryRaw<ShopRow[]>(Prisma.sql`
-    SELECT "id", "domain", "status", "platform", "shopifyShopId" FROM "commerce"."Shop"
+    SELECT "id", "domain", "status", "platform", "shopifyShopId", "onboardingCompleted" FROM "commerce"."Shop"
     WHERE "id"=${principal.shopId}
   `);
   const shop = shops[0];
@@ -32,10 +32,13 @@ async function authenticatedShop(tx: Tx, principal: WooInstallationPrincipal, lo
   if (!installation || installation.shopId !== shop.id || installation.canonicalSiteUrl !== shop.domain ||
     installation.status !== "ACTIVE" || installation.credentialVersion !== principal.credentialVersion ||
     installation.revokedAt !== null) throw new DiscountOffersError(409, "shop_unavailable");
+  return shop;
 }
 
 async function currentCatalogue(tx: Tx, shopId: string) {
-  const catalogue = await tx.shopifyDiscountCatalogue.findUnique({where:{shopId}});
+  const catalogue = await tx.shopifyDiscountCatalogue.findUnique({where:{shopId},select:{
+    status:true,syncGeneration:true,updatedAt:true,lastSuccessfulSyncAt:true,activeSyncToken:true,syncStartedAt:true,
+  }});
   if (!catalogue || catalogue.status !== "CURRENT" || catalogue.lastSuccessfulSyncAt === null ||
     catalogue.activeSyncToken !== null || catalogue.syncStartedAt !== null) {
     throw new DiscountOffersError(503, "catalogue_not_current");
@@ -97,8 +100,9 @@ export class MerchantDiscountOffersService {
       const page: CatalogueRow[] = [];
       const batchSize = 100;
       let cursor = query.cursor;
-      // The worker bounds complete provider scans to 5,000 coupons. Continue
-      // until there are limit+1 genuinely sendable rows or no further rows.
+      // The worker scan defaults to 5,000 coupons and can be configured up to
+      // 20,000. This read assumes neither cap: continue until limit+1
+      // genuinely sendable rows are found or the persisted catalogue ends.
       while (page.length <= query.limit) {
         const rows = await tx.shopifyDiscount.findMany({
           where: { AND: [...filters, ...(cursor ? [{ id: { gt: cursor } }] : [])] },
@@ -126,7 +130,9 @@ export class MerchantDiscountOffersService {
       await authenticatedShop(tx, principal, false);
       // The merchant's saved preferences are readable even before a first
       // scan, or while Background is SYNCING, ERROR or UNAVAILABLE.
-      const catalogue = await tx.shopifyDiscountCatalogue.findUnique({where:{shopId:principal.shopId}});
+      const catalogue = await tx.shopifyDiscountCatalogue.findUnique({where:{shopId:principal.shopId},select:{
+        status:true,syncGeneration:true,updatedAt:true,
+      }});
       return this.projection(tx, principal.shopId, catalogue);
     }, {isolationLevel:Prisma.TransactionIsolationLevel.RepeatableRead});
   }
@@ -134,12 +140,14 @@ export class MerchantDiscountOffersService {
   async save(principal: WooInstallationPrincipal, update: SaveDiscountOffers) {
     try {
       return await this.database.$transaction(async tx => {
-        await authenticatedShop(tx, principal, true);
+        const shop = await authenticatedShop(tx, principal, true);
         // Selection is merchant-owned. Background may change catalogue status,
         // generation and provider eligibility, but never the checkbox flag.
         // Do not require CURRENT or compare the catalogue's generation on Save.
         const catalogue = await tx.shopifyDiscountCatalogue.findUnique({where:{shopId:principal.shopId}});
-        const settings = await tx.shopSettings.findUnique({where:{shopId:principal.shopId}});
+        const settings = await tx.shopSettings.findUnique({where:{shopId:principal.shopId},select:{
+          recoveryOfferMode:true,fixedShopifyDiscountId:true,updatedAt:true,
+        }});
         const now=this.now();
         const selected=[...update.selectedDiscountIds].sort();
         if (selected.length > MAX_SELECTED) throw new DiscountOffersError(422, "selection_limit_exceeded");
@@ -159,43 +167,56 @@ export class MerchantDiscountOffersService {
           JSON.stringify(existingIds)===JSON.stringify(selected)) {
           return this.projection(tx,principal.shopId,catalogue);
         }
-        // The Shop lock serialises merchant Saves. Only isAvailable is written
-        // on coupon records, so Background's provider-field updates are safe.
-        await tx.shopifyDiscount.updateMany({where:{...wooRows(principal.shopId),isAvailable:true},data:{isAvailable:false}});
-        if (selected.length) {
-          const changed=await tx.shopifyDiscount.updateMany({where:{...wooRows(principal.shopId),id:{in:selected}},data:{isAvailable:true}});
-          if (changed.count!==selected.length) throw new DiscountOffersError(409,"offers_conflict");
+        const existingSet = new Set(existingIds);
+        const selectedSet = new Set(selected);
+        const removed = existingIds.filter((id) => !selectedSet.has(id));
+        const added = selected.filter((id) => !existingSet.has(id));
+        if (removed.length) {
+          const changed = await tx.shopifyDiscount.updateMany({
+            where:{...wooRows(principal.shopId),id:{in:removed},isAvailable:true},data:{isAvailable:false},
+          });
+          if (changed.count !== removed.length) throw new DiscountOffersError(409,"offers_conflict");
+        }
+        if (added.length) {
+          const changed=await tx.shopifyDiscount.updateMany({
+            where:{...wooRows(principal.shopId),id:{in:added},isAvailable:false},data:{isAvailable:true},
+          });
+          if (changed.count!==added.length) throw new DiscountOffersError(409,"offers_conflict");
         }
         const timestamp=new Date(Math.max(now.getTime(),(settings?.updatedAt.getTime()??0)+1));
+        let savedSettings;
         if (settings) {
-          await tx.shopSettings.update({where:{shopId:principal.shopId},data:{
+          savedSettings = await tx.shopSettings.update({where:{shopId:principal.shopId},data:{
             recoveryOfferMode:update.recoveryOfferMode,fixedShopifyDiscountId:anchor,updatedAt:timestamp,
-          }});
+          },select:{recoveryOfferMode:true,fixedShopifyDiscountId:true,updatedAt:true}});
         } else {
-          const shop=await tx.shop.findUniqueOrThrow({where:{id:principal.shopId},select:{onboardingCompleted:true}});
-          await tx.shopSettings.create({data:{shopId:principal.shopId,onboardingCompleted:shop.onboardingCompleted,
-            recoveryOfferMode:update.recoveryOfferMode,fixedShopifyDiscountId:anchor,updatedAt:timestamp}});
+          savedSettings = await tx.shopSettings.create({data:{shopId:principal.shopId,onboardingCompleted:shop.onboardingCompleted,
+            recoveryOfferMode:update.recoveryOfferMode,fixedShopifyDiscountId:anchor,updatedAt:timestamp},
+            select:{recoveryOfferMode:true,fixedShopifyDiscountId:true,updatedAt:true}});
         }
-        return this.projection(tx,principal.shopId,catalogue);
+        return this.projection(tx,principal.shopId,catalogue,savedSettings);
       }, {timeout:TX_TIMEOUT});
     } catch(error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002","P2034","P2003"].includes(error.code)) {
-        throw new DiscountOffersError(409,"offers_conflict");
+        throw new DiscountOffersError(409,"offers_conflict",{cause:error});
       }
       throw error;
     }
   }
 
-  private async projection(tx: Tx, shopId:string, catalogue: { status: string; syncGeneration: number; updatedAt: Date } | null) {
-    const settings=await tx.shopSettings.findUnique({where:{shopId}});
+  private async projection(tx: Tx, shopId:string, catalogue: { status: string; syncGeneration: number; updatedAt: Date } | null,
+    settings?: { recoveryOfferMode: string; fixedShopifyDiscountId: string | null; updatedAt: Date } | null) {
+    const savedSettings=settings === undefined ? await tx.shopSettings.findUnique({where:{shopId},select:{
+      recoveryOfferMode:true,fixedShopifyDiscountId:true,updatedAt:true,
+    }}) : settings;
     const selected=await tx.shopifyDiscount.findMany({where:{...wooRows(shopId),isAvailable:true},select:{id:true},orderBy:{id:"asc"},take:MAX_SELECTED+1});
     if (selected.length>MAX_SELECTED) throw new DiscountOffersError(409,"selection_limit_exceeded");
-    const override=await tx.shopRecoveryPolicyOverride.findUnique({where:{shopId}});
+    const override=await tx.shopRecoveryPolicyOverride.findUnique({where:{shopId},select:{recoveryOfferMode:true,expiresAt:true}});
     const active=override && (override.expiresAt===null || override.expiresAt>this.now())?override:null;
-    return {schemaVersion:1,revision:offerRevision(settings?.updatedAt??null,catalogue),
-      merchant:{recoveryOfferMode:(settings?.recoveryOfferMode??"NONE") as OfferMode,
+    return {schemaVersion:1,revision:offerRevision(savedSettings?.updatedAt??null,catalogue),
+      merchant:{recoveryOfferMode:(savedSettings?.recoveryOfferMode??"NONE") as OfferMode,
         selectedDiscountIds:selected.map(x=>x.id)},
-      effective:{recoveryOfferMode:(active?.recoveryOfferMode??settings?.recoveryOfferMode??"NONE") as OfferMode},
+      effective:{recoveryOfferMode:(active?.recoveryOfferMode??savedSettings?.recoveryOfferMode??"NONE") as OfferMode},
       source:active?"ADMIN_OVERRIDE":"MERCHANT",overrideActive:!!active};
   }
 }
