@@ -113,6 +113,15 @@ async function activate(transaction: never, plan: typeof prepared | null = prepa
   return new InitialWooFreeActivationService().activate(transaction, "shop-1", plan);
 }
 
+test("reconnect activation reuses the transaction-local Shop projection without a duplicate Shop lookup", async () => {
+  const { transaction, events } = makeTransaction({ onboarded: true });
+  const result = await new InitialWooFreeActivationService().activate(transaction, "shop-1", prepared, {
+    id: "shop-1", onboardingCompleted: true,
+  });
+  assert.equal(result, "ALREADY_ONBOARDED");
+  assert.deepEqual(events, []);
+});
+
 test("short Shop transaction creates subscription, lifetime grant, and onboarding without global writes", async () => {
   const { transaction, events, writes } = makeTransaction();
   assert.equal(await activate(transaction), "ACTIVATED_FREE");
@@ -144,6 +153,14 @@ test("already-onboarded reconnect is a complete Free activation no-op without pr
   assert.equal(await activate(transaction, null), "ALREADY_ONBOARDED");
   assert.deepEqual(events, ["shop.findUnique"]);
   assert.equal(writes.some((write) => write.model === "subscription.upsert"), false);
+});
+
+test("activation reuses the transaction-local Shop projection supplied by reconnect", async () => {
+  const { transaction, events } = makeTransaction({ onboarded: false });
+  assert.equal(await new InitialWooFreeActivationService().activate(
+    transaction, "shop-1", prepared, { id: "shop-1", onboardingCompleted: true },
+  ), "ALREADY_ONBOARDED");
+  assert.deepEqual(events, []);
 });
 
 test("never-onboarded established subscription fails closed before catalogue recheck", async () => {

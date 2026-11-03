@@ -123,15 +123,23 @@ export class WooInstallationConnectionService {
       const reconnected = await this.runTransaction(async (transaction) => {
         const shop = await transaction.shop.findUnique({
           where: { id: observed.shop.id },
-          select: { id: true, status: true, platform: true, shopifyShopId: true },
+          select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true },
         });
         if (!shop || shop.status === "SUSPENDED" || shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null) {
           throw new WooConnectionConflictError();
         }
 
-        await this.freeActivation.activate(transaction, shop.id, prepared);
+        await this.freeActivation.activate(transaction, shop.id, prepared, shop);
 
-        const updated = await transaction.wooCommerceInstallation.updateMany({
+        if (shop.status === "UNINSTALLED") {
+          const restored = await transaction.shop.updateMany({
+            where: { id: shop.id, status: "UNINSTALLED" },
+            data: { status: "ACTIVE", uninstalledAt: null, reinstallPendingAt: null },
+          });
+          if (restored.count !== 1) throw new WooConnectionConflictError();
+        }
+
+        const updated = await transaction.wooCommerceInstallation.updateManyAndReturn({
           where: {
             id: observed.id,
             shopId: observed.shopId,
@@ -144,21 +152,11 @@ export class WooInstallationConnectionService {
             status: "ACTIVE",
             revokedAt: null,
           },
-        });
-        if (updated.count !== 1) throw new WooConnectionConflictError();
-
-        if (shop.status === "UNINSTALLED") {
-          const restored = await transaction.shop.updateMany({
-            where: { id: shop.id, status: "UNINSTALLED" },
-            data: { status: "ACTIVE", uninstalledAt: null, reinstallPendingAt: null },
-          });
-          if (restored.count !== 1) throw new WooConnectionConflictError();
-        }
-
-        return transaction.wooCommerceInstallation.findUniqueOrThrow({
-          where: { id: observed.id },
           select: { id: true, shopId: true, credentialVersion: true },
         });
+        if (updated.length !== 1 || !updated[0]) throw new WooConnectionConflictError();
+
+        return updated[0];
       });
 
       return {
