@@ -23,8 +23,17 @@ export class KnowledgeCommandError extends Error {
   constructor(readonly status: 400 | 403 | 404 | 409 | 413 | 503,
     readonly code: "invalid_request" | "request_too_large" | "merchant_knowledge_denied" |
       "merchant_knowledge_source_not_found" | "merchant_knowledge_conflict" |
-      "merchant_knowledge_integrity_invalid" | "merchant_knowledge_unavailable") {
-    super(code);
+      "merchant_knowledge_integrity_invalid" | "merchant_knowledge_unavailable", options?: ErrorOptions) {
+    super(code, options);
+  }
+}
+
+/** The mutation committed, but the best-effort response projection failed afterwards. */
+export class KnowledgeCommandPostCommitError extends Error {
+  readonly committed = true;
+  constructor(cause: unknown) {
+    super("merchant_knowledge_post_commit_projection_failed", { cause });
+    this.name = "KnowledgeCommandPostCommitError";
   }
 }
 const invalid = (): never => { throw new KnowledgeCommandError(400, "invalid_request"); };

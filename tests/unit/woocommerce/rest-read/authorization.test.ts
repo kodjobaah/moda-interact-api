@@ -27,6 +27,23 @@ const principal: WooInstallationPrincipal = {
   canonicalSiteUrl: "https://store.example.org/woocommerce",
 };
 
+function principalTransaction(overrides: {
+  shop?: Record<string, unknown> | null;
+  installation?: Record<string, unknown> | null;
+} = {}) {
+  return {
+    $queryRaw: async () => [{ id: "locked" }],
+    shop: { findUnique: async () => overrides.shop ?? {
+      id: principal.shopId, domain: principal.canonicalSiteUrl, platform: "WOOCOMMERCE",
+      shopifyShopId: null, status: "ACTIVE", onboardingCompleted: true,
+    } },
+    wooCommerceInstallation: { findUnique: async () => overrides.installation ?? {
+      id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl,
+      credentialVersion: principal.credentialVersion, status: "ACTIVE", revokedAt: null,
+    } },
+  };
+}
+
 test("authorization configuration is disabled by default and rejects unsafe/partial setups", () => {
   assert.equal(loadWooRestReadAuthorizationConfig({}, "public"), null);
   assert.throws(() => loadWooRestReadAuthorizationConfig({ MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.org" }, "public"));
@@ -67,12 +84,15 @@ test("one start issues one bounded read consent URL and never stores the bearer 
   let stored: Record<string, unknown> | undefined;
   const token = Buffer.alloc(32, 22);
   const database = {
-    wooCommerceRestReadAttempt: {
+    $transaction: async (operation: (transaction: unknown) => Promise<unknown>) => operation({
+      ...principalTransaction(),
+      wooCommerceRestReadAttempt: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         stored = data;
         return { id: "cuid_attempt_1", expiresAt: data.expiresAt };
       },
-    },
+      },
+    } as never),
   };
   const now = new Date("2026-10-10T12:00:00.000Z");
   const service = new WooReadAuthorizationService(database as never, config(), "public", {
@@ -98,12 +118,15 @@ test("start binds WordPress administrator locale to one consent attempt without 
   const token = Buffer.alloc(32, 7);
   let stored: Record<string, unknown> | undefined;
   const database = {
-    wooCommerceRestReadAttempt: {
+    $transaction: async (operation: (transaction: unknown) => Promise<unknown>) => operation({
+      ...principalTransaction(),
+      wooCommerceRestReadAttempt: {
       create: async ({ data }: { data: Record<string, unknown> }) => {
         stored = data;
         return { id: "cuid_attempt_de", expiresAt: data.expiresAt };
       },
-    },
+      },
+    } as never),
   };
   const service = new WooReadAuthorizationService(database as never, config(), "public", {
     verify: async () => undefined,
@@ -122,6 +145,39 @@ test("start binds WordPress administrator locale to one consent attempt without 
   assert.equal(unsupported.searchParams.get("return_url"),
     "https://api.example.org/v1/woocommerce/read-authorizations/return");
   assert.ok(stored);
+});
+
+test("start rejects stale principal before creating an attempt and propagates unexpected gate failures", async () => {
+  const token = Buffer.alloc(32, 31);
+  let created = false;
+  const staleDatabase = {
+    $transaction: async (operation: (transaction: unknown) => Promise<unknown>) => operation({
+      ...principalTransaction({
+        shop: { id: principal.shopId, domain: principal.canonicalSiteUrl, platform: "WOOCOMMERCE",
+          shopifyShopId: null, status: "SUSPENDED", onboardingCompleted: true },
+      }),
+      wooCommerceRestReadAttempt: { create: async () => { created = true; return { id: "unused", expiresAt: new Date() }; } },
+    } as never),
+  };
+  const staleService = new WooReadAuthorizationService(staleDatabase as never, config(), "public", {
+    verify: async () => undefined,
+  }, () => new Date(), () => token);
+  await assert.rejects(staleService.start(principal), (error) =>
+    error instanceof WooReadAuthorizationError && error.status === 409 && error.code === "shop_unavailable" &&
+    error.cause instanceof Error && error.cause.message === "woo_mutation_principal_stale");
+  assert.equal(created, false);
+
+  const databaseFailure = new Error("principal database read failed");
+  const unavailableDatabase = {
+    $transaction: async (operation: (transaction: unknown) => Promise<unknown>) => operation({
+      ...principalTransaction(),
+      $queryRaw: async () => { throw databaseFailure; },
+    } as never),
+  };
+  const unavailableService = new WooReadAuthorizationService(unavailableDatabase as never, config(), "public", {
+    verify: async () => undefined,
+  }, () => new Date(), () => token);
+  await assert.rejects(unavailableService.start(principal), (error) => error === databaseFailure);
 });
 
 test("pinned read credential verification permits only local-dev loopback and rejects redirect/unexpected shapes", async () => {

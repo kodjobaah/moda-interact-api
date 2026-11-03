@@ -17,6 +17,18 @@ function language(value: string | null) {
   try { return canonicaliseLanguageTag(value); } catch { return PLATFORM_SUPPORT_LANGUAGE_TAG; }
 }
 type Previous = { id: string; kind: string; originalBody: string; translationId: string | null };
+function safeQueueFailure(error: unknown): Record<string, string> {
+  const safeMessage = (value: unknown) => (value instanceof Error ? value.message : String(value))
+    .replace(/\b(?:rediss?|redis\+tls):\/\/[^\s"'<>]+/gi, "redis://[redacted]")
+    .replace(/\b(password|passwd|authorization|token)=([^\s&]+)/gi, "$1=[redacted]")
+    .slice(0, 500);
+  const cause = error instanceof Error ? error.cause : undefined;
+  return {
+    errorName: (error instanceof Error ? error.name : typeof error).slice(0, 80),
+    errorMessage: safeMessage(error),
+    ...(cause === undefined ? {} : { errorCause: safeMessage(cause) }),
+  };
+}
 
 /** Shop-row serialization makes duplicate HTTP actions deterministic under races.
  * Translation dispatch is an optional hint, never a condition of message commit. */
@@ -46,9 +58,16 @@ export class MerchantSupportCommandService {
       const now = new Date(), targetLanguage = language(shop.defaultLanguageTag);
       const needsTranslation = requiresMerchantTranslation(targetLanguage,PLATFORM_SUPPORT_LANGUAGE_TAG);
       const thread = await tx.$queryRaw<Array<{id:string}>>(Prisma.sql`
-        INSERT INTO "support"."MerchantSupportThread" ("id","shopId","createdAt","updatedAt")
-        VALUES (${randomUUID()},${principal.shopId},${now},${now})
-        ON CONFLICT ("shopId") DO UPDATE SET "updatedAt"=${now} RETURNING "id"
+        INSERT INTO "support"."MerchantSupportThread" AS thread (
+          "id","shopId","lastMessageAt","lastMerchantMessageAt","needsAdminResponse",
+          "merchantMessageVersion","createdAt","updatedAt"
+        ) VALUES (${randomUUID()},${principal.shopId},${now},${now},true,1,${now},${now})
+        ON CONFLICT ("shopId") DO UPDATE SET
+          "lastMessageAt"=EXCLUDED."lastMessageAt",
+          "lastMerchantMessageAt"=EXCLUDED."lastMerchantMessageAt",
+          "merchantMessageVersion"=thread."merchantMessageVersion"+1,
+          "needsAdminResponse"=true,"updatedAt"=EXCLUDED."updatedAt"
+        RETURNING "id"
       `);
       const threadId = thread[0]?.id;
       if (!threadId) throw new SupportIntegrityError();
@@ -59,13 +78,6 @@ export class MerchantSupportCommandService {
           "displayLanguageTag","shopifyUserId","sourceKey","availableAt","createdAt","updatedAt"
         ) VALUES (${messageId},${threadId},'MERCHANT','AVAILABLE',${input.body},
           ${targetLanguage},${targetLanguage},NULL,${key},${now},${now},${now})
-      `);
-      await tx.$executeRaw(Prisma.sql`
-        UPDATE "support"."MerchantSupportThread" SET
-          "lastMessageAt"=${now},"lastMerchantMessageAt"=${now},
-          "merchantMessageVersion"="merchantMessageVersion"+1,
-          "needsAdminResponse"=true,"updatedAt"=${now}
-        WHERE "id"=${threadId} AND "shopId"=${principal.shopId}
       `);
       let translationId: string | null = null;
       if (needsTranslation) {
@@ -84,10 +96,7 @@ export class MerchantSupportCommandService {
       try { await this.translation.enqueue(outcome.response.translationId); }
       catch (error) { this.logger.warn("merchant.support.translation_dispatch.deferred",{
         shopId:principal.shopId,reason:"queue_unavailable",
-        errorName: error instanceof Error ? error.name : typeof error,
-        errorMessage: error instanceof Error ? error.message : String(error),
-        errorStack: error instanceof Error ? error.stack : undefined,
-        errorCause: error instanceof Error ? error.cause : undefined,
+        ...safeQueueFailure(error),
       }); }
     }
     return outcome;

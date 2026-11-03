@@ -75,6 +75,32 @@ export async function readEntitlement(database: KnowledgeReadDatabase, shopId: s
   return { configuration: configuration.data, merchantEnabled };
 }
 
+/** Writer admission needs the plan mapping, not the merchant preference projection used by GET. */
+export async function readWriterEntitlement(database: KnowledgeReadDatabase, shopId: string) {
+  const subscription = await database.subscription.findUnique({
+    where: { shopId },
+    select: {
+      status: true, planId: true,
+      plan: { select: {
+        active: true,
+        features: {
+          where: { enabled: true, feature: { is: { key: "merchant_knowledge", active: true, activationMode: "MERCHANT_OPT_IN" } } },
+          select: { configuration: true },
+        },
+      } },
+    },
+  });
+  const eligibleSubscription = subscription && (subscription.status === "ACTIVE" || subscription.status === "TRIALING") &&
+    subscription.planId && subscription.plan?.active;
+  const features = eligibleSubscription ? subscription.plan!.features : [];
+  if (features.length > 1) throw new MerchantKnowledgeReadError(503, "merchant_knowledge_unavailable");
+  const mapping = features[0];
+  if (!mapping) return null;
+  const configuration = MerchantKnowledgeFeatureConfigurationSchema.safeParse(mapping.configuration);
+  if (!configuration.success) throw new MerchantKnowledgeReadError(503, "merchant_knowledge_unavailable");
+  return configuration.data;
+}
+
 function allowedSourceWhere(
   shopId: string,
   pairs: ReadonlyArray<{ purposeKey: string; dataFormatKey: string }>,
@@ -101,15 +127,8 @@ function resolveUploadLimit(value: string | undefined): number {
 
 async function readActiveRevisions(database: KnowledgeReadDatabase, sourceIds: string[]): Promise<Map<string, ActiveRevisionRow>> {
   if (sourceIds.length === 0) return new Map();
-  const grouped = await database.merchantKnowledgeSourceRevision.groupBy({
-    by: ["sourceId"],
-    where: { sourceId: { in: sourceIds }, status: "ACTIVE" },
-    _max: { generation: true },
-  });
-  const identifiers = grouped.flatMap(({ sourceId, _max }) => _max.generation === null ? [] : [{ sourceId, generation: _max.generation }]);
-  if (identifiers.length === 0) return new Map();
   const revisions = await database.merchantKnowledgeSourceRevision.findMany({
-    where: { OR: identifiers, status: "ACTIVE" },
+    where: { sourceId: { in: sourceIds }, status: "ACTIVE" },
     select: { id: true, sourceId: true, generation: true, contentUnits: true, truncated: true, fetchedAt: true },
   });
   return new Map(revisions.map((revision) => [revision.sourceId, revision]));

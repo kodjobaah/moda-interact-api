@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createServer } from "node:http";
+import { Readable } from "node:stream";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import type { WooInstallationAuthenticator } from "../../../../src/auth/woo-installation/authenticator.js";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import { createMerchantKnowledgeCommandRoute } from "../../../../src/merchant/merchant-knowledge/commands.routes.js";
 import { KnowledgeCommandError, parseCreateWebSource, parseKnowledgeHttpsUrl, parsePatchWebSource,
-  parseSourceGeneration, parseSourceOrder } from "../../../../src/merchant/merchant-knowledge/commands.contract.js";
+  KnowledgeCommandPostCommitError, parseSourceGeneration, parseSourceOrder } from "../../../../src/merchant/merchant-knowledge/commands.contract.js";
 import type { MerchantKnowledgeCommandService } from "../../../../src/merchant/merchant-knowledge/commands.service.js";
 
 const rejects = (fn: () => unknown) => assert.throws(fn, (error: unknown) => error instanceof KnowledgeCommandError && error.status === 400);
@@ -88,4 +89,28 @@ test("all five command endpoints require installation authentication and reject 
       }
     } finally { await new Promise<void>((resolve) => denyServer.close(() => resolve())); }
   } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+});
+
+test("web command post-commit projection failure logs committed state and preserves a bounded cause", async () => {
+  const logs: Array<{ event: string; fields: Record<string, unknown> }> = [];
+  const route = createMerchantKnowledgeCommandRoute({
+    authenticator: { async authenticate() { return { shopId: "shop1", installationId: "installation1",
+      credentialVersion: 1, canonicalSiteUrl: "https://shop.example.org" }; } } as never,
+    service: { async patch() { throw new KnowledgeCommandPostCommitError(new Error("POSTGRES_PASSWORD=secret")); } } as never,
+    logger: { info() {}, warn() {}, error(event: string, fields: Record<string, unknown>) { logs.push({ event, fields }); } } as never,
+  });
+  const bytes = JSON.stringify({ expectedGeneration: 1, url: "https://example.org/updated" });
+  const request = Object.assign(Readable.from([bytes]), { url: "/v1/merchant/merchant-knowledge/sources/source1",
+    method: "PATCH", rawHeaders: ["content-type", "application/json", "content-length", String(Buffer.byteLength(bytes))] }) as never;
+  let status = 0;
+  let body = "";
+  const response = { writeHead(code: number) { status = code; }, end(value: string) { body = value; },
+    destroyed: false, headersSent: false } as never;
+  await route.handle(request, response);
+  assert.equal(status, 503);
+  assert.deepEqual(JSON.parse(body), { error: "merchant_knowledge_unavailable" });
+  assert.equal(logs[0]?.event, "merchant.knowledge.command.failed");
+  assert.equal(logs[0]?.fields.committed, true);
+  assert.equal(logs[0]?.fields.errorName, "KnowledgeCommandPostCommitError");
+  assert.equal(JSON.stringify(logs).includes("secret"), false);
 });

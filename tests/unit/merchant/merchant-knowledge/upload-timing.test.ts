@@ -14,16 +14,15 @@ const featureConfig = { schemaVersion: 1, maxKnowledgeSources: 10, maxContentUni
 
 function fixture(verificationFails = false) {
   let asset: Record<string, unknown> | null = null;
-  let queries = 0;
   let verificationCalls = 0;
   let committed = false;
   const tx = {
-    async $queryRaw() {
-      return ++queries % 2
-        ? [{ id: principal.shopId, domain: principal.canonicalSiteUrl, platform: "WOOCOMMERCE",
-          shopifyShopId: null, status: "ACTIVE" }]
-        : [{ id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl,
-          credentialVersion: principal.credentialVersion, status: "ACTIVE", revokedAt: null }];
+    async $queryRaw(query: { sql?: string }) {
+      if (query.sql?.includes('"MerchantKnowledgeUploadedAsset"')) return [{ id: asset && "id" in asset ? asset.id : "asset" }];
+      if (query.sql?.includes('"WooCommerceInstallation"')) return [{ id: principal.installationId, shopId: principal.shopId,
+        canonicalSiteUrl: principal.canonicalSiteUrl, credentialVersion: principal.credentialVersion, status: "ACTIVE", revokedAt: null }];
+      return [{ id: principal.shopId, domain: principal.canonicalSiteUrl, platform: "WOOCOMMERCE",
+        shopifyShopId: null, status: "ACTIVE" }];
     },
     subscription: { async findUnique() { return { status: "ACTIVE", plan: { active: true,
       features: [{ configuration: featureConfig }] } }; } },
@@ -40,6 +39,7 @@ function fixture(verificationFails = false) {
     },
     merchantKnowledgeSource: {
       async findMany() { return []; },
+      async count() { return 0; },
       async create() { return { id: "source" }; },
     },
     merchantKnowledgeSourceRevision: { async create() { return { id: "revision" }; } },

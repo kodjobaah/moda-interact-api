@@ -27,6 +27,7 @@ function makeDatabase(options: {
     shopifyShopId: null,
   };
   const writes: Array<{ model: string; args: unknown }> = [];
+  const modelCalls: string[] = [];
   const phases: string[] = [];
   const transactionOptions: unknown[] = [];
   const prepared = { catalogueId: "catalogue-free", operationalPlanId: "billing-free", shopifyPlanHandle: "free-handle" };
@@ -46,7 +47,7 @@ function makeDatabase(options: {
         writes.push({ model: "shop.create", args });
         return { id: options.createShopId ?? "shop-created" };
       },
-      findUnique: async () => shopState,
+      findUnique: async () => { modelCalls.push("shop.findUnique"); return shopState; },
       updateMany: async (args: unknown) => {
         writes.push({ model: "shop.updateMany", args });
         return { count: 1 };
@@ -61,19 +62,19 @@ function makeDatabase(options: {
           credentialVersion: 1,
         };
       },
-      updateMany: async (args: unknown) => {
-        writes.push({ model: "installation.updateMany", args });
-        return { count: options.updatedCount ?? 1 };
+      updateManyAndReturn: async (args: unknown) => {
+        modelCalls.push("installation.updateManyAndReturn");
+        writes.push({ model: "installation.updateManyAndReturn", args });
+        return options.updatedCount === 0 ? [] : [{
+          id: "installation-existing",
+          shopId: "shop-1",
+          credentialVersion: options.resultingVersion ?? 5,
+        }];
       },
-      findUniqueOrThrow: async () => ({
-        id: "installation-existing",
-        shopId: "shop-1",
-        credentialVersion: options.resultingVersion ?? 5,
-      }),
     },
   };
   const database = {
-    wooCommerceInstallation: { findUnique: async () => observed },
+    wooCommerceInstallation: { findUnique: async () => { modelCalls.push("installation.findUnique"); return observed; } },
     shop: {},
     $transaction: async (callback: (value: typeof transaction) => Promise<unknown>, options: unknown) => {
       transactionOptions.push(options);
@@ -81,7 +82,7 @@ function makeDatabase(options: {
       return callback(transaction);
     },
   };
-  return { database, writes, phases, freeActivation, transactionOptions };
+  return { database, writes, phases, freeActivation, transactionOptions, modelCalls };
 }
 
 function existingInstallation(status = "ACTIVE") {
@@ -166,8 +167,8 @@ test("reconnect activates before credential CAS and restores an uninstalled Shop
   const result = await service.connect({ site, attemptId, bootstrapSecret });
 
   assert.ok(writes.findIndex((write) => write.model === "activation.activate") <
-    writes.findIndex((write) => write.model === "installation.updateMany"));
-  const update = writes.find((write) => write.model === "installation.updateMany");
+    writes.findIndex((write) => write.model === "installation.updateManyAndReturn"));
+  const update = writes.find((write) => write.model === "installation.updateManyAndReturn");
   const args = update?.args as { where: Record<string, unknown>; data: Record<string, unknown> };
   assert.deepEqual(args.where, { id: "installation-existing", shopId: "shop-1", credentialVersion: 4 });
   assert.deepEqual({ ...args.data, credentialDigest: Buffer.from(args.data.credentialDigest as Uint8Array) }, {
@@ -231,7 +232,7 @@ test("suspended Shop conflicts only after site proof; failed proof issues no cre
   await assert.rejects(staleService.connect({ site, attemptId, bootstrapSecret }), WooConnectionConflictError);
 });
 test("already-onboarded reconnect skips Free-plan preparation and rotates its credential", async () => {
-  const { database, freeActivation, phases } = makeDatabase({ observed: existingInstallation() });
+  const { database, freeActivation, phases, modelCalls } = makeDatabase({ observed: existingInstallation() });
   const service = new WooInstallationConnectionService(
     database as never,
     { verify: async () => undefined } as never,
@@ -242,6 +243,7 @@ test("already-onboarded reconnect skips Free-plan preparation and rotates its cr
   const result = await service.connect({ site, attemptId, bootstrapSecret });
   assert.equal(result.connection, "RECONNECTED");
   assert.deepEqual(phases, ["transaction.started"]);
+  assert.deepEqual(modelCalls, ["installation.findUnique", "shop.findUnique", "installation.updateManyAndReturn"]);
 });
 
 test("incomplete reconnect prepares global Free state before credential transaction", async () => {

@@ -316,7 +316,9 @@ paths:
       summary: Durably append PENDING revision using latest AVAILABLE upload asset
       description: >-
         Request has no body. Background reconciles the PENDING revision; do not
-        claim processing was queued if merchant preference is disabled.
+        claim processing was queued if merchant preference is disabled. Each
+        accepted sequential call appends a new revision; this operation is not
+        idempotent. A stale concurrent generation returns 409 Conflict.
       security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
       parameters: [{ name: sourceId, in: path, required: true, schema: { type: string, maxLength: 128 } }]
       responses:
@@ -324,6 +326,7 @@ paths:
         '400': { description: Invalid request }
         '401': { description: Invalid installation }
         '403': { description: Denied }
+        '409': { description: Conflict or stale source generation }
         '503': { description: Unavailable }
 components:
   securitySchemes:
