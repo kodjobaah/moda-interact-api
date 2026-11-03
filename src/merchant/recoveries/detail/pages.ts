@@ -107,19 +107,27 @@ export async function readMessagePage(
   if (rows.length === 0) return { schemaVersion: 1, items: [], previousCursor: null, nextCursor: null };
   const first = rows[0]!;
   const last = rows[rows.length - 1]!;
-  const [moderation, before, after] = await Promise.all([
+  const oppositeWhere = descending
+    ? { conversationId, ...afterMessage(last.createdAt, last.id) }
+    : { conversationId, ...beforeMessage(first.createdAt, first.id) };
+  const [moderation, opposite] = await Promise.all([
     // Exact returned page only, never a full moderation-history export.
     readMessageModeration(tx, shopId, conversationId, rows.map((row) => row.id)),
-    tx.conversationMessage.count({ where: { conversationId, ...beforeMessage(first.createdAt, first.id) } }),
-    tx.conversationMessage.count({ where: { conversationId, ...afterMessage(last.createdAt, last.id) } }),
+    nav.boundary ? tx.conversationMessage.findFirst({
+      where: oppositeWhere,
+      select: { id: true },
+    }) : Promise.resolve(null),
   ]);
+  const hasFetchedDirection = fetched.length > rows.length;
+  const hasPrevious = descending ? hasFetchedDirection : Boolean(opposite);
+  const hasNext = descending ? Boolean(opposite) : hasFetchedDirection;
   return {
     schemaVersion: 1,
     items: rows.map((row) => messageDto(row, messageModeration(row.id, moderation))),
-    previousCursor: before > 0 ? encodeDetailCursor(shopId, recoveryId, "messages", "previous", {
+    previousCursor: hasPrevious ? encodeDetailCursor(shopId, recoveryId, "messages", "previous", {
       at: first.createdAt, id: first.id,
     }) : null,
-    nextCursor: after > 0 ? encodeDetailCursor(shopId, recoveryId, "messages", "next", {
+    nextCursor: hasNext ? encodeDetailCursor(shopId, recoveryId, "messages", "next", {
       at: last.createdAt, id: last.id,
     }) : null,
   };
@@ -156,10 +164,16 @@ export async function readRelatedPage(
   if (!rows.length) return { schemaVersion: 1, items: [], previousCursor: null, nextCursor: null };
   const first = rows[0]!;
   const last = rows[rows.length - 1]!;
-  const [before, after] = await Promise.all([
-    tx.checkoutRecovery.count({ where: { ...base, ...newerRecovery(first.detectedAt, first.id) } }),
-    tx.checkoutRecovery.count({ where: { ...base, ...olderRecovery(last.detectedAt, last.id) } }),
-  ]);
+  const oppositeWhere = newer
+    ? { ...base, ...olderRecovery(last.detectedAt, last.id) }
+    : { ...base, ...newerRecovery(first.detectedAt, first.id) };
+  const opposite = nav.boundary ? await tx.checkoutRecovery.findFirst({
+    where: oppositeWhere,
+    select: { id: true },
+  }) : null;
+  const hasFetchedDirection = fetched.length > rows.length;
+  const hasPrevious = newer ? hasFetchedDirection : Boolean(opposite);
+  const hasNext = newer ? Boolean(opposite) : hasFetchedDirection;
   return {
     schemaVersion: 1,
     items: rows.map((row) => ({
@@ -168,10 +182,10 @@ export async function readRelatedPage(
       value: recoveryValue(row.totalPrice, row.currency),
       detectedAt: row.detectedAt.toISOString(),
     })),
-    previousCursor: before > 0 ? encodeDetailCursor(shopId, recoveryId, "related", "previous", {
+    previousCursor: hasPrevious ? encodeDetailCursor(shopId, recoveryId, "related", "previous", {
       at: first.detectedAt, id: first.id,
     }) : null,
-    nextCursor: after > 0 ? encodeDetailCursor(shopId, recoveryId, "related", "next", {
+    nextCursor: hasNext ? encodeDetailCursor(shopId, recoveryId, "related", "next", {
       at: last.detectedAt, id: last.id,
     }) : null,
   };

@@ -125,8 +125,13 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
     const claimed = await db.recoveryOutreachAttempt.findUniqueOrThrow({ where: {
       checkoutRecoveryId_sequence: { checkoutRecoveryId: short.checkout.id, sequence: 2 },
     } });
+    const command = await db.merchantConversationSendCommand.findUniqueOrThrow({
+      where: { id: winning.value.response.commandId },
+    });
     assert.equal(claimed.initiatedBy, "HUMAN");
-    assert.equal(claimed.initiationKey, winningInput.idempotencyKey);
+    assert.equal(command.idempotencyKey, winningInput.idempotencyKey);
+    assert.equal(command.followUpClaimKey, command.id);
+    assert.equal(claimed.initiationKey, command.id);
     assert.equal(await db.usageEvent.count({ where: { shopId: shop.id } }), 0);
 
     // Disabled/unscheduled and future-due policies reject without writing commands.

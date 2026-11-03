@@ -38,7 +38,8 @@ export class ConversationControlConflictError extends Error {
   constructor(
     readonly code: "stale_control_revision" | "conversation_control_conflict",
     readonly current?: Readonly<{ controlMode: ConversationControlTarget; controlRevision: number }>,
-  ) { super(code); }
+    options?: ErrorOptions,
+  ) { super(code, options); }
 }
 
 export function parseControlRequest(value: unknown): ConversationControlRequest {

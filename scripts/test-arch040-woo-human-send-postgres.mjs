@@ -63,6 +63,8 @@ try {
     "tests/integration/merchant/conversations/messages.service.postgres.test.ts",
     "tests/integration/merchant/conversations/messages.follow-up-policy.postgres.test.ts",
     "tests/integration/merchant/conversations/messages.follow-up-catalogue.postgres.test.ts",
+    "tests/integration/merchant/conversations/arch055-claims-and-prepared-status.postgres.test.ts",
+    "tests/integration/merchant/conversations/arch055-transaction-config.postgres.test.ts",
     "tests/integration/merchant/recoveries/detail/enriched-detail.postgres.test.ts"],{env,stdio:"inherit"});
   process.stdout.write("PASS ARCH-040/ARCH-047 disposable PostgreSQL read and admission suites\n");
 } catch {

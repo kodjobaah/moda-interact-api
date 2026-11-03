@@ -135,10 +135,13 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
         "leaseExpiresAt"=${new Date(leaseNow.getTime() + 60_000)},
         "dispatchAttemptCount"=1,"updatedAt"=${leaseNow}
       WHERE "id"=${fresh.response.commandId} AND "state"='ACCEPTED'`;
+    assert.equal((await statusService.read(principal, primary.conversation.id, fresh.response.commandId)).moderationStatus,
+      "moderation_pending");
+    const preparedBody = `Prepared: ${textInput.textBody}`;
     const preparedEvidence = { schemaVersion: 1, outcome: "PASSTHROUGH",
-      reason: "NOT_CONFIGURED", bodySha256: sha(textInput.textBody) };
+      reason: "PREPARED", bodySha256: sha(preparedBody) };
     await db.$executeRaw`UPDATE "whatsapp"."MerchantConversationSendCommand"
-      SET "preparedTextBody"=${textInput.textBody},
+      SET "preparedTextBody"=${preparedBody},
         "preparedWrapperEvidence"=${JSON.stringify(preparedEvidence)}::jsonb,
         "preparedAt"=${leaseNow},"updatedAt"=${leaseNow}
       WHERE "id"=${fresh.response.commandId} AND "state"='CLAIMED'
@@ -146,7 +149,7 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     const [assessment] = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT "whatsapp".arch040_moderation_create_or_reuse(${key()},${shop.id},${primary.conversation.id},
         'HUMAN_COMMAND'::"whatsapp"."ConversationModerationSubject",NULL,${fresh.response.commandId},
-        ${sha(textInput.textBody)},'TEXT',
+        ${sha(preparedBody)},'TEXT',
         'omni-moderation-latest','moderation-v1') AS "id"`);
     assert.ok(assessment?.id);
     const token = key();
@@ -188,12 +191,15 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     await assert.rejects(() => followupService.admit(principal, primary.conversation.id, baseText(key())),
       (e: unknown) => e instanceof SendHttpError && e.code === "service_window_closed");
     const followup = baseTemplate(key());
+    const contender = { ...followup, idempotencyKey: key() };
     const two = await Promise.allSettled([
       followupService.admit(principal, primary.conversation.id, followup),
-      followupService.admit(principal, primary.conversation.id, { ...followup, idempotencyKey: key() }),
+      followupService.admit(principal, primary.conversation.id, contender),
     ]);
     assert.equal(two.filter((r) => r.status === "fulfilled").length, 1);
-    const winning = two.find((r) => r.status === "fulfilled") as PromiseFulfilledResult<Awaited<ReturnType<typeof followupService.admit>>>;
+    const winningIndex = two.findIndex((r) => r.status === "fulfilled");
+    const winningInput = winningIndex === 0 ? followup : contender;
+    const winning = two[winningIndex] as PromiseFulfilledResult<Awaited<ReturnType<typeof followupService.admit>>>;
     assert.equal(winning.value.response.kind, "RECOVERY_FOLLOW_UP_TEMPLATE");
     const attempt = await db.recoveryOutreachAttempt.findUniqueOrThrow({ where: {
       checkoutRecoveryId_sequence: { checkoutRecoveryId: primary.recovery.id, sequence: 2 },
@@ -203,7 +209,9 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     assert.equal(await db.recoveryOutreachAttempt.count({ where: { checkoutRecoveryId: primary.recovery.id, sequence: 2 } }), 1);
     const command = await db.merchantConversationSendCommand.findUniqueOrThrow({ where: { id: winning.value.response.commandId } });
     assert.equal(command.recoveryOutreachAttemptId, attempt.id);
-    assert.equal(attempt.initiationKey, command.idempotencyKey);
+    assert.equal(command.idempotencyKey, winningInput.idempotencyKey);
+    assert.equal(command.followUpClaimKey, command.id);
+    assert.equal(attempt.initiationKey, command.id);
     assert.equal(await db.conversation.count({ where: { checkoutRecoveryId: primary.recovery.id } }), 1);
     assert.equal(await db.usageEvent.count({ where: { shopId: shop.id } }), nothing.usage);
     if (command.idempotencyKey === followup.idempotencyKey) {

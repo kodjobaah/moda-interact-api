@@ -115,7 +115,7 @@ export class MerchantConversationControlService {
     } catch (error) {
       if (error instanceof Prisma.PrismaClientKnownRequestError &&
         ["P2002", "P2034"].includes(error.code)) {
-        throw new ConversationControlConflictError("conversation_control_conflict");
+        throw new ConversationControlConflictError("conversation_control_conflict", undefined, { cause: error });
       }
       throw error;
     }

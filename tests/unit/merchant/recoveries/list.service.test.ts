@@ -91,9 +91,9 @@ test("authenticates Woo shop within the snapshot; count and page are scoped and 
 });
 
 test("ongoing and full-name search retain tenant scopes for both count and page", async () => {
-  const { service, calls } = makeService({ total: 0, rows: [] });
+  const { service, calls } = makeService({ total: 1 });
   const response = await service.read(principal, new URLSearchParams("status=ongoing&q=Ada%20Lovelace"));
-  assert.equal(response.total, 0);
+  assert.equal(response.total, 1);
   assert.equal(response.totalPages, 1);
   assert.equal(response.page, 1);
   assert.equal(response.hasPrevious, false);
@@ -104,6 +104,13 @@ test("ongoing and full-name search retain tenant scopes for both count and page"
   assert.equal(matching.length, 2);
   assert.ok(matching.every(({ customer }) => customer.is.shopId === principal.shopId && customer.is.OR.length === 3));
   assert.deepEqual(selection(calls, "page").where, where);
+});
+
+test("zero-count response omits the page query", async () => {
+  const { service, calls } = makeService({ total: 0, rows: [] });
+  const response = await service.read(principal, new URLSearchParams());
+  assert.equal(response.total, 0);
+  assert.equal(calls.some(({ operation }) => operation === "page"), false);
 });
 
 test("first page advertises Next and does not request data beyond page size", async () => {

@@ -134,8 +134,10 @@ export class MerchantConversationMessageAdmissionService {
           throw new SendHttpError(409,"recipient_unavailable");
         const lastInbound = await latestVerifiedCustomerInbound(tx, conversation.id, initial.sentAt, now);
         let attemptId: string | undefined;
+        let commandId: string | undefined;
         if (input.kind === "HUMAN_TEXT") {
           if (!windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
+          commandId = randomUUID();
         } else {
           if (windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
           // Reuse Background's persisted effective policy decision. An unsent,
@@ -148,6 +150,7 @@ export class MerchantConversationMessageAdmissionService {
           const candidates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now);
           if (!allowedFollowUpChoice(candidates, input.templateName, input.templateLanguage))
             throw new SendHttpError(409,"template_not_allowed");
+          commandId = randomUUID();
           // Create only the shared existing sequence=2. Shop/Conversation and
           // initial attempt remain locked while the claim and command commit.
           await tx.$executeRaw`INSERT INTO "commerce"."RecoveryOutreachAttempt"
@@ -169,7 +172,7 @@ export class MerchantConversationMessageAdmissionService {
             candidate.outboundMessageId !== null) throw new SendHttpError(409,"follow_up_unavailable");
           const claimed = await tx.recoveryOutreachAttempt.updateMany({
             where: { id: candidate.id, status: "PENDING", initiationKey: null, outboundMessageId: null },
-            data: { initiatedBy: "HUMAN", initiationKey: input.idempotencyKey,
+            data: { initiatedBy: "HUMAN", initiationKey: commandId,
               claimedAt: now, trigger: "POST_WINDOW_FOLLOW_UP" },
           });
           if (claimed.count !== 1) throw new SendHttpError(409,"follow_up_unavailable");
@@ -179,8 +182,10 @@ export class MerchantConversationMessageAdmissionService {
         // sequence-two claim, even if a future branch changes the claim path.
         if (input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" && !attemptId)
           throw new SendHttpError(500, "internal_error");
+        if (!commandId) throw new SendHttpError(500, "internal_error");
         const command = await tx.merchantConversationSendCommand.create({ data: {
-          shopId: principal.shopId, conversationId, idempotencyKey: input.idempotencyKey,
+          id: commandId, shopId: principal.shopId, conversationId, idempotencyKey: input.idempotencyKey,
+          followUpClaimKey: input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" ? commandId : null,
           payloadSha256: digest, expectedControlRevision: input.expectedControlRevision,
           kind: input.kind, recipientSnapshot: recipient,
           ...(input.kind === "HUMAN_TEXT" ? { textBody: input.textBody }

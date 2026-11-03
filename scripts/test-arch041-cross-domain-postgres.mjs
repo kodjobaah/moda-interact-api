@@ -12,6 +12,8 @@ const user = `api_extra_${suffix.slice(16, 28)}`;
 const password = randomUUID();
 const suites = [
   "tests/integration/merchant/recovery-policy/service.postgres.test.ts",
+  "tests/integration/merchant/recoveries/arch055-list.postgres.test.ts",
+  "tests/integration/merchant/recoveries/detail/arch055-pagination.postgres.test.ts",
   "tests/integration/woocommerce/billing/webhooks/webhook-receipt.service.postgres.test.ts",
 ];
 
