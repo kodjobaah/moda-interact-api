@@ -1,5 +1,6 @@
 import { createServer, type Server, type ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import { createSingleFlightReadinessProbe } from "./readiness-probe.js";
 import type { ReadinessDatabase } from "./database.js";
 import type { RuntimeConfig } from "./runtime-config.js";
 import type { ApiRouteHandler } from "./http/route-handler.js";
@@ -33,6 +34,19 @@ function sendJson(
   response.end(JSON.stringify(body));
 }
 
+function readinessDiagnostic(error: unknown, depth = 0): Record<string, unknown> {
+  const redact = (value: string) => value.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]");
+  if (!(error instanceof Error)) {
+    return { errorMessage: typeof error === "string" ? redact(error) : undefined };
+  }
+  return {
+    errorName: redact(error.name),
+    errorMessage: redact(error.message),
+    errorCode: "code" in error && typeof error.code === "string" ? redact(error.code) : undefined,
+    errorCause: error.cause !== undefined && depth < 2 ? readinessDiagnostic(error.cause, depth + 1) : undefined,
+  };
+}
+
 function probeWithinDeadline(
   probe: () => Promise<void>,
   timeoutMs: number,
@@ -52,6 +66,7 @@ function createHttpServer({
   readinessTimeoutMs,
   routes,
 }: ApiServerOptions): Server {
+  const probe = createSingleFlightReadinessProbe(() => database.probe());
   return createServer((request, response) => {
     const requestUrl = new URL(request.url ?? "/", "http://localhost");
     if (request.method === "GET" && requestUrl.pathname === "/health/live") {
@@ -60,7 +75,7 @@ function createHttpServer({
     }
 
     if (request.method === "GET" && requestUrl.pathname === "/health/ready") {
-      void probeWithinDeadline(() => database.probe(), readinessTimeoutMs).then(
+      void probeWithinDeadline(probe, readinessTimeoutMs).then(
         () => sendJson(response, 200, { status: "ready" }),
         (error: unknown) => {
           logger.warn("api.readiness.failed", {
@@ -68,10 +83,7 @@ function createHttpServer({
               error instanceof Error && error.message === "readiness_timeout"
                 ? "timeout"
                 : "database_unavailable",
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+            ...readinessDiagnostic(error),
           });
           if (!response.destroyed) {
             sendJson(response, 503, { status: "not_ready" });
