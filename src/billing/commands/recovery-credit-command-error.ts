@@ -5,8 +5,9 @@ export class RecoveryCreditPurchaseCommandError extends Error {
     readonly operationId?: string,
     readonly safeProviderCode?: string,
     readonly purchaseId?: string,
+    options?: ErrorOptions,
   ) {
-    super(code);
+    super(code, options);
     this.name = "RecoveryCreditPurchaseCommandError";
   }
 }

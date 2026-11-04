@@ -41,6 +41,7 @@ function fixture() {
     canonicalSiteUrl: "https://a.example.test",
   };
   const state = {
+    installation: { id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl, credentialVersion: principal.credentialVersion, status: "ACTIVE", revokedAt: null as Date | null },
     shop: {
       id: principal.shopId, domain: principal.canonicalSiteUrl,
       platform: "WOOCOMMERCE", shopifyShopId: null as string | null,
@@ -74,8 +75,9 @@ function fixture() {
       if (sql.includes('"commerce"."Shop"')) events.push("lock.shop");
       else if (sql.includes('"billing"."Subscription"')) events.push("lock.subscription");
       else events.push("lock.provider-reference");
-      return [];
+      return [{ id: principal.shopId }];
     },
+    wooCommerceInstallation: { findUnique: async () => state.installation },
     shop: { findUnique: async (query: { where: { id: string } }) => {
       events.push("read.shop");
       return query.where.id === state.shop.id ? state.shop : null;
@@ -115,12 +117,12 @@ function fixture() {
         state.operations.push(operation);
         return operation;
       },
-      updateMany: async (query: { where: { id: string }; data: Record<string, unknown> }) => {
+      updateManyAndReturn: async (query: { where: { id: string }; data: Record<string, unknown> }) => {
         events.push("update.operation");
         const row = state.operations.find((operation) => operation.id === query.where.id);
-        if (!row || row.state !== BillingOperationState.INITIATING) return { count: 0 };
+        if (!row || row.state !== BillingOperationState.INITIATING) return [];
         Object.assign(row, query.data);
-        return { count: 1 };
+        return [row];
       },
     },
     recoveryCreditPurchase: {
@@ -187,8 +189,8 @@ test("Free intent locks Shop then Subscription, atomically persists exact charge
   assert.equal(intent.replay, false);
   assert.equal(intent.canonicalSiteUrl, h.principal.canonicalSiteUrl);
   assert.equal(intent.bundleLabel, "Bronze");
-  assert.deepEqual(h.events.slice(0, 5), [
-    "transaction.start:ReadCommitted", "lock.shop", "read.shop", "lock.subscription", "read.subscription",
+  assert.deepEqual(h.events.slice(0, 6), [
+    "transaction.start:ReadCommitted", "lock.shop", "lock.provider-reference", "read.shop", "lock.subscription", "read.subscription",
   ]);
   assert.deepEqual(h.events.slice(-3), ["create.purchase", "create.operation", "transaction.end"]);
   assert.equal(h.state.transactionCount, 1);

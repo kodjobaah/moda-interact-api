@@ -1,14 +1,18 @@
+import { sanitizeLogFields } from "@modainteract/moda-interact-shared/logging";
 import type { WooBillingConfig } from "./woo-billing-config.js";
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MAX_RESPONSE_BYTES = 64 * 1024;
 
 export class WooBillingProviderError extends Error {
+  readonly diagnostics: Readonly<Record<string, unknown>> | undefined;
   constructor(
     readonly outcome: "DEFINITE_REJECTION" | "OUTCOME_UNKNOWN",
     readonly safeCode: string,
+    options?: ErrorOptions & { diagnostics?: Readonly<Record<string, unknown>> },
   ) {
-    super(safeCode);
+    super(safeCode, options);
+    this.diagnostics = options?.diagnostics;
     this.name = "WooBillingProviderError";
   }
 }
@@ -69,36 +73,79 @@ export class WooBillingClient {
         redirect: "manual",
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
-    } catch {
-      throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_TRANSPORT_ERROR");
+    } catch (cause) {
+      throw this.failure("OUTCOME_UNKNOWN", "PROVIDER_TRANSPORT_ERROR", undefined, cause);
     }
 
-    if (response.status >= 300 && response.status < 400) {
-      throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_REDIRECT_REJECTED");
-    }
-    if (response.status >= 500) {
-      throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_SERVER_ERROR");
-    }
     if (response.status < 200 || response.status >= 300) {
-      throw new WooBillingProviderError("DEFINITE_REJECTION", "PROVIDER_REJECTED");
+      const outcome = response.status < 300 || response.status >= 400 && response.status < 500 ? "DEFINITE_REJECTION" : "OUTCOME_UNKNOWN";
+      const code = response.status >= 300 && response.status < 400 ? "PROVIDER_REDIRECT_REJECTED" :
+        response.status >= 500 ? "PROVIDER_SERVER_ERROR" : "PROVIDER_REJECTED";
+      let cause: unknown;
+      let details: Record<string, unknown> = {};
+      try {
+        const bytes = await readBoundedResponse(response);
+        if (/^application\/json(?:\s*;|$)/i.test(response.headers.get("content-type") ?? "")) {
+          const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            const payload = value as Record<string, unknown>;
+            details = {
+              ...(typeof payload.code === "string" ? { upstreamCode: payload.code } : {}),
+              ...(typeof payload.message === "string" ? { upstreamMessage: payload.message } : {}),
+            };
+          }
+        }
+      } catch (error) { cause = error; }
+      throw this.failure(outcome, code, response.status, cause, details);
     }
 
     let bytes: Buffer;
     try {
       bytes = await readBoundedResponse(response);
-    } catch {
-      throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID");
+    } catch (cause) {
+      throw this.failure("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID", response.status, cause);
     }
     if (method === "DELETE" && bytes.length === 0) return null;
     const contentType = response.headers.get("content-type") ?? "";
     if (!/^application\/json(?:\s*;|$)/i.test(contentType)) {
-      throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID");
+      throw this.failure("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID", response.status);
     }
     try {
       return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) as unknown;
-    } catch {
-      throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID");
+    } catch (cause) {
+      throw this.failure("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID", response.status, cause);
     }
+  }
+  private failure(
+    outcome: "DEFINITE_REJECTION" | "OUTCOME_UNKNOWN",
+    code: string,
+    httpStatus?: number,
+    cause?: unknown,
+    details: Record<string, unknown> = {},
+  ): WooBillingProviderError {
+    // Provider-specific projection: never retain a response/body/header or URL
+    // in emitted diagnostics. The original exception remains available as cause.
+    const scrub = (value: string) => {
+      let safe = value;
+      for (const secret of [this.config.apiKey, this.config.apiSecret,
+        Buffer.from(this.config.apiKey + ":" + this.config.apiSecret).toString("base64")]) {
+        if (secret) safe = safe.split(secret).join("[REDACTED]");
+      }
+      return safe.replace(/https?:\/\/[^\s"'<>]+/gi, "[REDACTED]").slice(0, 512);
+    };
+    const projected = Object.fromEntries(Object.entries(details).map(([key, value]) =>
+      [key, typeof value === "string" ? scrub(value) : value]));
+    const diagnostics = sanitizeLogFields({
+      ...(httpStatus === undefined ? {} : { httpStatus }),
+      ...projected,
+      ...(cause instanceof Error ? {
+        causeName: cause.name,
+        // JSON parser errors may embed response contents; preserve the exception
+        // but only emit its type, never the parser's body excerpt.
+        ...(cause instanceof SyntaxError ? {} : { causeMessage: scrub(cause.message) }),
+      } : {}),
+    });
+    return new WooBillingProviderError(outcome, code, { cause, diagnostics });
   }
 }
 

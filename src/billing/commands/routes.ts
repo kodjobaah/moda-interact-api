@@ -1,3 +1,4 @@
+import { WooBillingProviderError } from "../../woocommerce/billing/woo-billing-client.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { validateIdempotencyKey } from "./recurring-command-primitives.js";
@@ -73,6 +74,7 @@ export function createBillingCommandRoutes({
           } else if (error instanceof RecoveryCreditPurchaseCommandError) {
             logger.warn("billing.recovery_credit_purchase.command.failed", {
               reason: error.code,
+              ...providerDiagnostics(error),
               operationId: error.operationId ?? null,
               durationMs: Math.max(0, now() - startedAt),
               errorName: error instanceof Error ? error.name : typeof error,
@@ -147,6 +149,7 @@ export function createBillingCommandRoutes({
           } else if (error instanceof RecurringBillingCommandError) {
             logger.warn("billing.recurring.command.failed", {
               reason: error.code,
+              ...providerDiagnostics(error),
               operationId: error.operationId ?? null,
               durationMs: Math.max(0, now() - startedAt),
               errorName: error instanceof Error ? error.name : typeof error,
@@ -171,4 +174,11 @@ export function createBillingCommandRoutes({
       return false;
     },
   };
+}
+
+// Domain-specific provider evidence; shared logging owns serialization/redaction.
+function providerDiagnostics(error: Error): { providerError?: Readonly<Record<string, unknown>> } {
+  const provider = error instanceof WooBillingProviderError ? error :
+    error.cause instanceof WooBillingProviderError ? error.cause : undefined;
+  return provider?.diagnostics ? { providerError: provider.diagnostics } : {};
 }

@@ -23,11 +23,11 @@ let prisma: PrismaClient | undefined;
 
 function database(): PrismaClient {
   if (!databaseUrl) throw new Error("WOO_INSTALLATION_TEST_DATABASE_URL is required");
-  return prisma ??= new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  return prisma ??= new PrismaClient({ transactionOptions: { timeout: 30_000, maxWait: 30_000 }, datasources: { db: { url: databaseUrl } } });
 }
 
 function principal(shopId: string, canonicalSiteUrl: string): WooInstallationPrincipal {
-  return { installationId: `api004_install_${suffix}`, shopId, canonicalSiteUrl, credentialVersion: 1 };
+  return { installationId: `api004_install_${shopId}`, shopId, canonicalSiteUrl, credentialVersion: 1 };
 }
 
 async function featureId(): Promise<string> {
@@ -85,6 +85,10 @@ async function createShop(
   const shop = await db.shop.create({
     data: { domain, platform: "WOOCOMMERCE", onboardingCompleted: true },
   });
+  await db.wooCommerceInstallation.create({ data: {
+    id: `api004_install_${shop.id}`, shopId: shop.id, canonicalSiteUrl: domain,
+    credentialDigest: Buffer.alloc(32), credentialVersion: 1,
+  } });
   const subscription = await db.subscription.create({
     data: {
       shopId: shop.id,

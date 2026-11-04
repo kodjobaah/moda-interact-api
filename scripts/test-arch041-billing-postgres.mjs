@@ -20,6 +20,7 @@ const initialSuites = [
   "tests/integration/billing/commands/recovery-credit-purchase-command.postgres.test.ts",
   "tests/integration/billing/commands/recurring-outcome.test.ts",
   "tests/integration/billing/commands/recovery-credit-outcome.test.ts",
+  "tests/integration/billing/commands/arch055-installation-admission.postgres.test.ts",
 ];
 const additionalSuites = process.argv.slice(2);
 for (const file of additionalSuites) {
@@ -45,21 +46,28 @@ try {
     "pgvector/pgvector:pg17",
   ]);
   started = true;
+  process.stdout.write("Disposable billing PostgreSQL: " + name + "\n");
   phase = "resolving the mapped PostgreSQL port";
   const mappedPort = docker(["port", name, "5432/tcp"]).trim().match(/:(\d+)$/)?.[1];
   if (!mappedPort) throw new Error("disposable PostgreSQL port unavailable");
   phase = "checking PostgreSQL readiness";
   let ready = false;
+  let readinessDiagnostic = "";
   for (let i = 0; i < 60; i += 1) {
     try {
       docker(["exec", name, "psql", "-U", user, "-d", database, "-v", "ON_ERROR_STOP=1", "-c", "SELECT 1"]);
       ready = true;
       break;
-    } catch {
+    } catch (error) {
+      // stderr contains the psql/container failure, not execFileSync's argv.
+      readinessDiagnostic = String(error?.stderr ?? "").replaceAll(password, "[REDACTED]").slice(0, 1024);
       await delay(500);
     }
   }
-  if (!ready) throw new Error("disposable PostgreSQL did not become ready");
+  if (!ready) {
+    process.stderr.write("PostgreSQL readiness diagnostic: " + readinessDiagnostic + "\n");
+    throw new Error("disposable PostgreSQL did not become ready");
+  }
   phase = "enabling pgvector";
   docker(["exec", name, "psql", "-U", user, "-d", database, "-v", "ON_ERROR_STOP=1", "-c", "CREATE EXTENSION IF NOT EXISTS vector"]);
 
@@ -107,7 +115,9 @@ try {
       env, stdio: "inherit",
     });
   }
-} catch {
+} catch (error) {
+  const diagnostic = String(error?.stderr ?? error?.code ?? "").replaceAll(password, "[REDACTED]").slice(0, 1024);
+  if (diagnostic) process.stderr.write("Billing runner diagnostic: " + diagnostic + "\n");
   // execFileSync exceptions can include the full Docker argv, including the
   // generated POSTGRES_PASSWORD. Never print that error object or its stack.
   process.stderr.write(`ARCH-041 billing PostgreSQL validation failed while ${phase}.\n`);

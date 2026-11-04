@@ -59,9 +59,9 @@ export class RecurringSubscriptionCommandService {
     let provider: ProviderClient;
     try {
       provider = typeof this.provider === "function" ? await this.provider() : this.provider;
-    } catch {
+    } catch (cause) {
       // Failure occurs before an intent is persisted or any provider request is made.
-      throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
+      throw new RecurringBillingCommandError(503, "billing_provider_unavailable", undefined, undefined, { cause });
     }
     const intent = await this.intentPersistence.persistIntent(principal, kind, requestKey, merchantPricingPlanId);
     if (intent.replay) return this.outcomePersistence.replayOperation(intent.operation);

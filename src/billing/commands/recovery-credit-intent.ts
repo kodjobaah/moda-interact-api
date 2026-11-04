@@ -10,6 +10,7 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { randomUUID, timingSafeEqual } from "node:crypto";
+import { requireCurrentWooMutationPrincipal, WooMutationPrincipalConflictError } from "../../auth/woo-installation/current-mutation-principal.js";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { RecoveryCreditPurchaseCommandError } from "./recovery-credit-command-error.js";
 import { recoveryCreditPurchaseFingerprint } from "./recurring-command-primitives.js";
@@ -35,24 +36,8 @@ export class RecoveryCreditIntentPersistence {
   ): Promise<RecoveryCreditCommandIntent> {
     try {
       return await this.database.$transaction(async (transaction) => {
-        await transaction.$queryRaw(Prisma.sql`
-          SELECT "id" FROM "commerce"."Shop" WHERE "id" = ${principal.shopId} FOR UPDATE
-        `);
-        const shop = await transaction.shop.findUnique({
-          where: { id: principal.shopId },
-          select: {
-            id: true,
-            domain: true,
-            platform: true,
-            shopifyShopId: true,
-            status: true,
-            onboardingCompleted: true,
-          },
-        });
-        if (
-          !shop || shop.id !== principal.shopId || shop.domain !== principal.canonicalSiteUrl ||
-          shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null || shop.status !== "ACTIVE"
-        ) throw new RecoveryCreditPurchaseCommandError(409, "billing_shop_invalid");
+        const currentPrincipal = await requireCurrentWooMutationPrincipal(transaction, principal);
+        const shop = { id: currentPrincipal.shopId, domain: currentPrincipal.shopDomain, onboardingCompleted: currentPrincipal.onboardingCompleted };
         if (!shop.onboardingCompleted) {
           throw new RecoveryCreditPurchaseCommandError(409, "billing_not_initialized");
         }
@@ -200,6 +185,7 @@ export class RecoveryCreditIntentPersistence {
             status: "REQUESTED",
             usageEventId: null,
           },
+          select: { id: true },
         });
         const operation = await transaction.billingOperation.create({
           data: {
@@ -222,9 +208,12 @@ export class RecoveryCreditIntentPersistence {
         return { operation, canonicalSiteUrl: shop.domain, bundleLabel: bundle.adminLabel.trim(), replay: false };
       }, { isolationLevel: "ReadCommitted" });
     } catch (error) {
+      if (error instanceof WooMutationPrincipalConflictError) {
+        throw new RecoveryCreditPurchaseCommandError(409, "billing_shop_invalid", undefined, undefined, undefined, { cause: error });
+      }
       if (error instanceof RecoveryCreditPurchaseCommandError) throw error;
       if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new RecoveryCreditPurchaseCommandError(409, "billing_operation_conflict");
+        throw new RecoveryCreditPurchaseCommandError(409, "billing_operation_conflict", undefined, undefined, undefined, { cause: error });
       }
       throw error;
     }

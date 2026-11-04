@@ -58,6 +58,7 @@ function fixture() {
     installationId: "installation-a", credentialVersion: 2,
   };
   const state = {
+    installation: { id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl, credentialVersion: principal.credentialVersion, status: "ACTIVE", revokedAt: null as Date | null },
     shop: {
       id: principal.shopId, domain: principal.canonicalSiteUrl,
       platform: "WOOCOMMERCE", shopifyShopId: null as string | null,
@@ -89,8 +90,9 @@ function fixture() {
   const transaction = {
     $queryRaw: async () => {
       events.push(`lock-${events.filter((event) => event.startsWith("lock-")).length + 1}`);
-      return [];
+      return [{ id: principal.shopId }];
     },
+    wooCommerceInstallation: { findUnique: async () => state.installation },
     shop: { findUnique: async () => { events.push("shop.read"); return state.shop; } },
     subscription: { findUnique: async () => { events.push("subscription.read"); return state.subscription; } },
     billingOperation: {
@@ -98,7 +100,6 @@ function fixture() {
         events.push("operation.read");
         return args.where.id ? state.created.find((o) => o.id === args.where.id) ?? null : state.existing;
       },
-      findMany: async () => { events.push("operations.read"); return state.operations; },
       create: async (args: { data: Record<string, unknown> }) => {
         events.push("operation.create");
         const data = args.data;
@@ -116,14 +117,22 @@ function fixture() {
         state.created.push(operation);
         return operation;
       },
-      updateMany: async (args: { where: { id: string }; data: Record<string, unknown> }) => {
+      updateManyAndReturn: async (args: { where: { id: string }; data: Record<string, unknown> }) => {
         events.push("operation.update");
         const row = state.created.find((operation) => operation.id === args.where.id);
-        if (!row || row.state !== BillingOperationState.INITIATING) return { count: 0 };
+        if (!row || row.state !== BillingOperationState.INITIATING) return [];
         Object.assign(row, args.data);
-        return { count: 1 };
+        return [row];
       },
-      findFirst: async () => null,
+      findFirst: async (args: { where: { OR?: Array<{ state: { in?: string[] } | string; providerReference?: string }> } }) => {
+        if (!args.where.OR) return null;
+        events.push("operations.read");
+        return state.operations.find(row => args.where.OR!.some(condition =>
+          typeof condition.state === "string"
+            ? row.kind === "CANCEL" && row.state === condition.state &&
+              (!condition.providerReference || row.providerReference === condition.providerReference)
+            : condition.state.in?.includes(row.state))) ?? null;
+      },
     },
     merchantPricingPlan: {
       findUnique: async (args: { where: { id?: string; shopifyPlanHandle?: string } }) => {
@@ -202,8 +211,8 @@ test("create intent locks shop then subscription, persists canonical quote and c
   assert.equal(intent.replay, false);
   assert.equal(intent.canonicalSiteUrl, h.principal.canonicalSiteUrl);
   assert.equal(intent.targetPlan?.displayName, "Growth");
-  assert.deepEqual(h.events.slice(0, 5), [
-    "transaction.start:ReadCommitted", "lock-1", "shop.read", "lock-2", "subscription.read",
+  assert.deepEqual(h.events.slice(0, 6), [
+    "transaction.start:ReadCommitted", "lock-1", "lock-2", "shop.read", "lock-3", "subscription.read",
   ]);
   assert.equal(h.state.resolverCount, 1);
   assert.equal(h.state.transactionCount, 1);

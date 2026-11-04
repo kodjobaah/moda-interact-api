@@ -54,9 +54,9 @@ export class RecoveryCreditPurchaseCommandService {
     let provider: ProviderClient;
     try {
       provider = typeof this.provider === "function" ? await this.provider() : this.provider;
-    } catch {
+    } catch (cause) {
       // No purchase or provider-operation row may be created without credentials.
-      throw new RecoveryCreditPurchaseCommandError(503, "billing_provider_unavailable");
+      throw new RecoveryCreditPurchaseCommandError(503, "billing_provider_unavailable", undefined, undefined, undefined, { cause });
     }
     const intent = await this.intentPersistence.persistIntent(principal, requestKey, merchantPricingUsageEventId);
     if (intent.replay) return replayOperation(intent.operation);

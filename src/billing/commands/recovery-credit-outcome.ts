@@ -47,13 +47,14 @@ export class RecoveryCreditOutcomePersistence {
         result.operation.id,
         result.operation.lastErrorCode ?? undefined,
         result.operation.recoveryCreditPurchaseId ?? undefined,
+        { cause: error },
       );
     }
     if (result.operation.state === BillingOperationState.OUTCOME_UNKNOWN) {
-      throw providerOutcomeError(result.operation);
+      throw providerOutcomeError(result.operation, 502, error);
     }
     if (result.error) throw result.error;
-    throw providerOutcomeError(result.operation);
+    throw providerOutcomeError(result.operation, 502, error);
   }
 
   async confirmProviderOperation(operation: BillingOperation, evidence: ChargeEvidence): Promise<BillingOperation> {
@@ -69,16 +70,16 @@ export class RecoveryCreditOutcomePersistence {
         select: { id: true },
       });
       if (collision) {
-        const changed = await transaction.billingOperation.updateMany({
+        const changed = await transaction.billingOperation.updateManyAndReturn({
           where: { id: operation.id, state: BillingOperationState.INITIATING },
           data: { state: BillingOperationState.OUTCOME_UNKNOWN, lastErrorCode: "PROVIDER_CONTRACT_COLLISION" },
         });
-        const current = await requiredOperation(transaction, operation.id);
-        return changed.count === 1
+        const current = changed[0] ?? await requiredOperation(transaction, operation.id);
+        return changed.length === 1
           ? { operation: current, error: providerOutcomeError(current) }
           : operationResult(current);
       }
-      const changed = await transaction.billingOperation.updateMany({
+      const changed = await transaction.billingOperation.updateManyAndReturn({
         where: {
           id: operation.id,
           state: BillingOperationState.INITIATING,
@@ -92,8 +93,8 @@ export class RecoveryCreditOutcomePersistence {
           lastErrorCode: null,
         },
       });
-      const current = await requiredOperation(transaction, operation.id);
-      return changed.count === 1 ? { operation: current } : operationResult(current);
+      const current = changed[0] ?? await requiredOperation(transaction, operation.id);
+      return changed.length === 1 ? { operation: current } : operationResult(current);
     });
     if (result.error) throw result.error;
     return result.operation;
@@ -104,11 +105,11 @@ export class RecoveryCreditOutcomePersistence {
     data: { state: BillingOperationState; lastErrorCode: string | null },
   ): Promise<OperationResult> {
     return this.database.$transaction(async (transaction) => {
-      await transaction.billingOperation.updateMany({
+      const changed = await transaction.billingOperation.updateManyAndReturn({
         where: { id: operation.id, state: BillingOperationState.INITIATING },
         data,
       });
-      const current = await requiredOperation(transaction, operation.id);
+      const current = changed[0] ?? await requiredOperation(transaction, operation.id);
       return operationResult(current);
     });
   }
@@ -175,6 +176,7 @@ function operationStateError(operation: BillingOperation): RecoveryCreditPurchas
 function providerOutcomeError(
   operation: BillingOperation,
   statusCode = 502,
+  cause?: unknown,
 ): RecoveryCreditPurchaseCommandError {
   return new RecoveryCreditPurchaseCommandError(
     statusCode,
@@ -182,6 +184,7 @@ function providerOutcomeError(
     operation.id,
     operation.lastErrorCode ?? undefined,
     operation.recoveryCreditPurchaseId ?? undefined,
+    cause === undefined ? undefined : { cause },
   );
 }
 
@@ -203,8 +206,8 @@ function validateChargeResponse(
   let confirmationUrl: URL;
   try {
     confirmationUrl = new URL(response.confirmation_url);
-  } catch {
-    throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID");
+  } catch (cause) {
+    throw new WooBillingProviderError("OUTCOME_UNKNOWN", "PROVIDER_RESPONSE_INVALID", { cause });
   }
   const expectedHost = environment === "sandbox" ? "sandbox.woocommerce.com" : "woocommerce.com";
   if (

@@ -140,3 +140,32 @@ test("provider transport failures are ambiguous and are never automatically retr
   });
   assert.equal(attempts, 1);
 });
+test("provider diagnostics preserve original causes, status and safe messages with credential/URL redaction", async () => {
+  const transport = new Error("distinct upstream connection failure Bearer hidden-value test-secret https://woocommerce.com/confirm/private");
+  const failing = new WooBillingClient(sandbox, async () => { throw transport; });
+  await assert.rejects(failing.createCharge({ name: "Credits", price: "1.00", return_url: "https://merchant.invalid" }), (error: unknown) => {
+    assert.ok(error instanceof WooBillingProviderError);
+    assert.equal(error.cause, transport);
+    assert.match(String(error.diagnostics?.causeMessage), /distinct upstream connection failure/);
+    assert.doesNotMatch(JSON.stringify(error.diagnostics), /hidden-value|test-secret|confirm\/private/);
+    return true;
+  });
+  const rejected = new WooBillingClient(sandbox, async () => new Response(JSON.stringify({
+    code: "provider_declined", message: "distinct provider decline test-key https://woocommerce.com/capability",
+    private_body: "not projected", email: "private-buyer@example.invalid", phone: "+15555550123",
+  }), { status: 422, headers: { "content-type": "application/json" } }));
+  await assert.rejects(rejected.createCharge({ name: "Credits", price: "1.00", return_url: "https://merchant.invalid" }), (error: unknown) => {
+    assert.ok(error instanceof WooBillingProviderError);
+    assert.equal(error.diagnostics?.httpStatus, 422);
+    assert.equal(error.diagnostics?.upstreamCode, "provider_declined");
+    assert.match(String(error.diagnostics?.upstreamMessage), /distinct provider decline/);
+    assert.doesNotMatch(JSON.stringify(error.diagnostics), /test-key|capability|private_body|not projected|private-buyer|15555550123/);
+    return true;
+  });
+  const malformed = new WooBillingClient(sandbox, async () => new Response('{"private":"body"', { headers: { "content-type": "application/json" } }));
+  await assert.rejects(malformed.createCharge({ name: "Credits", price: "1.00", return_url: "https://merchant.invalid" }), (error: unknown) => {
+    assert.ok(error instanceof WooBillingProviderError); assert.ok(error.cause instanceof SyntaxError);
+    assert.doesNotMatch(JSON.stringify(error.diagnostics), /private|body/);
+    return true;
+  });
+});

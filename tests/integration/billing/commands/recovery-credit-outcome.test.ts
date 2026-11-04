@@ -18,7 +18,7 @@ const billingPlanHandles: string[] = [];
 
 function database(): PrismaClient {
   if (!databaseUrl) throw new Error("WOO_INSTALLATION_TEST_DATABASE_URL is required");
-  return prisma ??= new PrismaClient({ datasources: { db: { url: databaseUrl } } });
+  return prisma ??= new PrismaClient({ transactionOptions: { timeout: 30_000, maxWait: 30_000 }, datasources: { db: { url: databaseUrl } } });
 }
 
 async function createFixture() {
@@ -74,6 +74,10 @@ async function createFixture() {
     await db.subscription.create({
       data: { shopId: shop.id, planId: plan.id, status: "ACTIVE", providerSubscriptionId: null },
     });
+    await db.wooCommerceInstallation.create({ data: {
+      id: `api007-install-${name}-${suffix}`, shopId: shop.id, canonicalSiteUrl: domain,
+      credentialDigest: Buffer.alloc(32), credentialVersion: 1,
+    } });
     shops.push({
       id: shop.id,
       principal: {

@@ -85,7 +85,7 @@ test("recovery-credit provider-unavailable, known provider failure and unexpecte
   });
   let throwsUnexpected = false;
   const { router, events } = commandFixture({ credit: { async initiate() {
-    if (throwsUnexpected) throw new Error("credential and private provider body");
+    if (throwsUnexpected) throw new Error("distinct unexpected purchase diagnostic");
     throw new RecoveryCreditPurchaseCommandError(502, "billing_provider_outcome_unknown", "op-safe", "SAFE_PROVIDER", "purchase-safe");
   } } });
   await withCommandRouter(router, async (origin) => {
@@ -104,7 +104,7 @@ test("recovery-credit provider-unavailable, known provider failure and unexpecte
     ["error", "billing.recovery_credit_purchase.command.failed", "internal"],
   ]);
   assert.equal(JSON.stringify(events).includes("SAFE_PROVIDER"), false);
-  assert.equal(JSON.stringify(events).includes("credential and private provider body"), false);
+  assert.equal(JSON.stringify(events).includes("distinct unexpected purchase diagnostic"), true);
 });
 
 test("recovery-credit auth failure does not reach command service; GET history remains a separate route", async () => {
@@ -122,4 +122,13 @@ test("recovery-credit auth failure does not reach command service; GET history r
   });
   assert.equal(invoked, 0);
   assert.deepEqual(calls, ["authenticate"]);
+});
+
+test("purchase admission mismatch omits operation, purchase and provider fields", async () => {
+  const mismatch = new RecoveryCreditPurchaseCommandError(409, "billing_shop_invalid", undefined, undefined, undefined, { cause: new Error("helper mismatch") });
+  const { router } = commandFixture({ credit: { initiate: async () => { throw mismatch; } } });
+  await withCommandRouter(router, async origin => {
+    const reply = await fetch(origin + purchasePath, { method: "POST", headers: authorizedHeaders, body: purchaseBody });
+    assert.equal(reply.status, 409); assert.deepEqual(await reply.json(), { error: "billing_shop_invalid" });
+  });
 });
