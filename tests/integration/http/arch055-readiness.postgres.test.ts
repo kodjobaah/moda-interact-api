@@ -20,11 +20,32 @@ function barrier() {
 const url = process.env.ARCH055_READINESS_TEST_DATABASE_URL;
 const logger = createLogger({ serviceName: "readiness-test", environment: "test", sink() {} });
 
-test("real readiness pool acquisition and query execution settle within five seconds", { skip: !url, timeout: 25_000 }, async () => {
+test("readiness pool acquisition and PostgreSQL statement execution are bounded", { skip: !url, timeout: 25_000 }, async () => {
   assert.ok(url);
   const tagged = new URL(url);
   const tag = "api-readiness-" + randomUUID();
   tagged.searchParams.set("application_name", tag);
+  tagged.searchParams.set("options", "-c lock_timeout=7s");
+  const upstreamHost = tagged.hostname;
+  const upstreamPort = Number(tagged.port);
+  const databaseSockets = new Set<Socket>();
+  const pausedDatabaseSockets = new Set<Socket>();
+  const proxy = createServer(incoming => {
+    const outgoing = connect(upstreamPort, upstreamHost);
+    databaseSockets.add(outgoing);
+    incoming.on("error", () => incoming.destroy());
+    outgoing.on("error", () => outgoing.destroy());
+    outgoing.on("close", () => databaseSockets.delete(outgoing));
+    incoming.pipe(outgoing).pipe(incoming);
+  });
+  await new Promise<void>((resolve, reject) => {
+    proxy.once("error", reject);
+    proxy.listen(0, "127.0.0.1", resolve);
+  });
+  const proxyAddress = proxy.address();
+  assert.ok(proxyAddress && typeof proxyAddress !== "string");
+  tagged.hostname = "127.0.0.1";
+  tagged.port = String(proxyAddress.port);
   const readiness = createReadinessClient(tagged.toString());
   const observer = new PrismaClient({ datasources: { db: { url } } });
   const acquired = barrier();
@@ -46,30 +67,60 @@ test("real readiness pool acquisition and query execution settle within five sec
     assert.ok(acquireMs < 5000, "pool acquisition did not settle within the safety ceiling");
     release.resolve();
     await holding;
+    const settings = await readiness.$queryRaw<Array<{ statement_timeout: string; lock_timeout: string }>>`
+      SELECT current_setting('statement_timeout') AS statement_timeout,
+        current_setting('lock_timeout') AS lock_timeout
+    `;
+    assert.equal(settings[0]?.statement_timeout, "500ms");
+    assert.equal(settings[0]?.lock_timeout, "7s", "existing startup options must be preserved");
     const queryStart = performance.now();
-    await assert.rejects(readiness.$queryRaw`SELECT 1 FROM pg_sleep(8)`);
-    const queryMs = performance.now() - queryStart;
-    assert.ok(queryMs < 5000, "blocked query did not settle within the safety ceiling");
-    // Socket timeout bounds the client promise. PostgreSQL may still be
-    // finishing the deliberately blocked test statement on that connection.
-    const recoveryDeadline = performance.now() + 10_000;
-    while (true) {
-      const active = await observer.$queryRaw<Array<{ count: number }>>`
-        SELECT count(*)::int AS count FROM pg_stat_activity
-        WHERE application_name = ${tag} AND state = 'active'
-      `;
-      if (active[0]?.count === 0) break;
-      assert.ok(performance.now() < recoveryDeadline, "test query did not finish on PostgreSQL");
-      await delay(25);
+    let querySettled = false;
+    const query = readiness.$queryRaw`SELECT 1 FROM pg_sleep(8)`.then(
+      () => { querySettled = true; throw new Error("statement timeout should cancel the deliberately long query"); },
+      error => { querySettled = true; throw error; },
+    );
+    void query.catch(() => undefined);
+    const observationDeadline = performance.now() + 3000;
+    const activeQuery = async () => (await observer.$queryRaw<Array<{ count: number }>>`
+      SELECT count(*)::int AS count FROM pg_stat_activity
+      WHERE application_name = ${tag} AND state = 'active' AND query ILIKE '%pg_sleep%'
+    `)[0]?.count ?? 0;
+    while (await activeQuery() === 0) {
+      assert.ok(performance.now() < observationDeadline, "PostgreSQL never observed the long readiness query");
+      await delay(10);
     }
+    assert.equal(databaseSockets.size, 1, "the dedicated readiness client must use one proxied PostgreSQL session");
+    for (const socket of databaseSockets) {
+      socket.pause();
+      pausedDatabaseSockets.add(socket);
+    }
+    while (await activeQuery() !== 0) {
+      assert.ok(performance.now() < observationDeadline, "PostgreSQL did not cancel the statement within its server timeout");
+      assert.equal(querySettled, false, "the proxy must keep the Prisma promise pending until cancellation is observed");
+      await delay(10);
+    }
+    assert.equal(querySettled, false, "PostgreSQL cancellation must precede Prisma promise settlement");
+    for (const socket of pausedDatabaseSockets) socket.resume();
+    pausedDatabaseSockets.clear();
+    let queryError: unknown;
+    try { await query; }
+    catch (error) { queryError = error; }
+    const queryMs = performance.now() - queryStart;
+    assert.ok(queryError instanceof Error);
+    assert.match(queryError.message, /57014|statement timeout/i);
+    assert.ok(queryMs < 1000, "PostgreSQL must cancel the query before socket_timeout");
     const backendRecoveryMs = performance.now() - queryStart;
     await readiness.$queryRaw`SELECT 1`;
-    console.log(JSON.stringify({ profile: "readiness-pool-and-socket", acquireMs, queryMs, backendRecoveryMs,
+    console.log(JSON.stringify({ profile: "readiness-pool-and-statement", acquireMs, queryMs, backendRecoveryMs,
       physicalConnections: sessions[0]?.count, probeSql: "SELECT 1", affectedRows: 0 }));
   } finally {
     release.resolve();
+    for (const socket of pausedDatabaseSockets) socket.resume();
+    pausedDatabaseSockets.clear();
     await holding.catch(() => undefined);
     await Promise.all([readiness.$disconnect(), observer.$disconnect()]);
+    for (const socket of databaseSockets) socket.destroy();
+    await new Promise<void>(resolve => proxy.close(() => resolve()));
   }
 });
 

@@ -14,6 +14,9 @@ export function createReadinessClient(databaseUrl: string): PrismaClient {
   for (const key of ["connection_limit", "pool_timeout", "connect_timeout", "socket_timeout"]) {
     url.searchParams.set(key, "1");
   }
+  const existingOptions = url.searchParams.get("options")?.trim();
+  const options = [existingOptions, "-c statement_timeout=500ms"].filter(Boolean).join(" ");
+  url.searchParams.set("options", options);
   return new PrismaClient({ datasources: { db: { url: url.toString() } } });
 }
 
