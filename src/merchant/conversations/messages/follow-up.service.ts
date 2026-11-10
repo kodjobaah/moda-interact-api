@@ -2,7 +2,7 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../../auth/woo-installation/principal.js";
 import { ownedRecoveryConversation, requireCurrentWooShop } from "./admission.service.js";
 import { SendHttpError } from "./contract.js";
-import { configuredFollowUpDue, latestVerifiedCustomerInbound,
+import { merchantFollowUpDue, latestVerifiedCustomerInbound,
   requireRecoveryExecution, windowOpen } from "./eligibility.js";
 import { readEligibleFollowUpChoices, type FollowUpChoicesResponse,
   type SenderWabaReader } from "./follow-up-catalogue.js";
@@ -40,15 +40,14 @@ export class MerchantConversationFollowUpService {
         SELECT "recipient", "sentAt", "followUpDueAt" FROM "commerce"."RecoveryOutreachAttempt"
         WHERE "checkoutRecoveryId"=${conversation.checkoutRecoveryId} AND "sequence"=1`);
       const initial = attempts[0];
-      if (!initial?.sentAt || !/^\+?[1-9]\d{6,14}$/.test(initial.recipient) ||
-          !configuredFollowUpDue(initial.followUpDueAt, now)) return EMPTY;
+      if (!initial?.sentAt || !/^\+?[1-9]\d{6,14}$/.test(initial.recipient)) return EMPTY;
       const reachability = await tx.whatsAppRecipientReachability.findUnique({
         where: { shopId_recipient: { shopId: shop.id, recipient: initial.recipient } },
         select: { suppressUntil: true },
       });
       if (reachability?.suppressUntil && reachability.suppressUntil > now) return EMPTY;
       const inbound = await latestVerifiedCustomerInbound(tx, conversation.id, initial.sentAt, now);
-      if (windowOpen(inbound, now)) return EMPTY;
+      if (windowOpen(inbound, now) || !merchantFollowUpDue(initial.sentAt, initial.followUpDueAt, inbound, now)) return EMPTY;
       const existing = await tx.recoveryOutreachAttempt.findUnique({
         where: { checkoutRecoveryId_sequence: { checkoutRecoveryId: conversation.checkoutRecoveryId, sequence: 2 } },
         select: { status: true, initiationKey: true, outboundMessageId: true },
