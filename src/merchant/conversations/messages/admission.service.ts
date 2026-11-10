@@ -5,7 +5,7 @@ import { WooUnauthenticatedError } from "../../../auth/woo-installation/authenti
 import { humanPayloadDigest, SendHttpError, type HumanSendInput, type SendResponse } from "./contract.js";
 import { allowedFollowUpChoice, readEligibleFollowUpChoices,
   type SenderWabaReader } from "./follow-up-catalogue.js";
-import { configuredFollowUpDue, latestVerifiedCustomerInbound,
+import { merchantFollowUpDue, latestVerifiedCustomerInbound,
   requireRecoveryExecution, windowOpen } from "./eligibility.js";
 
 interface ShopRow { id: string; domain: string; status: string; platform: string;
@@ -140,10 +140,14 @@ export class MerchantConversationMessageAdmissionService {
           commandId = randomUUID();
         } else {
           if (windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
-          // Reuse Background's persisted effective policy decision. An unsent,
-          // disabled or not-yet-due initial follow-up cannot claim sequence two.
-          if (!configuredFollowUpDue(initial.followUpDueAt, now))
+          if (!merchantFollowUpDue(initial.sentAt, initial.followUpDueAt, lastInbound, now))
             throw new SendHttpError(409,"follow_up_unavailable");
+          const priorAttempt = await tx.recoveryOutreachAttempt.findUnique({
+            where: { checkoutRecoveryId_sequence: { checkoutRecoveryId: conversation.checkoutRecoveryId, sequence: 2 } },
+            select: { status: true, initiationKey: true, outboundMessageId: true },
+          });
+          if (priorAttempt && (priorAttempt.status !== "PENDING" || priorAttempt.initiationKey !== null ||
+              priorAttempt.outboundMessageId !== null)) throw new SendHttpError(409, "follow_up_unavailable");
           // Only the exact current published Moda assignment and approved,
           // fresh, drift-free registration is a permitted merchant choice.
           // No client-selected WABA or unverified positive offer is trusted.
