@@ -1,0 +1,54 @@
+name: Temporary API encryption validation
+on:
+  push:
+    branches: [codex/unified-encryption-validation]
+permissions:
+  contents: read
+concurrency:
+  group: encryption-validation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  validate:
+    name: API ${{ matrix.suite }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        suite: [unit, integration, build]
+    env:
+      DATABASE_URL: postgresql://fixture:fixture@127.0.0.1:5432/api_ci_unused
+      REDIS_URL: redis://127.0.0.1:6379
+      NODE_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.19.0'
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npm run prisma:generate
+      - name: Full unit suite
+        if: matrix.suite == 'unit'
+        run: node --import tsx --test --test-concurrency=1 'tests/unit/**/*.test.ts'
+      - name: Disposable platform encryption integration
+        if: matrix.suite == 'integration'
+        run: node scripts/run-arch043-platform-configuration-postgres.mjs
+      - name: Disposable merchant follow-up integration
+        if: matrix.suite == 'integration' && !cancelled()
+        run: node scripts/test-arch040-woo-human-send-postgres.mjs
+      - name: Typecheck
+        if: matrix.suite == 'build'
+        env:
+          NODE_OPTIONS: --max-old-space-size=6144
+        run: npm run typecheck
+      - name: Lint
+        if: matrix.suite == 'build' && !cancelled()
+        run: npm run lint
+      - name: Build
+        if: matrix.suite == 'build' && !cancelled()
+        run: npm run build
