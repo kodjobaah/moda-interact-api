@@ -78,7 +78,7 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     const initialAt = new Date(clock.getTime() - 72 * 3600_000);
     const outbound = await db.conversationMessage.create({ data: {
       conversationId: primary.conversation.id, direction: "OUTBOUND", senderType: "AUTOMATION",
-      status: "SENT", content: "Automated initial recovery", sentAt: initialAt,
+      status: "SENT", content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${randomUUID()}`, sentAt: initialAt,
       createdAt: initialAt,
     } });
     await db.recoveryOutreachAttempt.create({ data: {
@@ -228,7 +228,7 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     const raced = await createRecovery(shop.id);
     const racedOutbound = await db.conversationMessage.create({ data: {
       conversationId: raced.conversation.id, direction: "OUTBOUND", senderType: "AUTOMATION",
-      content: "Recovery first-contact", status: "SENT", sentAt: initialAt, createdAt: initialAt,
+      content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${randomUUID()}`, status: "SENT", sentAt: initialAt, createdAt: initialAt,
     } });
     await db.recoveryOutreachAttempt.create({ data: {
       checkoutRecoveryId: raced.recovery.id, sequence: 1, recipient: "447700900001",

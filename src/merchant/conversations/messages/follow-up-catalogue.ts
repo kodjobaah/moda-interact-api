@@ -14,11 +14,12 @@ const MAX_QUERY_ROWS = 300;
 const MAX_PUBLIC_CHOICES = 30;
 export const PROVIDER_APPROVAL_MAX_AGE_MS = 60 * 60_000;
 
-/** A raw read is intentional: the API's pinned Prisma submodule predates the
- * accepted ARCH-047 migration. The query uses ONLY canonical ARCH-047 tables,
- * is bounded and never fetches components, customer data or provider secrets.
+/** Bounded projection of canonical approval and frozen binding metadata.
+ * Provider credentials are never included in the catalogue.
  */
 export interface FollowUpRow {
+  bindings?: unknown;
+  components?: unknown;
   variantId: string; shopId: string; providerAccountId: string; purpose: string;
   languageTag: string; name: string; language: string; variantProviderId: string | null;
   registrationId: string | null; registrationWaba: string | null;
@@ -60,13 +61,13 @@ export function validFollowUpRow(row: FollowUpRow, shopId: string,
     reconciled <= now.getTime() && now.getTime() - reconciled <= PROVIDER_APPROVAL_MAX_AGE_MS;
 }
 
-/** Fail closed for every ambiguous shop/purpose/language slot, even where one
+/** Fail closed for ambiguous compatible presentation/greeting slots, even where one
  * registration appears valid. Collisions in externally visible name/language
- * are also suppressed. Positive offer choices require a separate verified,
- * customer-specific read port; it is NOT present for Woo in this snapshot.
+ * are also suppressed. The confirmed first-message receipt selects the offer
+ * presentation; the worker independently revalidates checkout eligibility.
  */
 export function choicesFromRows(rows: readonly FollowUpRow[], shopId: string,
-  senderWaba: string, now: Date): FollowUpChoice[] {
+  senderWaba: string, now: Date, context?: { purpose: string; hasName: boolean }): FollowUpChoice[] {
   if (rows.length > MAX_QUERY_ROWS) return [];
   const bySlot = new Map<string, FollowUpRow[]>();
   for (const row of rows) {
@@ -77,9 +78,20 @@ export function choicesFromRows(rows: readonly FollowUpRow[], shopId: string,
   }
   const selected: FollowUpChoice[] = [];
   for (const [slot, group] of bySlot) {
-    // Without checkout-specific verified offer evidence, fail closed to NO_OFFER.
-    if (!slot.startsWith("FOLLOW_UP_NO_OFFER|") || group.length !== 1) continue;
-    const row = group[0]!;
+    // Only a provider-confirmed receipt can select a positive-offer presentation.
+    if (!slot.startsWith(`${context?.purpose ?? "FOLLOW_UP_NO_OFFER"}|`)) continue;
+    const needsName = (row: FollowUpRow) => {
+      const bindings = row.bindings as { header?: unknown; body?: unknown } | undefined;
+      return [bindings?.header, bindings?.body].some(section => Array.isArray(section) &&
+        section.some(binding => binding?.variable === "customer.firstName"));
+    };
+    const imageRows = group.filter(row => Array.isArray(row.components) &&
+      row.components.some(component => component?.type === "HEADER" && component?.format === "IMAGE"));
+    const presentation = imageRows.length ? imageRows : group;
+    const named = presentation.filter(needsName);
+    const candidates = context?.hasName && named.length ? named : presentation.filter(row => !needsName(row));
+    if (candidates.length !== 1) continue;
+    const row = candidates[0]!;
     if (validFollowUpRow(row, shopId, senderWaba, now)) {
       selected.push({ name: row.name, language: row.language });
     }
@@ -95,16 +107,44 @@ export function choicesFromRows(rows: readonly FollowUpRow[], shopId: string,
 }
 
 export async function readEligibleFollowUpChoices(tx: Prisma.TransactionClient, shopId: string,
-  sender: SenderWabaReader | undefined, now: Date): Promise<FollowUpChoice[]> {
+  sender: SenderWabaReader | undefined, now: Date, recoveryId?: string): Promise<FollowUpChoice[]> {
   // A missing or misconfigured sender must never permit a guessed provider WABA.
   if (!sender) return [];
   const senderWaba = await sender(tx).readMessagingSenderWabaId();
   if (!waba.test(senderWaba)) return [];
+  let context: { purpose: string; hasName: boolean } | undefined;
+  if (recoveryId) {
+    const recovery = await tx.checkoutRecovery.findFirst({
+      where: { id: recoveryId, shopId },
+      select: { customer: { select: { firstName: true } },
+        outreachAttempts: { where: { sequence: 1 }, select: { sentAt: true, outboundMessageId: true } } },
+    });
+    const initial = recovery?.outreachAttempts[0];
+    if (!initial?.sentAt || !initial.outboundMessageId) return [];
+    const message = await tx.conversationMessage.findUnique({ where: { id: initial.outboundMessageId },
+      select: { content: true, status: true, providerMessageId: true, direction: true, senderType: true } });
+    if (!message?.providerMessageId || !["SENT", "DELIVERED", "READ"].includes(message.status) ||
+        message.direction !== "OUTBOUND" || message.senderType !== "AUTOMATION") return [];
+    let receipt;
+    try { receipt = JSON.parse(message.content); } catch { return []; }
+    if (receipt?.contract !== "moda.whatsapp.automated-template-parameters.v1") return [];
+    const promise = receipt.recoveryPromise;
+    let offer = promise?.kind;
+    if (offer === "CHECKOUT_DISCOUNT") {
+      const offers = promise.offerSet?.offers;
+      if (promise.offerSet?.schemaVersion !== "moda.outreach.checkout-offers.v1" ||
+          !Array.isArray(offers) || offers.length !== 1) return [];
+      offer = offers[0]?.method === "CODE" ? "CODE_OFFER" :
+        offers[0]?.method === "AUTOMATIC" ? "AUTOMATIC_OFFER" : null;
+    }
+    if (!["NO_OFFER", "CODE_OFFER", "AUTOMATIC_OFFER"].includes(offer)) return [];
+    context = { purpose: `FOLLOW_UP_${offer}`, hasName: Boolean(recovery?.customer?.firstName?.trim()) };
+  }
   const rows = await tx.$queryRaw<FollowUpRow[]>(Prisma.sql`
     SELECT v."id" AS "variantId", v."shopId", v."providerAccountId", v."purpose",
       v."languageTag", v."providerTemplateName" AS "name",
       v."providerLanguageCode" AS "language", v."providerTemplateId" AS "variantProviderId",
-      r."id" AS "registrationId", r."wabaId" AS "registrationWaba",
+      r."parameterBindingsSnapshot" AS "bindings", r."componentsSnapshot" AS "components", r."id" AS "registrationId", r."wabaId" AS "registrationWaba",
       r."providerTemplateName" AS "registrationName",
       r."providerLanguageCode" AS "registrationLanguage",
       r."providerTemplateId" AS "registrationProviderId", r."category",
@@ -127,7 +167,7 @@ export async function readEligibleFollowUpChoices(tx: Prisma.TransactionClient, 
     ORDER BY v."purpose", v."languageTag", v."providerTemplateName", v."id"
     LIMIT ${MAX_QUERY_ROWS + 1}
   `);
-  return choicesFromRows(rows, shopId, senderWaba, now);
+  return choicesFromRows(rows, shopId, senderWaba, now, context);
 }
 
 export function allowedFollowUpChoice(choices: readonly FollowUpChoice[],

@@ -151,7 +151,7 @@ export class MerchantConversationMessageAdmissionService {
           // Only the exact current published Moda assignment and approved,
           // fresh, drift-free registration is a permitted merchant choice.
           // No client-selected WABA or unverified positive offer is trusted.
-          const candidates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now);
+          const candidates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now, conversation.checkoutRecoveryId);
           if (!allowedFollowUpChoice(candidates, input.templateName, input.templateLanguage))
             throw new SendHttpError(409,"template_not_allowed");
           commandId = randomUUID();
