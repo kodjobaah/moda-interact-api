@@ -118,7 +118,9 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
     assert.equal(replay.code, 200);
     assert.equal(replay.response.commandId, winning.value.response.commandId);
     // A replay remains terminal even if the effective due evidence later changes.
-    await db.recoveryOutreachAttempt.update({ where: { id: short.initial.id }, data: { followUpDueAt: null } });
+    await db.recoveryOutreachAttempt.update({ where: { id: short.initial.id }, data: { followUpDueAt: new Date(now.getTime() + hour) } });
+    const changedPolicy = await db.recoveryOutreachAttempt.findUniqueOrThrow({ where: { id: short.initial.id } });
+    assert.ok(changedPolicy.followUpDueAt && changedPolicy.followUpDueAt > now);
     const lateReplay = await admission.admit(principal, short.conversation.id, winningInput);
     assert.equal(lateReplay.code, 200);
     assert.equal(lateReplay.response.commandId, winning.value.response.commandId);
