@@ -14,8 +14,8 @@ const logger = {
 const testKey = randomBytes(32);
 const config = loadWooRestReadAuthorizationConfig({
   MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.invalid",
-  COMMERCE_CONNECTION_ACTIVE_KEY_ID: "test-key",
-  COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ "test-key": testKey.toString("base64") }),
+  MODA_ENCRYPTION_ACTIVE_KEY_ID: "test-key",
+  MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ "test-key": testKey.toString("base64") }),
 }, "public");
 if (config === null) {
   throw new Error("Woo REST-read authorization test configuration must be enabled");

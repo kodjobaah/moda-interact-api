@@ -72,7 +72,7 @@ export function createMerchantSupportRoutes(options:{authenticator:WooInstallati
         try {
           logger.error("merchant.support.failed",{operation,
             reason:error instanceof SupportIntegrityError ? "integrity" : "internal",error});
-        } catch {}
+        } catch { /* Diagnostic failures must not prevent the error response. */ }
         sendNoStoreJson(response,500,{error:"internal_error"});
       }
     }

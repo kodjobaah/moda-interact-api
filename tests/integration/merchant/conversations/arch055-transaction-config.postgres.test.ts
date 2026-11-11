@@ -29,8 +29,8 @@ test("ARCH-055 sender configuration reads use the active transaction and preserv
   const wrappingJson = JSON.stringify({ wrapping: randomBytes(32).toString("base64") });
   const keyring = parseCredentialKeyring(wrappingJson);
   const environment = {
-    MODA_CONFIG_UNSEAL_KEY: wrappingJson,
-    MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID: "wrapping",
+    MODA_ENCRYPTION_KEYS_JSON: wrappingJson,
+    MODA_ENCRYPTION_ACTIVE_KEY_ID: "wrapping",
   };
   const secret = { accessToken: "not-a-real-provider-token", phoneNumberId: "1234567890",
     businessAccountId: WABA };
@@ -93,8 +93,8 @@ test("ARCH-055 sender configuration reads use the active transaction and preserv
     const wrongKeyFactory = createTransactionMessagingSenderFactory({
       environment: "test",
       unsealEnvironment: {
-        MODA_CONFIG_UNSEAL_KEY: JSON.stringify({ wrapping: randomBytes(32).toString("base64") }),
-        MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID: "wrapping",
+        MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ wrapping: randomBytes(32).toString("base64") }),
+        MODA_ENCRYPTION_ACTIVE_KEY_ID: "wrapping",
       },
     });
     await assert.rejects(db.$transaction(tx => readEligibleFollowUpChoices(tx,

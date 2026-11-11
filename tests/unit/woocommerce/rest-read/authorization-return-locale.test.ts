@@ -7,8 +7,8 @@ import { loadWooRestReadAuthorizationConfig } from "../../../../src/woocommerce/
 function config() {
   return loadWooRestReadAuthorizationConfig({
     MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.invalid",
-    COMMERCE_CONNECTION_ACTIVE_KEY_ID: "v1",
-    COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 3).toString("base64") }),
+    MODA_ENCRYPTION_ACTIVE_KEY_ID: "v1",
+    MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 3).toString("base64") }),
   }, "public") ?? (() => { throw new Error("Woo read test configuration must be enabled"); })();
 }
 

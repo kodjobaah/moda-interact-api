@@ -14,16 +14,16 @@ export interface WooRestReadAuthorizationConfig {
 
 }
 
-/** Legacy isolated test helper. Production loads only public origin and uses API-001. */
+/** Isolated config helper. Production resolves deployment encryption keys lazily through API-001. */
 export function loadWooRestReadAuthorizationConfig(
   environment: RuntimeEnvironment,
   connectionMode: WooConnectionMode,
 ): WooRestReadAuthorizationConfig | null {
   const originValue = environment.MODA_WOO_REST_READ_PUBLIC_ORIGIN?.trim();
-  // ARCH-039: ONLY these two credential-encryption variables are permitted in API.
+  // The unified deployment pair is the only encryption-key source.
   // Do not read Woo-specific aliases or COMMERCE_CONNECTION_COMMAND_HMAC_KEY.
-  const activeKeyIdRaw = environment.COMMERCE_CONNECTION_ACTIVE_KEY_ID;
-  const rawKeyring = environment.COMMERCE_CONNECTION_KEYS_JSON;
+  const activeKeyIdRaw = environment.MODA_ENCRYPTION_ACTIVE_KEY_ID;
+  const rawKeyring = environment.MODA_ENCRYPTION_KEYS_JSON;
   if (!originValue && !activeKeyIdRaw && !rawKeyring) return null;
   if (!originValue || !activeKeyIdRaw || !rawKeyring) {
     throw new Error("Woo REST read authorization configuration is incomplete");
@@ -59,7 +59,7 @@ export function loadWooRestReadAuthorizationConfig(
   return { publicOrigin: origin.origin, activeKeyId, keyring };
 }
 
-/** Deployment routing only. Production credentials come solely from PostgreSQL. */
+/** Deployment routing only. Encryption keys are resolved lazily from the unified deployment configuration. */
 export function loadWooRestReadPublicOrigin(environment: RuntimeEnvironment, connectionMode: WooConnectionMode): string | null {
   const originValue = environment.MODA_WOO_REST_READ_PUBLIC_ORIGIN?.trim();
   if (!originValue) return null;

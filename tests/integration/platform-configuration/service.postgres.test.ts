@@ -94,26 +94,21 @@ test("PostgreSQL: missing policy, current committed policy and cross-environment
   } finally { await db.$disconnect(); }
 });
 
-test("PostgreSQL: Commerce keyring old IDs, rotation, AAD binding and ciphertext tampering", { skip: !url }, async () => {
+test("PostgreSQL: historical Commerce key rows cannot override deployment encryption keys", { skip: !url }, async () => {
   const db = new PrismaClient({ datasources: { db: { url: requireDatabaseUrl() } } });
   const key = "commerce.connectionKeys";
-  const service = createApiPlatformConfigurationService({ database: db, environment: "test", unsealKeyring: root });
+  const encryptionEnvironment = { MODA_ENCRYPTION_KEYS_JSON: commerce.connectionKeysJson, MODA_ENCRYPTION_ACTIVE_KEY_ID: "current" };
+  const service = createApiPlatformConfigurationService({ database: db, environment: "test", encryptionEnvironment });
   try {
-    await db.platformConfiguration.create({ data: { environment: "test", key, version: 1, value: sealed("test", key, 1, commerce) } });
     assert.ok((await service.requireCommerceConnectionSecurity()).keyring.hasKey("old"));
+    await db.platformConfiguration.create({ data: { environment: "test", key, version: 1, value: sealed("test", key, 1, commerce) } });
     await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key } },
-      data: { value: sealed("test", key, 2, { ...commerce, activeKeyId: "old" }), version: 2 } });
+      data: { value: { kind: "disabled", schemaVersion: 1 }, version: 2 } });
+    assert.equal((await service.requireCommerceConnectionSecurity()).activeKeyId, "current");
+    encryptionEnvironment.MODA_ENCRYPTION_ACTIVE_KEY_ID = "old";
     assert.equal((await service.requireCommerceConnectionSecurity()).activeKeyId, "old");
-    await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key } },
-      data: { value: sealed("test", key, 1, commerce), version: 3 } });
-    await failed(service.requireCommerceConnectionSecurity(), "UNSEAL_FAILED");
-    const damaged = sealed("test", key, 4, commerce);
-    await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key } },
-      data: { value: { ...damaged, ciphertext: "AAAA" }, version: 4 } });
-    await failed(service.requireCommerceConnectionSecurity(), "UNSEAL_FAILED");
-    const wrong = createApiPlatformConfigurationService({ database: db, environment: "test",
-      unsealKeyring: parseCredentialKeyring(JSON.stringify({ wrapping: randomBytes(32).toString("base64") })) });
-    await failed(wrong.requireCommerceConnectionSecurity(), "UNSEAL_FAILED");
+    const missing = createApiPlatformConfigurationService({ database: db, environment: "test", encryptionEnvironment: {} });
+    await failed(missing.requireCommerceConnectionSecurity(), "INVALID_VALUE");
   } finally { await db.$disconnect(); }
 });
 
