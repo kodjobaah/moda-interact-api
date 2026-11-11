@@ -44,10 +44,18 @@ export const CUSTOMER_SERVICE_WINDOW_MS = 24 * 60 * 60 * 1000;
 export function windowOpen(at: Date | null, now: Date): boolean {
   return at !== null && at.getTime() <= now.getTime() && now.getTime() < at.getTime() + CUSTOMER_SERVICE_WINDOW_MS;
 }
-/** The persisted initial-attempt due time reflects the configured follow-up
- * policy at outreach. Never derive a second delay from the initial send or a
- * customer reply. A null due time means disabled or not scheduled. */
+/** The scheduled follow-up may impose a later, frozen due time. */
 export function configuredFollowUpDue(followUpDueAt: Date | null, now: Date): boolean {
   return followUpDueAt !== null && Number.isFinite(followUpDueAt.getTime()) &&
     followUpDueAt.getTime() <= now.getTime();
+}
+
+/** Manual outreach has its own slot after 24 hours of silence, even when
+ * no automated follow-up was scheduled. An older configured post-window
+ * template still requires its saved due time after a customer has engaged. */
+export function merchantFollowUpDue(initialSentAt: Date, scheduledDueAt: Date | null,
+  verifiedInboundAt: Date | null, now: Date): boolean {
+  if (!(now.getTime() - initialSentAt.getTime() >= CUSTOMER_SERVICE_WINDOW_MS)) return false;
+  if (scheduledDueAt) return configuredFollowUpDue(scheduledDueAt, now);
+  return verifiedInboundAt === null;
 }

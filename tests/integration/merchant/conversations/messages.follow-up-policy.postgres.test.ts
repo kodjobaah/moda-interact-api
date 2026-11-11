@@ -95,10 +95,13 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
       } }), 0);
     }
 
-    // Short configured delay: no reply, initial outreach only 30 minutes ago.
+    // The manual slot opens exactly 24 hours after the confirmed first send.
     // Competing merchants still obtain at most one claim of the SAME attempt.
     const shortAt = new Date(now.getTime() - 30 * minute);
-    const short = await recovery(shortAt, new Date(shortAt.getTime() + 10 * minute));
+    const early = await recovery(shortAt, new Date(shortAt.getTime() + 10 * minute));
+    await denied(early.conversation.id, "follow_up_unavailable", "TEMPLATE");
+    await noClaim(early.conversation.id, early.checkout.id);
+    const short = await recovery(new Date(now.getTime() - 24 * hour), null);
     await denied(short.conversation.id, "service_window_closed", "HUMAN_TEXT");
     const first = template();
     const contender = template();
