@@ -23,7 +23,7 @@ function fixture() {
   let calls = 0;
   const reader = createApiPlatformConfigurationReader({
     environment: "test", unsealEnvironment: {
-      MODA_CONFIG_UNSEAL_KEY: rootJson, MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID: "root",
+      MODA_ENCRYPTION_KEYS_JSON: rootJson, MODA_ENCRYPTION_ACTIVE_KEY_ID: "root",
     },
     prisma: { platformConfiguration: { findUnique: async ({ where }: {
       where: { environment_key: { environment: string; key: string } };
@@ -85,7 +85,7 @@ test("a successful policy-only or full R2 read logs no credential, payload, endp
 test("database failures retain reason code and expose a readable exception message", async () => {
   const state = fixture();
   state.setDatabaseFailure(true);
-  await assert.rejects(state.reader.requireCommerceConnectionSecurity(), { code: "DATABASE_UNAVAILABLE" });
+  await assert.rejects(state.reader.requireMetaWebhookSecrets(), { code: "DATABASE_UNAVAILABLE" });
   assert.equal(state.events.length, 1);
   assert.equal(state.events[0]?.level, "warn");
   assert.equal(state.events[0]?.data.reasonCode, "DATABASE_UNAVAILABLE");
@@ -104,7 +104,7 @@ test("logger sink failures do not change read success or configuration failure",
 
   state.setDatabaseFailure(true);
   state.logger.warn = () => { throw new Error("sink unavailable"); };
-  await assert.rejects(state.reader.requireCommerceConnectionSecurity(), { code: "DATABASE_UNAVAILABLE" });
+  await assert.rejects(state.reader.requireMetaWebhookSecrets(), { code: "DATABASE_UNAVAILABLE" });
 });
 
 test("invalid envelopes and revoked webhook credentials fail closed and emit only safe reasons", async () => {
@@ -139,4 +139,15 @@ test("Woo billing reader logs only purpose and bounded outcome, not the sealed p
   await assert.rejects(state.reader.requireWooBillingCredentials(), { code: "DATABASE_UNAVAILABLE" });
   assert.equal(state.events[1]?.data.reasonCode, "DATABASE_UNAVAILABLE");
   assert.match(String(state.events[1]?.data.errorMessage), /DATABASE_UNAVAILABLE/);
+});
+
+
+test("deployment encryption resolution avoids PostgreSQL and never logs key material", async () => {
+  const state = fixture();
+  state.setDatabaseFailure(true);
+  const result = await state.reader.requireCommerceConnectionSecurity();
+  assert.equal(result.activeKeyId, "root");
+  assert.equal(state.calls, 0);
+  assert.equal(state.events[0]?.data.outcome, "success");
+  assert.equal(JSON.stringify(state.events).includes(state.rootMaterial), false);
 });

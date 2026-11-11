@@ -12,7 +12,7 @@ The ngrok forwarding URL must **exactly match** `MODA_WOO_REST_READ_PUBLIC_ORIGI
 
 - [ ] Start the `woocommerce-sandbox.local` site in LocalWP and log in as a WooCommerce administrator.
 - [ ] Ensure the local PostgreSQL database is running and the Moda installation is connected.
-- [ ] Ensure the API's credential keyring is loaded securely (`COMMERCE_CONNECTION_KEYS_JSON` and `COMMERCE_CONNECTION_ACTIVE_KEY_ID`). **Do not regenerate it on every restart** if you need to read existing encrypted grants.
+- [ ] Ensure the API's credential keyring is loaded securely (`MODA_ENCRYPTION_KEYS_JSON` and `MODA_ENCRYPTION_ACTIVE_KEY_ID`). **Do not regenerate it on every restart** if you need to read existing encrypted grants.
 - [ ] Start `moda-interact-api` on **port 3100**.
 - [ ] Start **ngrok forwarding to port 3100** in a separate terminal; leave it open during approval.
 - [ ] Confirm the public ngrok URL matches `MODA_WOO_REST_READ_PUBLIC_ORIGIN` and passes the health check below.

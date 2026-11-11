@@ -21,8 +21,8 @@ export function createApiPlatformConfigurationReader(input: {
   const service = () => {
     let unsealKeyring: CredentialKeyring | undefined;
     try {
-      unsealKeyring = parseCredentialKeyring(unsealEnvironment.MODA_CONFIG_UNSEAL_KEY);
-      resolveActiveCredentialKey(unsealKeyring, unsealEnvironment.MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID);
+      unsealKeyring = parseCredentialKeyring(unsealEnvironment.MODA_ENCRYPTION_KEYS_JSON);
+      resolveActiveCredentialKey(unsealKeyring, unsealEnvironment.MODA_ENCRYPTION_ACTIVE_KEY_ID);
     } catch { /* The API-001 service fails closed when a sealed operation has no root. */ }
     return createApiPlatformConfigurationService({
       database: {
@@ -32,6 +32,7 @@ export function createApiPlatformConfigurationReader(input: {
           }),
         },
       },
+      encryptionEnvironment: unsealEnvironment,
       environment: input.environment, ...(unsealKeyring ? { unsealKeyring } : {}),
     });
   };

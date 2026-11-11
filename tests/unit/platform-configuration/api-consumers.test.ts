@@ -10,8 +10,8 @@ import { loadRuntimeConfig } from "../../../src/runtime-config.js";
 
 const commerceConfig = () => loadWooRestReadAuthorizationConfig({
   MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.invalid",
-  COMMERCE_CONNECTION_ACTIVE_KEY_ID: "old",
-  COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ old: Buffer.alloc(32, 3).toString("base64") }),
+  MODA_ENCRYPTION_ACTIVE_KEY_ID: "old",
+  MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ old: Buffer.alloc(32, 3).toString("base64") }),
 }, "public")!;
 
 test("Woo return proof takes exactly one fresh key snapshot when a proof is supplied", async () => {
@@ -36,8 +36,8 @@ test("Woo return proofs use the current keyring after rotation while retaining o
   const previous = commerceConfig();
   const rotated = loadWooRestReadAuthorizationConfig({
     MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.invalid",
-    COMMERCE_CONNECTION_ACTIVE_KEY_ID: "new",
-    COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({
+    MODA_ENCRYPTION_ACTIVE_KEY_ID: "new",
+    MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({
       old: Buffer.alloc(32, 3).toString("base64"),
       new: Buffer.alloc(32, 4).toString("base64"),
     }),
@@ -45,9 +45,19 @@ test("Woo return proofs use the current keyring after rotation while retaining o
   let current = previous;
   let resolutionCount = 0;
   let attemptCount = 0;
-  const service = new WooReadAuthorizationService({
+  const transaction = {
+    $queryRaw: async () => [{ id: "locked" }],
+    shop: { findUnique: async () => ({ id: "shop-one", domain: "https://shop.example", platform: "WOOCOMMERCE",
+      shopifyShopId: null, status: "ACTIVE", onboardingCompleted: true }) },
+    wooCommerceInstallation: { findUnique: async () => ({ id: "installation-one", shopId: "shop-one",
+      canonicalSiteUrl: "https://shop.example", credentialVersion: 1, status: "ACTIVE", revokedAt: null }) },
     wooCommerceRestReadAttempt: {
       create: async () => ({ id: `attempt-${++attemptCount}`, expiresAt: new Date("2026-10-18T16:00:00Z") }),
+    },
+  };
+  const service = new WooReadAuthorizationService({
+    $transaction: async (work: (tx: typeof transaction) => Promise<unknown>) => work(transaction),
+    wooCommerceRestReadAttempt: {
       findUnique: async () => ({ shopId: "shop-one",
         installation: { shopId: "shop-one", shop: { storeLocale: "de_DE", defaultLanguageTag: "de-DE" } } }),
     },
@@ -73,7 +83,7 @@ test("Woo return proofs use the current keyring after rotation while retaining o
   assert.equal(resolutionCount, 4);
 });
 
-test("Woo protected key-resolution failure is not replaced with an environment keyring", async () => {
+test("Woo protected key-resolution failure is not bypassed by a static fallback", async () => {
   const service = new WooReadAuthorizationService({} as never,
     { publicOrigin: "https://api.example.invalid", resolveSecurity: async () => { throw Error("unavailable"); } },
     "public", {} as never);
@@ -174,12 +184,12 @@ test("R2 configuration revoked after intent prevents finalisation before verific
   assert.equal(persistedPending, true, "the existing pending intent is not promoted to an available asset");
 });
 
-test("startup keeps public origin but ignores legacy Commerce environment key material", () => {
+test("startup keeps public origin and defers encryption-key validation until protected operations", () => {
   const cfg = loadRuntimeConfig({
     DATABASE_URL: "postgresql://localhost:5432/moda",
     MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.invalid",
-    COMMERCE_CONNECTION_KEYS_JSON: "not-valid-keyring",
-    COMMERCE_CONNECTION_ACTIVE_KEY_ID: "old-invalid",
+    MODA_ENCRYPTION_KEYS_JSON: "not-valid-keyring",
+    MODA_ENCRYPTION_ACTIVE_KEY_ID: "old-invalid",
   });
   assert.equal(cfg.wooRestReadPublicOrigin, "https://api.example.invalid");
   assert.equal(cfg.wooRestReadAuthorization, undefined);

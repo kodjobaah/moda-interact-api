@@ -66,7 +66,7 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
     await db.platformConfiguration.create({ data: { environment: "test", key: "merchant.knowledge.r2", version: 1,
       value: sealR2Configuration(1, 10000) } });
     const platformConfiguration = createApiPlatformConfigurationReader({ prisma: db, environment: "test",
-      unsealEnvironment: { MODA_CONFIG_UNSEAL_KEY: wrappingKeyJson, MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID: "wrapping" } });
+      unsealEnvironment: { MODA_ENCRYPTION_KEYS_JSON: wrappingKeyJson, MODA_ENCRYPTION_ACTIVE_KEY_ID: "wrapping" } });
     const objects = new Map<string, { bytes: Buffer; contentType: string; sha256: string }>();
     let verificationTarget: string | null = null;
     let verificationStarted = deferred();

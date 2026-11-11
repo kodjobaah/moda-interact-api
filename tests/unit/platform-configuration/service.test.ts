@@ -87,37 +87,35 @@ test("upload policy: editable location, size bounds, no cache, no cross-environm
   }
 });
 
-test("sealed Commerce keyring: previous keys, rotation, tampering and root isolation", async () => {
-  const { service, set, database } = fixture();
-  const key = "commerce.connectionKeys";
-  set("test", key, sealed("test", key, 1, keyValues));
+test("unified deployment keyring preserves historical keys and never reads stored commerce keys", async () => {
+  const { database, queries, set } = fixture();
+  const environment: NodeJS.ProcessEnv = {
+    MODA_ENCRYPTION_KEYS_JSON: keyValues.connectionKeysJson,
+    MODA_ENCRYPTION_ACTIVE_KEY_ID: "current",
+    COMMERCE_CONNECTION_COMMAND_HMAC_KEY: hmac,
+  };
+  const service = createApiPlatformConfigurationService({ database, environment: "test", encryptionEnvironment: environment });
+  set("test", "commerce.connectionKeys", { kind: "disabled", schemaVersion: 1 });
   const first = await service.requireCommerceConnectionSecurity();
   assert.ok(first.keyring.hasKey("previous"));
   assert.ok(first.keyring.hasKey("current"));
   assert.equal(first.activeKeyId, "current");
-  assert.equal(first.commandHmacKey, hmac);
-  set("test", key, sealed("test", key, 2, { ...keyValues, activeKeyId: "previous" }), 2);
+  assert.equal(Object.hasOwn(first, "commandHmacKey"), false);
+  environment.MODA_ENCRYPTION_ACTIVE_KEY_ID = "previous";
   assert.equal((await service.requireCommerceConnectionSecurity()).activeKeyId, "previous");
-  set("test", key, sealed("test", key, 3, { connectionKeysJson: keyValues.connectionKeysJson,
-    activeKeyId: "current" }), 3);
-  const withoutHmac = await service.requireCommerceConnectionSecurity();
-  assert.equal(withoutHmac.activeKeyId, "current");
-  assert.equal(withoutHmac.commandHmacKey, undefined);
-  set("test", key, sealed("test", key, 1, keyValues), 2);
-  await fails(service.requireCommerceConnectionSecurity(), "UNSEAL_FAILED");
-  const envelope = sealed("test", key, 2, keyValues);
-  set("test", key, { ...envelope, ciphertext: "AAAA" }, 2);
-  await fails(service.requireCommerceConnectionSecurity(), "UNSEAL_FAILED");
-  set("test", key, { kind: "disabled", schemaVersion: 1 }, 3);
-  await fails(service.requireCommerceConnectionSecurity(), "DISABLED");
-  set("test", key, { ...envelope, algorithm: "DES" }, 4);
-  await fails(service.requireCommerceConnectionSecurity(), "INVALID_ENVELOPE");
-  const noRoot = createApiPlatformConfigurationService({ database, environment: "test" });
-  set("test", key, envelope, 2);
-  await fails(noRoot.requireCommerceConnectionSecurity(), "UNSEAL_FAILED");
-  const wrongRoot = createApiPlatformConfigurationService({ database, environment: "test",
-    unsealKeyring: parseCredentialKeyring(JSON.stringify({ "root-v1": randomBytes(32).toString("base64") })) });
-  await fails(wrongRoot.requireCommerceConnectionSecurity(), "UNSEAL_FAILED");
+  assert.deepEqual(queries, [], "the historical database keyring is not a runtime dependency");
+  await fails(createApiPlatformConfigurationService({ database, environment: "unknown", encryptionEnvironment: environment }).requireCommerceConnectionSecurity(), "INVALID_ENVIRONMENT");
+  const oldEnvelope = encryptCredential({ keyring: first.keyring, activeKeyId: "current", plaintext: "historical-provider-secret", aad: "unchanged-provider-aad" });
+  const { decryptCredential } = await import("@modainteract/moda-interact-shared/security/credentials/node");
+  assert.equal(decryptCredential({ keyring: (await service.requireCommerceConnectionSecurity()).keyring, envelope: oldEnvelope, aad: "unchanged-provider-aad" }), "historical-provider-secret");
+  for (const invalid of [
+    {}, { MODA_ENCRYPTION_KEYS_JSON: keyValues.connectionKeysJson },
+    { MODA_ENCRYPTION_KEYS_JSON: keyValues.connectionKeysJson, MODA_ENCRYPTION_ACTIVE_KEY_ID: "missing" },
+    { MODA_ENCRYPTION_KEYS_JSON: "invalid", MODA_ENCRYPTION_ACTIVE_KEY_ID: "current" },
+    { COMMERCE_CONNECTION_KEYS_JSON: keyValues.connectionKeysJson, COMMERCE_CONNECTION_ACTIVE_KEY_ID: "current" },
+  ]) {
+    await fails(createApiPlatformConfigurationService({ database, environment: "test", encryptionEnvironment: invalid }).requireCommerceConnectionSecurity(), "INVALID_VALUE");
+  }
 });
 
 test("Meta secret purpose: strict fields, AAD purpose binding and no generic secret API", async () => {

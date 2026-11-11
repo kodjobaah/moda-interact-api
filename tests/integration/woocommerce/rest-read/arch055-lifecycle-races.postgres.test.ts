@@ -12,8 +12,8 @@ import { WooReadAuthorizationService } from "../../../../src/woocommerce/rest-re
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 const configuration = loadWooRestReadAuthorizationConfig({
   MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.test.invalid",
-  COMMERCE_CONNECTION_ACTIVE_KEY_ID: "fixture-v1",
-  COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ "fixture-v1": Buffer.alloc(32, 8).toString("base64") }),
+  MODA_ENCRYPTION_ACTIVE_KEY_ID: "fixture-v1",
+  MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ "fixture-v1": Buffer.alloc(32, 8).toString("base64") }),
 }, "public");
 assert.ok(configuration);
 const clients = new Set<PrismaClient>();

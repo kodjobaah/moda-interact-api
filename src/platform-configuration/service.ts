@@ -1,7 +1,6 @@
 import {
   decryptCredential,
   parseCredentialKeyring,
-  parseCommerceConnectionCommandHmacKey,
   resolveActiveCredentialKey,
   type CredentialKeyring,
 } from "@modainteract/moda-interact-shared/security/credentials/node";
@@ -16,13 +15,11 @@ import {
   type MerchantKnowledgeR2Configuration,
 } from "./contracts.js";
 import { configurationError, type ApiConfigurationKey } from "./errors.js";
-import { readApiPlatformConfiguration, type ApiPlatformConfigurationDatabase } from "./repository.js";
+import { assertApiDeploymentEnvironment, readApiPlatformConfiguration, type ApiPlatformConfigurationDatabase } from "./repository.js";
 
 export type CommerceConnectionSecurity = Readonly<{
   keyring: CredentialKeyring;
   activeKeyId: string;
-  /** Only trusted server callers may obtain this command-authentication secret. */
-  commandHmacKey?: string;
 }>;
 
 export type MetaWebhookSecrets = Readonly<{
@@ -49,8 +46,9 @@ export interface ApiPlatformConfigurationDependencies {
   database: ApiPlatformConfigurationDatabase;
   /** Trusted deployment identity, never a header or tenant-controlled value. */
   environment: string;
-  /** Independent externally provisioned unseal material, never the Commerce keyring. */
+  /** Unified deployment keyring used to decrypt stored platform secrets. */
   unsealKeyring?: CredentialKeyring;
+  encryptionEnvironment?: Readonly<NodeJS.ProcessEnv>;
 }
 
 export function createApiPlatformConfigurationService(
@@ -98,23 +96,12 @@ export function createApiPlatformConfigurationService(
     },
     async requireCommerceConnectionSecurity(): Promise<CommerceConnectionSecurity> {
       const key: ApiConfigurationKey = "commerce.connectionKeys";
-      const value = await readSecret(key);
-      const withHmac = isClosedObject(value, ["connectionKeysJson", "activeKeyId", "commandHmacKey"]);
-      if ((!withHmac && !isClosedObject(value, ["connectionKeysJson", "activeKeyId"])) ||
-          !requiredSecret(value.connectionKeysJson, 1, 4096) ||
-          !requiredSecret(value.activeKeyId, 1, 64) ||
-          (withHmac && !requiredSecret(value.commandHmacKey, 1, 128))) {
-        configurationError(key, "INVALID_VALUE");
-      }
+      assertApiDeploymentEnvironment(deps.environment, key);
       try {
-        const keyring = parseCredentialKeyring(value.connectionKeysJson as string);
-        const activeKeyId = resolveActiveCredentialKey(keyring, value.activeKeyId as string);
-        // HMAC is a Commerce command capability. Validate when present, but do not
-        // expose it from the API's Woo read-grant encryption-key reader.
-        if (withHmac) parseCommerceConnectionCommandHmacKey(value.commandHmacKey as string, keyring).fill(0);
-        return Object.freeze({ keyring, activeKeyId,
-          ...(withHmac ? { commandHmacKey: value.commandHmacKey as string } : {}),
-        });
+        const environment = deps.encryptionEnvironment ?? process.env;
+        const keyring = parseCredentialKeyring(environment.MODA_ENCRYPTION_KEYS_JSON);
+        const activeKeyId = resolveActiveCredentialKey(keyring, environment.MODA_ENCRYPTION_ACTIVE_KEY_ID);
+        return Object.freeze({ keyring, activeKeyId });
       } catch (error) {
         return configurationError(key, "INVALID_VALUE", error);
       }

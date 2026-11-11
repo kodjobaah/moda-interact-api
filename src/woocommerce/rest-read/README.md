@@ -4,7 +4,7 @@ The existing WooCommerce installation credential authenticates plugin -> Moda AP
 
 ## Runtime configuration
 
-Production startup reads only the callback origin and connection mode. The Commerce keyring is loaded from the sealed `commerce.connectionKeys` platform-configuration record through API-001 for each protected authorization operation; it is not loaded from process environment or cached across operations. Configure the sealed record through the authorized Admin workflow before enabling the route. The API must not use `COMMERCE_CONNECTION_COMMAND_HMAC_KEY`.
+Production startup reads only the callback origin and connection mode. The encryption keyring is resolved from `MODA_ENCRYPTION_KEYS_JSON` and `MODA_ENCRYPTION_ACTIVE_KEY_ID` for each protected authorization operation. Existing key IDs must remain in the map while encrypted grants reference them. The API does not read the historical `commerce.connectionKeys` database record. The API must not use `COMMERCE_CONNECTION_COMMAND_HMAC_KEY`.
 
 - `MODA_WOO_REST_READ_PUBLIC_ORIGIN`: the fixed public HTTPS origin of `moda-interact-api`, e.g. `https://api.example.com`; no path, query, credentials or fragment. In explicit nonproduction `MODA_WOOCOMMERCE_CONNECTION_MODE=local-development`, an HTTP `localhost`/loopback origin is permitted for locally routed callbacks.
 - `MODA_WOOCOMMERCE_CONNECTION_MODE`: `public` by default; `local-development` is permitted only for nonproduction local testing.

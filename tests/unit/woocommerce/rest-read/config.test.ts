@@ -6,8 +6,8 @@ import {
 
 const canonical = {
   MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.example.org",
-  COMMERCE_CONNECTION_ACTIVE_KEY_ID: "v1",
-  COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64") }),
+  MODA_ENCRYPTION_ACTIVE_KEY_ID: "v1",
+  MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64") }),
 };
 
 test("disabled by default, legacy-only keyring cannot activate the API", () => {
@@ -18,7 +18,7 @@ test("disabled by default, legacy-only keyring cannot activate the API", () => {
   }, "public"), null);
   assert.throws(() => loadWooRestReadAuthorizationConfig({
     ...canonical,
-    COMMERCE_CONNECTION_KEYS_JSON: undefined,
+    MODA_ENCRYPTION_KEYS_JSON: undefined,
     MODA_WOO_REST_READ_KEYRING: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64url") }),
   }, "public"), /incomplete/);
 });
@@ -36,14 +36,14 @@ test("canonical configuration uses strict Shared parser and active selector", ()
 test("invalid canonical configuration fails closed without exposing key material", () => {
   const validKey = Buffer.alloc(32, 7).toString("base64");
   const malformed = [
-    { ...canonical, COMMERCE_CONNECTION_KEYS_JSON: undefined },
-    { ...canonical, COMMERCE_CONNECTION_ACTIVE_KEY_ID: undefined },
-    { ...canonical, COMMERCE_CONNECTION_ACTIVE_KEY_ID: "missing" },
-    { ...canonical, COMMERCE_CONNECTION_ACTIVE_KEY_ID: " v1 " },
-    { ...canonical, COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64url") }) },
-    { ...canonical, COMMERCE_CONNECTION_KEYS_JSON: JSON.stringify({ v1: "too-short" }) },
-    { ...canonical, COMMERCE_CONNECTION_KEYS_JSON: `{"v1":"${validKey}","v1":"${validKey}"}` },
-    { ...canonical, COMMERCE_CONNECTION_KEYS_JSON: `{"v1":"${validKey}","\\u00761":"${validKey}"}` },
+    { ...canonical, MODA_ENCRYPTION_KEYS_JSON: undefined },
+    { ...canonical, MODA_ENCRYPTION_ACTIVE_KEY_ID: undefined },
+    { ...canonical, MODA_ENCRYPTION_ACTIVE_KEY_ID: "missing" },
+    { ...canonical, MODA_ENCRYPTION_ACTIVE_KEY_ID: " v1 " },
+    { ...canonical, MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 7).toString("base64url") }) },
+    { ...canonical, MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ v1: "too-short" }) },
+    { ...canonical, MODA_ENCRYPTION_KEYS_JSON: `{"v1":"${validKey}","v1":"${validKey}"}` },
+    { ...canonical, MODA_ENCRYPTION_KEYS_JSON: `{"v1":"${validKey}","\\u00761":"${validKey}"}` },
   ];
   for (const value of malformed) {
     assert.throws(() => loadWooRestReadAuthorizationConfig(value, "public"), (error: unknown) => {

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import test from "node:test";
+import { createLogger, type LogRecord, type StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { PassThrough } from "node:stream";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import { MAX_STORE_CONTEXT_BODY_BYTES, MERCHANT_STORE_CONTEXT_ROUTE_PATH, createMerchantStoreContextRoute } from "../../../../src/merchant/store-context/routes.js";
@@ -27,7 +28,7 @@ const snapshot: MerchantStoreContextSnapshot = {
 };
 type LogEntry = { level: "info" | "warn" | "error"; event: string; data: Record<string, unknown> };
 
-function fixture(options: { authFailure?: Error; updateFailure?: Error } = {}) {
+function fixture(options: { authFailure?: Error; updateFailure?: Error; logger?: StructuredLogger } = {}) {
   const calls: string[] = [];
   const writes: Array<{ principal: typeof principal; snapshot: MerchantStoreContextSnapshot }> = [];
   const logs: LogEntry[] = [];
@@ -48,7 +49,7 @@ function fixture(options: { authFailure?: Error; updateFailure?: Error } = {}) {
         if (options.updateFailure) throw options.updateFailure;
       },
     } as never,
-    logger: {
+    logger: options.logger ?? {
       info: (event: string, data: Record<string, unknown>) => logs.push({ level: "info", event, data }),
       warn: (event: string, data: Record<string, unknown>) => logs.push({ level: "warn", event, data }),
       error: (event: string, data: Record<string, unknown>) => logs.push({ level: "error", event, data }),
@@ -219,13 +220,20 @@ test("authentication is checked before the query/body and errors do not leak ten
   });
   assert.deepEqual(f.calls, ["authenticate"]);
   assert.deepEqual(f.writes, []);
-  assert.deepEqual(f.logs, [{ level: "warn", event: "merchant.store_context.sync.failed", data: { reason: "unauthorized", durationMs: 0 } }]);
+  assert.equal(f.logs.length, 1);
+  assert.equal(f.logs[0]?.level, "warn");
+  assert.equal(f.logs[0]?.event, "merchant.store_context.sync.failed");
+  assert.equal(f.logs[0]?.data.reason, "unauthorized");
+  assert.equal(f.logs[0]?.data.durationMs, 0);
+  assert.equal((f.logs[0]?.data.error as { name: string }).name, "WooUnauthenticatedError");
+  assert.equal(Object.hasOwn(f.logs[0]!.data, "shopId"), false);
+  assert.equal(Object.hasOwn(f.logs[0]!.data, "installationId"), false);
 });
 
-test("tenant conflict and internal failures retain distinct codes and bounded logs", async () => {
+test("tenant conflict and internal failures retain distinct codes and server diagnostics", async () => {
   for (const [error, status, code, level, reason] of [
     [new MerchantStoreContextConflictError(), 409, "store_context_conflict", "warn", "tenant_conflict"],
-    [new Error("sensitive-connection-string"), 500, "internal_error", "error", "internal"],
+    [new Error("Storage failed postgres://reader:db-password@private/db Bearer private-credential", { cause: new Error("token=cause-secret") }), 500, "internal_error", "error", "internal"],
   ] as const) {
     const f = fixture({ updateFailure: error });
     await withRoute(f.route, async (origin) => {
@@ -238,9 +246,14 @@ test("tenant conflict and internal failures retain distinct codes and bounded lo
     assert.deepEqual(f.logs, [{
       level, event: "merchant.store_context.sync.failed", data: {
         installationId: principal.installationId, shopId: principal.shopId, reason, durationMs: 0,
+        error: { name: error.name, message: status === 409 ? error.message : "Storage failed [REDACTED] Bearer [REDACTED]" },
+        ...(status === 500 ? { errorCause: { name: "Error", message: "[REDACTED]" } } : {}),
+        redactionApplied: status === 500,
       },
     }]);
-    assert.equal(JSON.stringify(f.logs).includes("sensitive-connection-string"), false);
+    for (const secret of ["db-password", "private-credential", "cause-secret", "postgres://"]) {
+      assert.equal(JSON.stringify(f.logs).includes(secret), false);
+    }
   }
 });
 
@@ -261,4 +274,26 @@ test("wrong methods and unrelated routes fall through without authenticating or 
   assert.deepEqual(f.calls, []);
   assert.deepEqual(f.writes, []);
   assert.deepEqual(f.logs, []);
+});
+
+
+test("store-context diagnostics retain safe reasons through the Shared sink without exposing credentials", async () => {
+  const records: LogRecord[] = [];
+  const cause = Object.assign(new Error("Database unavailable postgres://reader:db-password@private/db token=cause-secret"), { code: "P1001", meta: { password: "meta-secret" } });
+  const error = new Error("Storage failed Bearer private-credential", { cause });
+  const f = fixture({ updateFailure: error, logger: createLogger({ serviceName: "store-context-test", environment: "test", sink: record => records.push(record) }) });
+  await withRoute(f.route, async origin => {
+    const response = await put(origin, JSON.stringify(snapshot));
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "internal_error" });
+  });
+  assert.equal(records.length, 1);
+  assert.equal(records[0]?.data?.databaseCode, "P1001");
+  assert.equal(records[0]?.data?.redactionApplied, true);
+  const output = JSON.stringify(records);
+  assert.ok(output.includes("Database unavailable"));
+  for (const secret of ["db-password", "private-credential", "cause-secret", "meta-secret", "postgres://"]) assert.equal(output.includes(secret), false, secret);
+  assert.equal(Object.hasOwn(records[0]!.data!, "errorStack"), false);
+  assert.equal(error.cause, cause);
+  assert.ok(cause.message.includes("cause-secret"), "diagnostic sanitization must not mutate the original exception");
 });

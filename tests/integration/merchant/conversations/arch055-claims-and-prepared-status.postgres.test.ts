@@ -123,8 +123,8 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
   const wrappingJson = JSON.stringify({ wrapping: randomBytes(32).toString("base64") });
   const keyring = parseCredentialKeyring(wrappingJson);
   const unsealEnvironment = {
-    MODA_CONFIG_UNSEAL_KEY: wrappingJson,
-    MODA_CONFIG_UNSEAL_ACTIVE_KEY_ID: "wrapping",
+    MODA_ENCRYPTION_KEYS_JSON: wrappingJson,
+    MODA_ENCRYPTION_ACTIVE_KEY_ID: "wrapping",
   };
   const senderSecret = { accessToken: "not-a-real-provider-token", phoneNumberId: "1234567890",
     businessAccountId: WABA };
