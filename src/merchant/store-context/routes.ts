@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { safeErrorDiagnostic } from "../../http/error-diagnostics.js";
 import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import {
@@ -45,10 +46,7 @@ export function createMerchantStoreContextRoute(options: {
         const metadata = {
           ...(installationId && shopId ? { installationId, shopId } : {}),
           reason, durationMs: Math.max(0, now() - startedAt),
-          errorName: error instanceof Error ? error.name : typeof error,
-          errorMessage: error instanceof Error ? error.message : String(error),
-          errorStack: error instanceof Error ? error.stack : undefined,
-          errorCause: error instanceof Error ? error.cause : undefined,
+          ...safeErrorDiagnostic(error),
         };
         if (reason === "internal") logger.error("merchant.store_context.sync.failed", metadata);
         else logger.warn("merchant.store_context.sync.failed", metadata);
