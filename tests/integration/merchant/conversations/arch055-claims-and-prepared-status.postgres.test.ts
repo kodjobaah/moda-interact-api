@@ -161,7 +161,7 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
       const initialAt = new Date(now.getTime() - 48 * 60 * 60_000);
       const outbound = await db.conversationMessage.create({ data: {
         conversationId: conversation.id, direction: "OUTBOUND", senderType: "AUTOMATION",
-        status: "SENT", content: "Initial recovery", sentAt: initialAt, createdAt: initialAt,
+        status: "SENT", content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${id()}`, sentAt: initialAt, createdAt: initialAt,
       } });
       await db.recoveryOutreachAttempt.create({ data: {
         checkoutRecoveryId: recovery.id, sequence: 1, recipient: "447700900001", trigger: "INITIAL",
@@ -243,7 +243,7 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
         } });
         const initial = await db.conversationMessage.create({ data: {
           id: `arch055_m07_${kind}_initial_${sample}`, conversationId: conversation.id,
-          direction: "OUTBOUND", senderType: "AUTOMATION", status: "SENT", content: "Initial recovery",
+          direction: "OUTBOUND", senderType: "AUTOMATION", status: "SENT", content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${id()}`,
           sentAt, createdAt: sentAt,
         } });
         await db.recoveryOutreachAttempt.create({ data: {
@@ -532,7 +532,7 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
     const humanInitialAt = new Date(now.getTime() - 48 * 60 * 60_000);
     const humanInitial = await db.conversationMessage.create({ data: {
       conversationId: humanConversation.id, direction: "OUTBOUND", senderType: "AUTOMATION",
-      status: "SENT", content: "Initial recovery", sentAt: humanInitialAt, createdAt: humanInitialAt,
+      status: "SENT", content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${id()}`, sentAt: humanInitialAt, createdAt: humanInitialAt,
     } });
     await db.recoveryOutreachAttempt.create({ data: {
       checkoutRecoveryId: humanRecovery.id, sequence: 1, recipient: "447700900001", trigger: "INITIAL",
@@ -650,7 +650,7 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
     } });
     const rollbackInitial = await db.conversationMessage.create({ data: {
       conversationId: rollbackConversation.id, direction: "OUTBOUND", senderType: "AUTOMATION",
-      status: "SENT", content: "Initial recovery", sentAt: humanInitialAt, createdAt: humanInitialAt,
+      status: "SENT", content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${id()}`, sentAt: humanInitialAt, createdAt: humanInitialAt,
     } });
     await db.recoveryOutreachAttempt.create({ data: {
       checkoutRecoveryId: rollbackRecovery.id, sequence: 1, recipient: "447700900001", trigger: "INITIAL",
