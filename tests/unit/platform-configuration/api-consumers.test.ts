@@ -45,9 +45,19 @@ test("Woo return proofs use the current keyring after rotation while retaining o
   let current = previous;
   let resolutionCount = 0;
   let attemptCount = 0;
-  const service = new WooReadAuthorizationService({
+  const transaction = {
+    $queryRaw: async () => [{ id: "locked" }],
+    shop: { findUnique: async () => ({ id: "shop-one", domain: "https://shop.example", platform: "WOOCOMMERCE",
+      shopifyShopId: null, status: "ACTIVE", onboardingCompleted: true }) },
+    wooCommerceInstallation: { findUnique: async () => ({ id: "installation-one", shopId: "shop-one",
+      canonicalSiteUrl: "https://shop.example", credentialVersion: 1, status: "ACTIVE", revokedAt: null }) },
     wooCommerceRestReadAttempt: {
       create: async () => ({ id: `attempt-${++attemptCount}`, expiresAt: new Date("2026-10-18T16:00:00Z") }),
+    },
+  };
+  const service = new WooReadAuthorizationService({
+    $transaction: async (work: (tx: typeof transaction) => Promise<unknown>) => work(transaction),
+    wooCommerceRestReadAttempt: {
       findUnique: async () => ({ shopId: "shop-one",
         installation: { shopId: "shop-one", shop: { storeLocale: "de_DE", defaultLanguageTag: "de-DE" } } }),
     },

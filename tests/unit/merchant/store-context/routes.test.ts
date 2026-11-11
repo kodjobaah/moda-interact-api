@@ -219,13 +219,20 @@ test("authentication is checked before the query/body and errors do not leak ten
   });
   assert.deepEqual(f.calls, ["authenticate"]);
   assert.deepEqual(f.writes, []);
-  assert.deepEqual(f.logs, [{ level: "warn", event: "merchant.store_context.sync.failed", data: { reason: "unauthorized", durationMs: 0 } }]);
+  assert.equal(f.logs.length, 1);
+  assert.equal(f.logs[0]?.level, "warn");
+  assert.equal(f.logs[0]?.event, "merchant.store_context.sync.failed");
+  assert.equal(f.logs[0]?.data.reason, "unauthorized");
+  assert.equal(f.logs[0]?.data.durationMs, 0);
+  assert.equal(f.logs[0]?.data.errorName, "WooUnauthenticatedError");
+  assert.equal(Object.hasOwn(f.logs[0]!.data, "shopId"), false);
+  assert.equal(Object.hasOwn(f.logs[0]!.data, "installationId"), false);
 });
 
-test("tenant conflict and internal failures retain distinct codes and bounded logs", async () => {
+test("tenant conflict and internal failures retain distinct codes and server diagnostics", async () => {
   for (const [error, status, code, level, reason] of [
     [new MerchantStoreContextConflictError(), 409, "store_context_conflict", "warn", "tenant_conflict"],
-    [new Error("sensitive-connection-string"), 500, "internal_error", "error", "internal"],
+    [new Error("storage unavailable"), 500, "internal_error", "error", "internal"],
   ] as const) {
     const f = fixture({ updateFailure: error });
     await withRoute(f.route, async (origin) => {
@@ -238,9 +245,10 @@ test("tenant conflict and internal failures retain distinct codes and bounded lo
     assert.deepEqual(f.logs, [{
       level, event: "merchant.store_context.sync.failed", data: {
         installationId: principal.installationId, shopId: principal.shopId, reason, durationMs: 0,
+        errorName: error.name, errorMessage: error.message, errorStack: error.stack, errorCause: error.cause,
       },
     }]);
-    assert.equal(JSON.stringify(f.logs).includes("sensitive-connection-string"), false);
+    assert.equal(JSON.stringify(f.logs).includes("private-credential"), false);
   }
 });
 

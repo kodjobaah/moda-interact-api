@@ -20,10 +20,12 @@ const directRunners = [
   "scripts/test-arch035-knowledge-upload-postgres.mjs",
   "scripts/run-arch043-platform-configuration-postgres.mjs",
   "scripts/test-arch053-recovery-restore-postgres.mjs",
+  "scripts/test-arch054-ai-response-delay-postgres.mjs",
 ] as const;
 
 // These disposable runners are included transitively through npm scripts.
 const delegatedRunners = [
+  { npmScript: "test:arch055-readiness:postgres", runner: "scripts/test-arch055-readiness-postgres.mjs" },
   { npmScript: "test:arch040-conversation-control:postgres", runner: "scripts/test-arch040-woo-conversation-control-postgres.mjs" },
   { npmScript: "test:arch040-human-send:postgres", runner: "scripts/test-arch040-woo-human-send-postgres.mjs" },
   { npmScript: "test:arch046-woo-consent:postgres", runner: "scripts/test-arch046-woo-consent-postgres.mjs" },
@@ -42,7 +44,7 @@ async function integrationTests(directory: string): Promise<string[]> {
   return files;
 }
 
-test("every integration suite is registered once in the default disposable runner chain", async () => {
+test("every integration suite has a disposable runner or explicit PHP contract command", async () => {
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
     scripts: Record<string, string>;
   };
@@ -51,7 +53,11 @@ test("every integration suite is registered once in the default disposable runne
   const register = async (runner: string) => {
     const body = await readFile(join(root, runner), "utf8");
     const matches = body.matchAll(/tests\/integration\/[A-Za-z0-9_./-]+\.test\.ts/g);
-    registrations.push(...Array.from(matches, ([path]) => path));
+    // Measurement runners may reference the same suite for candidate and baseline passes.
+    registrations.push(...new Set(Array.from(matches, ([path]) => path)));
+    for (const [nestedRunner] of body.matchAll(/scripts\/[A-Za-z0-9_./-]+\.mjs/g)) {
+      await register(nestedRunner);
+    }
   };
   for (const runner of directRunners) {
     assert.ok(chain.includes(`node ${runner}`), `${runner} missing from test:integration`);
@@ -63,8 +69,11 @@ test("every integration suite is registered once in the default disposable runne
       `${npmScript} must invoke ${runner}`);
     await register(runner);
   }
+  const phpContract = "tests/integration/woocommerce/consent-status/php-client-contract.test.ts";
+  assert.ok(packageJson.scripts["test:arch046-woo-consent-status:php"]?.includes(phpContract));
+  registrations.push(phpContract);
   const expected = (await integrationTests(join(root, "tests/integration"))).sort();
   assert.ok(expected.length > 0, "no integration test files discovered");
   assert.deepEqual(registrations.sort(), expected,
-    "all integration suites must be registered once in the default runner chain");
+    "all integration suites must have one owning runner or explicit contract command");
 });
