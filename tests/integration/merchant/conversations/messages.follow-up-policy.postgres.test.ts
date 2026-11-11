@@ -61,7 +61,7 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
       if (initialAt) {
         const outbound = await db.conversationMessage.create({ data: {
           conversationId: conversation.id, direction: "OUTBOUND", senderType: "AUTOMATION",
-          content: "Initial recovery", status: "SENT", sentAt: initialAt, createdAt: initialAt,
+          content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${id()}`, status: "SENT", sentAt: initialAt, createdAt: initialAt,
         } });
         outboundId = outbound.id;
       }

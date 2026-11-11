@@ -65,3 +65,28 @@ test("multiple valid supported language choices return ordered safe strings", ()
     { name: "moda_follow_up_fr", language: "fr" },
   ]);
 });
+
+test("confirmed offer presentation selects named or neutral without changing the coupon setting", () => {
+  const neutral = approved({ purpose: "FOLLOW_UP_CODE_OFFER", definitionOffer: "CODE_OFFER",
+    bindings: { body: [{ variable: "shop.name" }, { variable: "offer.code" }] } });
+  const named = approved({ ...neutral, variantId: "named", name: "named_follow_up",
+    registrationName: "named_follow_up", definitionName: "named_follow_up",
+    bindings: { body: [{ variable: "customer.firstName" }, { variable: "offer.code" }] } });
+  const rows = [approved(), neutral, named];
+  assert.deepEqual(choicesFromRows(rows, shop, waba, now,
+    { purpose: "FOLLOW_UP_CODE_OFFER", hasName: true }), [{ name: "named_follow_up", language: "en" }]);
+  assert.deepEqual(choicesFromRows(rows, shop, waba, now,
+    { purpose: "FOLLOW_UP_CODE_OFFER", hasName: false }), [{ name: "moda_follow_up", language: "en" }]);
+  assert.deepEqual(choicesFromRows([named], shop, waba, now,
+    { purpose: "FOLLOW_UP_CODE_OFFER", hasName: false }), []);
+  assert.deepEqual(choicesFromRows([named, named], shop, waba, now,
+    { purpose: "FOLLOW_UP_CODE_OFFER", hasName: true }), []);
+});
+
+test("prefers the image assignment when an approved text fallback coexists", () => {
+  const text = approved();
+  const logo = approved({ variantId: "logo", name: "logo_follow_up", registrationName: "logo_follow_up",
+    definitionName: "logo_follow_up", components: [{ type: "HEADER", format: "IMAGE" }] });
+  assert.deepEqual(choicesFromRows([text, logo], shop, waba, now,
+    { purpose: "FOLLOW_UP_NO_OFFER", hasName: false }), [{ name: "logo_follow_up", language: "en" }]);
+});

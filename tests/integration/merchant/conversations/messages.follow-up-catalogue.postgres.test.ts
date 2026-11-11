@@ -57,7 +57,7 @@ test("ARCH-047-API-001 tenant-scoped catalogue and fail-closed Meta admission", 
       (error: unknown) => error instanceof SendHttpError && error.code === "not_found");
     const initialAt = new Date(now.getTime() - 72 * 3600_000);
     const outbound = await db.conversationMessage.create({ data: { conversationId: target.conversation.id,
-      direction: "OUTBOUND", senderType: "AUTOMATION", content: "Initial outreach", status: "SENT",
+      direction: "OUTBOUND", senderType: "AUTOMATION", content: JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1", recoveryPromise: { kind: "NO_OFFER" } }), providerMessageId: `wamid.${id()}`, status: "SENT",
       sentAt: initialAt, createdAt: initialAt } });
     const initial = await db.recoveryOutreachAttempt.create({ data: {
       checkoutRecoveryId: target.checkout.id, sequence: 1, recipient: "447700900001",

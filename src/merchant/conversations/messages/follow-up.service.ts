@@ -54,7 +54,7 @@ export class MerchantConversationFollowUpService {
       });
       if (existing && (existing.status !== "PENDING" || existing.initiationKey !== null ||
           existing.outboundMessageId !== null)) return EMPTY;
-      const templates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now);
+      const templates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now, conversation.checkoutRecoveryId);
       return { schemaVersion: 1, templates };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
