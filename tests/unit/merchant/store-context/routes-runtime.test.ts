@@ -25,7 +25,7 @@ async function withApi(
     service: { update: async (_principal: unknown, snapshot: MerchantStoreContextSnapshot) => {
       calls.push(snapshot);
       if (config.failure === "conflict") throw new MerchantStoreContextConflictError();
-      if (config.failure === "internal") throw new Error("sensitive DB secret");
+      if (config.failure === "internal") throw new Error("Database unavailable postgres://reader:db-password@private/db token=private-token");
     } } as never,
     authenticator: { authenticate: async () => {
       if (config.auth === "deny") throw new WooUnauthenticatedError();
@@ -122,7 +122,12 @@ test("Shop/installation conflict is 409 and internal errors are logged but remai
       assert.equal(calls.length, 1);
       assert.equal(errorRecords(logs)[0]?.data?.reason, reason);
       if (failure === "internal") {
-        assert.equal(errorRecords(logs)[0]?.data?.errorMessage, "sensitive DB secret");
+        const record = errorRecords(logs)[0];
+        assert.deepEqual(record?.data?.error, { name: "Error", message: "Database unavailable [REDACTED] [REDACTED]" });
+        assert.equal(record?.data?.redactionApplied, true);
+        for (const secret of ["postgres://", "db-password", "private-token"]) {
+          assert.equal(logs.join("\n").includes(secret), false, secret);
+        }
       }
     }, { failure });
   }
