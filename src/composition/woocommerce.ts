@@ -15,6 +15,8 @@ import { createWooCheckoutActivityRoute } from "../woocommerce/activity/routes.j
 import type { WooCheckoutPublisher } from "../woocommerce/activity/producer.js";
 import type { WooOrderPublisher } from "../woocommerce/activity/order-producer.js";
 import type { ApiPlatformConfigurationReader } from "../platform-configuration/service.js";
+import { createTransactionMessagingSenderFactory } from "../platform-configuration/composition.js";
+import { WooRecoveryTemplateProvisioner } from "../merchant/recovery-templates/provisioner.js";
 import { createWooConsentRoute } from "../woocommerce/consent/routes.js";
 import { createWooConsentStatusRoute } from "../woocommerce/consent-status/routes.js";
 import { WooConsentStatusService } from "../woocommerce/consent-status/service.js";
@@ -44,6 +46,10 @@ export function createWooRoutes(options: {
       prisma, new WooSiteVerifier({ mode: config.woocommerceConnectionMode }),
     ),
     authenticator,
+    recoveryTemplates: new WooRecoveryTemplateProvisioner({
+      database: prisma, environment: config.environment, logger,
+      sender: createTransactionMessagingSenderFactory({ environment: config.environment, logger }),
+    }),
     logger,
   });
   const billingWebhook = createWooBillingWebhookRoute({

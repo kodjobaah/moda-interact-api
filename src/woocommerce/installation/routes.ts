@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
+import type { WooRecoveryTemplateProvisioner } from "../../merchant/recovery-templates/provisioner.js";
 import type { ApiRouteHandler } from "../../http/route-handler.js";
 import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
 import { singleHeader } from "../../http/headers.js";
@@ -27,6 +28,7 @@ interface WooInstallationRouteOptions {
   mode: WooConnectionMode;
   connectionService: WooInstallationConnectionService;
   authenticator: WooInstallationAuthenticator;
+  recoveryTemplates?: Pick<WooRecoveryTemplateProvisioner, "provision">;
   logger: StructuredLogger;
   now?: () => number;
 }
@@ -35,6 +37,7 @@ export function createWooInstallationRoutes({
   mode,
   connectionService,
   authenticator,
+  recoveryTemplates,
   logger,
   now = Date.now,
 }: WooInstallationRouteOptions): WooInstallationRouteHandler {
@@ -52,6 +55,22 @@ export function createWooInstallationRoutes({
             attemptId: payload.attemptId,
             bootstrapSecret: payload.bootstrapSecret,
           });
+          // Connection and Free activation have committed. Never turn an optional
+          // post-commit provisioning failure into a failed credential response.
+          if (recoveryTemplates) {
+            try {
+              await recoveryTemplates.provision({
+                installationId: result.installationId, shopId: result.shopId,
+                canonicalSiteUrl: result.canonicalSiteUrl, credentialVersion: result.credentialVersion,
+              }, Math.min(8_000, Math.max(0, 25_000 - (now() - startedAt))));
+            } catch (error) {
+              logger.error("woocommerce.onboarding.template_assignment.failed", {
+                shopId: result.shopId, reasonCode: "PROVISIONING_FAILED", error,
+                errorName: error instanceof Error ? error.name : typeof error,
+                errorMessage: error instanceof Error ? error.message : String(error),
+              });
+            }
+          }
           logger.info("woocommerce.installation.connect", {
             installationId: result.installationId,
             shopId: result.shopId,
