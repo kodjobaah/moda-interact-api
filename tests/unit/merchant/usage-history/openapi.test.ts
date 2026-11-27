@@ -28,12 +28,12 @@ test("API-022 OpenAPI exactly matches the Woo installation-only read, strict res
   const get = path.get;
   assert.deepEqual(get.security, [{ InstallationBearer: [], InstallationId: [] }]);
   assert.deepEqual(get.parameters.map((p: { name: string }) => p.name),
-    ["view", "periodId", "kind", "page", "pageSize", "periodCursor", "responseVersion"]);
+    ["view", "periodId", "kind", "page", "pageSize", "periodCursor", "responseVersion", "chargeSource"]);
   const pageSize = get.parameters.find((p) => p.name === "pageSize");
   assert.ok(pageSize);
   assert.deepEqual(pageSize.schema.enum, [10, 25, 50, 100]);
   for (const response of ["200", "400", "401", "409", "500"]) assert.ok(get.responses[response]);
-  for (const name of ["UsageHistoryV1", "UsageHistoryV2", "UsageEventV2", "PeriodPage", "Period", "UsageEvent", "UsagePagination", "RecoverySource"]) {
+  for (const name of ["UsageHistoryV1", "UsageHistoryV2", "UsageHistoryV3", "UsageEventV2", "PeriodPage", "Period", "UsageEvent", "UsagePagination", "RecoverySource"]) {
     const schema = spec.components.schemas[name];
     assert.ok(schema, name);
     assert.equal(schema.additionalProperties, false, name);
@@ -52,6 +52,7 @@ test("API-022 OpenAPI exactly matches the Woo installation-only read, strict res
   assert.deepEqual(history.oneOf, [
     { $ref: "#/components/schemas/UsageHistoryV1" },
     { $ref: "#/components/schemas/UsageHistoryV2" },
+    { $ref: "#/components/schemas/UsageHistoryV3" },
   ]);
   assert.equal(historyV1.properties.usageEvents?.maxItems, 100);
   assert.equal(historyV2.properties.usageEvents?.maxItems, 100);

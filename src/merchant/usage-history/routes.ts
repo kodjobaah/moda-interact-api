@@ -35,7 +35,7 @@ export function createMerchantUsageHistoryRoute(input: {
         const query = parseUsageHistoryQuery(url.searchParams);
         const result = await service.read(principal, query);
         if (!isUsageHistoryResponse(result)) throw new UsageHistoryIntegrityError();
-        if (result.schemaVersion === 2) {
+        if (result.schemaVersion !== 1) {
           const unattributed = result.usageEvents.filter((event) => event.chargedAgainst === "UNATTRIBUTED");
           if (unattributed.length > 0) {
             // Missing/contradictory allocation evidence is not silently classified

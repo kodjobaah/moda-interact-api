@@ -28,6 +28,10 @@ export async function readPeriodPageSnapshot(
   input: { shopId: string; view: UsageView; cursor: string | null; key: Uint8Array; currentPeriod: PeriodRow | null },
 ): Promise<{ page: UsageHistoryResponse["periodPage"]; rows: PeriodRow[] }> {
   const { shopId, view, cursor, key, currentPeriod } = input;
+  if (view === "all") {
+    if (cursor !== null) throw new UsageHistoryRequestError("invalid_cursor");
+    return { page: { items: [], previousCursor: null, nextCursor: null }, rows: [] };
+  }
   if (view === "current") {
     if (cursor !== null) throw new UsageHistoryRequestError("invalid_cursor");
     return { page: { items: currentPeriod ? [projectPeriod(currentPeriod)] : [], previousCursor: null, nextCursor: null },

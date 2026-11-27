@@ -1,6 +1,8 @@
 export const USAGE_HISTORY_PATH = "/v1/merchant/usage-history";
 
-export type UsageView = "current" | "past";
+import type { CreditSource } from "./unified-ledger.js";
+
+export type UsageView = "current" | "past" | "all";
 export type UsageKind = "ALL" | "RECOVERY_CONVERSATION";
 export type UsagePageSize = 10 | 25 | 50 | 100;
 
@@ -12,7 +14,8 @@ export interface UsageHistoryQuery {
   pageSize: UsagePageSize;
   periodCursor: string | null;
   /** v1 remains the default for deployed strict WooCommerce consumers. */
-  responseVersion?: 1 | 2;
+  responseVersion?: 1 | 2 | 3;
+  chargeSource?: CreditSource;
 }
 
 export type UsageChargeSource =
@@ -54,7 +57,7 @@ export interface UsageHistoryEvent {
 export type UsageHistoryResponse =
   | (UsageHistoryBase & { schemaVersion: 1 })
   | (Omit<UsageHistoryBase, "usageEvents"> & {
-      schemaVersion: 2;
+      schemaVersion: 2 | 3;
       usageEvents: Array<UsageHistoryEvent & { chargedAgainst: UsageChargeSource }>;
     });
 
@@ -74,7 +77,7 @@ export class UsageHistoryIntegrityError extends Error {
 
 const PERIOD_ID = /^[A-Za-z0-9_-]{1,128}$/;
 const CURSOR = /^[A-Za-z0-9_-]{1,1024}$/;
-const PARAMETERS = new Set(["view", "periodId", "kind", "page", "pageSize", "periodCursor", "responseVersion"]);
+const PARAMETERS = new Set(["view", "periodId", "kind", "page", "pageSize", "periodCursor", "responseVersion", "chargeSource"]);
 
 export function validUsagePeriodId(value: unknown): value is string {
   return typeof value === "string" && PERIOD_ID.test(value);
@@ -86,24 +89,31 @@ export function parseUsageHistoryQuery(params: URLSearchParams): UsageHistoryQue
       throw new UsageHistoryRequestError("invalid_request");
     }
   }
-  const view = params.get("view") ?? "current";
-  const kind = params.get("kind") ?? "ALL";
+  const responseVersion = params.get("responseVersion");
+  const unified = responseVersion === "3";
+  const view = params.get("view") ?? (unified ? "all" : "current");
+  const kind = params.get("kind") ?? (unified ? "RECOVERY_CONVERSATION" : "ALL");
+  const chargeSource = params.get("chargeSource");
   const page = params.get("page") ?? "1";
   const pageSize = params.get("pageSize") ?? "10";
   const periodId = params.get("periodId");
   const periodCursor = params.get("periodCursor");
-  const responseVersion = params.get("responseVersion");
-  if ((view !== "current" && view !== "past") || (kind !== "ALL" && kind !== "RECOVERY_CONVERSATION") ||
+  if ((view !== "current" && view !== "past" && !(unified && view === "all")) ||
+      (kind !== "ALL" && kind !== "RECOVERY_CONVERSATION") ||
+      (unified && kind !== "RECOVERY_CONVERSATION") ||
+      (view === "all" && (periodId !== null || periodCursor !== null)) ||
+      (chargeSource !== null && (!unified || !["ALL", "LIFETIME_FREE_CREDITS", "INCLUDED_PLAN_ALLOWANCE", "PURCHASED_TOP_UP", "PROMOTIONAL_CREDITS", "UNATTRIBUTED"].includes(chargeSource))) ||
       !/^(?:[1-9]|[1-9]\d{1,2}|1000)$/.test(page) || Number(page) > 1000 ||
       !["10", "25", "50", "100"].includes(pageSize) ||
       (periodId !== null && !validUsagePeriodId(periodId)) ||
       (periodCursor !== null && !CURSOR.test(periodCursor)) ||
-      (responseVersion !== null && responseVersion !== "1" && responseVersion !== "2")) {
+      (responseVersion !== null && responseVersion !== "1" && responseVersion !== "2" && responseVersion !== "3")) {
     throw new UsageHistoryRequestError("invalid_request");
   }
   return {
     view, kind, page: Number(page), pageSize: Number(pageSize) as UsagePageSize,
     periodId, periodCursor,
-    ...(responseVersion !== null ? { responseVersion: Number(responseVersion) as 1 | 2 } : {}),
+    ...(responseVersion !== null ? { responseVersion: Number(responseVersion) as 1 | 2 | 3 } : {}),
+    ...(unified ? { chargeSource: (chargeSource ?? "ALL") as CreditSource } : {}),
   };
 }

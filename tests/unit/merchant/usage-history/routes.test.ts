@@ -71,7 +71,7 @@ test("GET only; authentication before query, no-store, bounded filters and priva
     assert.equal((await optedIn.json() as { schemaVersion: number }).schemaVersion, 2);
     assert.deepEqual(calls.at(-1), { view: "current", kind: "ALL", page: 1, pageSize: 10,
       periodId: null, periodCursor: null, responseVersion: 2 });
-    for (const fragment of ["responseVersion=3", "responseVersion=02", "responseVersion=2&responseVersion=2", "shopId=foreign", "page=999999", "kind=ALL&kind=ALL", "page=0", "pageSize=15"]) {
+    for (const fragment of ["responseVersion=4", "responseVersion=02", "responseVersion=2&responseVersion=2", "shopId=foreign", "page=999999", "kind=ALL&kind=ALL", "page=0", "pageSize=15"]) {
       const invalid = await fetch(`${url}?${fragment}`, { headers });
       assert.equal(invalid.status, 400, fragment);
       assert.deepEqual(await invalid.json(), { error: "invalid_request" });

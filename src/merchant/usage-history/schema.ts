@@ -43,8 +43,8 @@ function source(value: unknown): boolean {
 export function isUsageHistoryResponse(value: unknown): value is UsageHistoryResponse {
   if (!exact(value, ["schemaVersion", "state", "usageView", "periodPage", "usageEvents", "usagePagination"])) return false;
   const result = object(value)!;
-  if (![1, 2].includes(result.schemaVersion as number) || !["ready", "unavailable"].includes(String(result.state)) ||
-      !["current", "past"].includes(String(result.usageView))) return false;
+  if (![1, 2, 3].includes(result.schemaVersion as number) || !["ready", "unavailable"].includes(String(result.state)) ||
+      !(result.schemaVersion === 3 ? ["all", "current", "past"] : ["current", "past"]).includes(String(result.usageView))) return false;
   const periods = object(result.periodPage);
   if (!exact(periods, ["items", "previousCursor", "nextCursor"]) || !Array.isArray(periods?.items) ||
       periods.items.length > 25 || !periods.items.every((period) => {
@@ -71,13 +71,16 @@ export function isUsageHistoryResponse(value: unknown): value is UsageHistoryRes
       result.usageEvents.length > (paging.total as number)) return false;
   if (!result.usageEvents.every((event) => {
     const expected = ["id", "metric", "quantity", "occurredAt", "sourceRecovery"];
-    if (result.schemaVersion === 2) expected.push("chargedAgainst");
+    if (result.schemaVersion !== 1) expected.push("chargedAgainst");
     if (!exact(event, expected)) return false;
     const item = object(event)!;
     return id(item.id) && METRICS.has(String(item.metric)) && finiteQuantity(item.quantity) &&
       date(item.occurredAt) && source(item.sourceRecovery) &&
-      (result.schemaVersion !== 2 || CHARGE_SOURCES.has(String(item.chargedAgainst)));
+      (result.schemaVersion === 1 || CHARGE_SOURCES.has(String(item.chargedAgainst))) &&
+      (result.schemaVersion !== 3 || (item.metric === "RECOVERY_CONVERSATION" && item.chargedAgainst !== "NOT_APPLICABLE"));
   })) return false;
+  if (result.usageView === "all" && (paging.billId !== null || periods.items.length !== 0 ||
+      periods.previousCursor !== null || periods.nextCursor !== null)) return false;
   if (result.state === "unavailable" &&
       (result.usageEvents.length > 0 || paging.billId !== null || paging.total !== 0)) return false;
   return true;

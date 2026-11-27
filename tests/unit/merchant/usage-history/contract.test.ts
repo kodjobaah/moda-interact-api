@@ -18,7 +18,7 @@ test("strict Woo Usage History query: defaults, bounded filters, no tenant selec
   for (const pageSize of [10, 25, 50, 100]) assert.equal(parseUsageHistoryQuery(new URLSearchParams(`pageSize=${pageSize}`)).pageSize, pageSize);
   for (const query of ["shopId=other", "kind=ALL&kind=RECOVERY_CONVERSATION", "page=1&page=2",
     "view=other", "kind=BOGUS", "page=0", "page=1001", "page=01", "page=-1", "page=Infinity",
-    "pageSize=1", "pageSize=010", "pageSize=101", "responseVersion=0", "responseVersion=3",
+    "pageSize=1", "pageSize=010", "pageSize=101", "responseVersion=0", "responseVersion=4",
     "responseVersion=02", "responseVersion=2&responseVersion=2", "periodId=", "periodId=abc.def", "periodId=a%2Fb",
     `periodId=${"a".repeat(129)}`, "periodCursor=%2Babc", `periodCursor=${"b".repeat(1025)}`]) {
     assert.throws(() => parseUsageHistoryQuery(new URLSearchParams(query)), UsageHistoryRequestError, query);
@@ -94,4 +94,24 @@ test("v2 event requires a strict chargedAgainst value, while deployed v1 remains
   assert.equal(isUsageHistoryResponse({ ...attributed, usageEvents: [
     { ...attributed.usageEvents[0], purchasedCreditPurchaseId: "secret_lot_id" },
   ] }), false);
+});
+
+test("v3 defaults to all-time consumption and rejects legacy/ambiguous filters", () => {
+  assert.deepEqual(parseUsageHistoryQuery(new URLSearchParams("responseVersion=3")), {
+    ...defaults, view: "all", kind: "RECOVERY_CONVERSATION", responseVersion: 3, chargeSource: "ALL",
+  });
+  assert.equal(parseUsageHistoryQuery(new URLSearchParams("responseVersion=3&view=past&chargeSource=PURCHASED_TOP_UP")).chargeSource, "PURCHASED_TOP_UP");
+  for (const query of ["view=all", "responseVersion=2&chargeSource=ALL",
+    "responseVersion=3&kind=ALL", "responseVersion=3&view=all&periodId=period_1",
+    "responseVersion=3&chargeSource=unknown"]) {
+    assert.throws(() => parseUsageHistoryQuery(new URLSearchParams(query)), UsageHistoryRequestError);
+  }
+  const all = { ...response, schemaVersion: 3, usageView: "all",
+    periodPage: { items: [], previousCursor: null, nextCursor: null },
+    usagePagination: { ...response.usagePagination, billId: null, periodStart: null, periodEnd: null },
+    usageEvents: [{ ...response.usageEvents[0], chargedAgainst: "PURCHASED_TOP_UP" }],
+  };
+  assert.equal(isUsageHistoryResponse(all), true);
+  assert.equal(isUsageHistoryResponse({ ...all, schemaVersion: 2 }), false);
+  assert.equal(isUsageHistoryResponse({ ...all, usageEvents: [{ ...all.usageEvents[0], chargedAgainst: "NOT_APPLICABLE" }] }), false);
 });

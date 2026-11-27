@@ -21,7 +21,8 @@ paths:
       parameters:
         - name: view
           in: query
-          schema: { type: string, enum: [current, past], default: current }
+          description: All-time is available only with responseVersion=3; omitted view defaults to all in v3.
+          schema: { type: string, enum: [current, past, all] }
         - name: periodId
           in: query
           schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
@@ -40,8 +41,12 @@ paths:
           schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,1024}$' }
         - name: responseVersion
           in: query
-          description: Opt in to per-event credit allocation in v2; omitted means strict v1
-          schema: { type: integer, enum: [1, 2], default: 1 }
+          description: v2 adds per-event allocation; v3 is the unified consumption ledger (RECOVERY_CONVERSATION only). Omitted means strict v1.
+          schema: { type: integer, enum: [1, 2, 3], default: 1 }
+        - name: chargeSource
+          in: query
+          description: v3 only. Filter by original committed reservation allocation before pagination and totals.
+          schema: { type: string, enum: [ALL, LIFETIME_FREE_CREDITS, INCLUDED_PLAN_ALLOWANCE, PURCHASED_TOP_UP, PROMOTIONAL_CREDITS, UNATTRIBUTED], default: ALL }
       responses:
         '200':
           description: No-store read from existing Shop-owned usage and entitlement records
@@ -123,6 +128,28 @@ components:
             original event lineage for corrections. UNATTRIBUTED means insufficient
             proof; never inferred from current plan, sourceType or period alone.
             NOT_APPLICABLE is used for credit-pack purchase events.
+    UsageEventV3:
+      type: object
+      additionalProperties: false
+      required: [id, metric, quantity, occurredAt, sourceRecovery, chargedAgainst]
+      properties:
+        id: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        metric:
+          type: string
+          enum: [RECOVERY_CONVERSATION]
+        quantity: { type: number, description: Signed authoritative usage including corrections }
+        occurredAt: { type: string, format: date-time }
+        sourceRecovery:
+          oneOf:
+            - { $ref: '#/components/schemas/RecoverySource' }
+            - { type: 'null' }
+        chargedAgainst:
+          type: string
+          enum: [LIFETIME_FREE_CREDITS, INCLUDED_PLAN_ALLOWANCE, PURCHASED_TOP_UP, PROMOTIONAL_CREDITS, UNATTRIBUTED]
+          description: >-
+            Derived only from Shop-owned committed reservation allocation and
+            original event lineage for corrections. UNATTRIBUTED means insufficient
+            proof; never inferred from current plan, sourceType or period alone.
     UsagePagination:
       type: object
       additionalProperties: false
@@ -139,6 +166,7 @@ components:
       oneOf:
         - { $ref: '#/components/schemas/UsageHistoryV1' }
         - { $ref: '#/components/schemas/UsageHistoryV2' }
+        - { $ref: '#/components/schemas/UsageHistoryV3' }
     UsageHistoryV1:
       type: object
       additionalProperties: false
@@ -166,6 +194,20 @@ components:
           type: array
           maxItems: 100
           items: { $ref: '#/components/schemas/UsageEventV2' }
+        usagePagination: { $ref: '#/components/schemas/UsagePagination' }
+    UsageHistoryV3:
+      type: object
+      additionalProperties: false
+      required: [schemaVersion, state, usageView, periodPage, usageEvents, usagePagination]
+      properties:
+        schemaVersion: { type: integer, const: 3 }
+        state: { type: string, enum: [ready, unavailable] }
+        usageView: { type: string, enum: [current, past, all] }
+        periodPage: { $ref: '#/components/schemas/PeriodPage' }
+        usageEvents:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/UsageEventV3' }
         usagePagination: { $ref: '#/components/schemas/UsagePagination' }
     Error:
       type: object

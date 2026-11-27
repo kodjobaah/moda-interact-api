@@ -21,6 +21,8 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
   const suffix = randomUUID().replaceAll("-", "");
   const shops: string[] = [];
   const plans: string[] = [];
+  const campaigns: string[] = [];
+  const admins: string[] = [];
   const service = new MerchantUsageHistoryService(db, () => now);
   let serial = 0;
   const event = (shopId: string, quantity: string, other: Record<string, unknown> = {}) => ({
@@ -146,10 +148,10 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
       sourceKey: `paid-included:${currentPeriod.id}:${paidSourceKey}`,
       quantity: 2, status: "COMMITTED", committedUsageEventId: paidDebit.id,
     } });
-    await db.usageEvent.create({ data: event(shop.id, "2", {
+    const purchasedDebit = await db.usageEvent.create({ data: event(shop.id, "2", {
       sourceType: "PURCHASED_RECOVERY_CREDITS", occurredAt: new Date("2026-10-15T08:00:00.000Z"),
     }) });
-    await db.usageEvent.create({ data: event(shop.id, "1", {
+    const promotionalDebit = await db.usageEvent.create({ data: event(shop.id, "1", {
       sourceType: "PROMOTIONAL_RECOVERY_CREDITS", occurredAt: new Date("2026-10-22T08:00:00.000Z"),
     }) });
     await db.usageEvent.create({ data: event(shop.id, "99", {
@@ -179,6 +181,66 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     assert.ok(paid.usageEvents.every((row, i) => i === 0 ||
       row.occurredAt <= paid.usageEvents[i - 1]!.occurredAt));
     assert.equal((await service.read(principal, { ...query, pageSize: 25, page: 2 })).usageEvents.length, 0);
+
+    // Real committed allocations for the additional v3 assertions. Legacy
+    // expectations above intentionally exercise missing historical evidence.
+    const purchasedCounter = await db.shopEntitlementCounter.create({ data: {
+      shopId: shop.id, counter: "PURCHASED_RECOVERY_CREDITS", grantedQuantity: 3, committedQuantity: 2,
+    } });
+    const lot = await db.recoveryCreditPurchase.create({ data: {
+      id: randomUUID(), shopId: shop.id, planId: paidPlan.id, provider: "WOOCOMMERCE",
+      providerReference: `unified-${suffix}`, providerPurchaseAmount: "1.00",
+      providerPurchaseCurrency: "USD", providerValuationConfirmedAt: now,
+      providerPriceSnapshot: { amount: "1.00", currency: "USD" },
+      creditsGranted: 3, currentAmount: 1, status: "ACTIVE", activatedAt: now,
+    } });
+    await db.usageReservation.create({ data: {
+      shopId: shop.id, counterId: purchasedCounter.id, purchasedCreditPurchaseId: lot.id,
+      sourceKey: `unified-purchase-${suffix}`, quantity: 2, status: "COMMITTED", committedUsageEventId: purchasedDebit.id,
+    } });
+    const admin = await db.platformAdmin.create({ data: { email: `unified-${suffix}@example.test` } });
+    admins.push(admin.id);
+    const campaign = await db.promotionCampaign.create({ data: {
+      name: `Unified ${suffix}`, scope: "GLOBAL", quantity: 2, startsAt: currentStart,
+      expiresAt: currentEnd, status: "ACTIVE", createdByPlatformAdminId: admin.id,
+    } });
+    campaigns.push(campaign.id);
+    const grant = await db.promotionalCreditGrant.create({ data: {
+      shopId: shop.id, campaignId: campaign.id, quantity: 2, committedQuantity: 1,
+    } });
+    await db.usageReservation.create({ data: {
+      shopId: shop.id, promotionalCreditGrantId: grant.id,
+      sourceKey: `unified-promotion-${suffix}`, quantity: 1, status: "COMMITTED", committedUsageEventId: promotionalDebit.id,
+    } });
+
+    // The new unified contract includes all valid debit/correction records once.
+    // Filter using committed allocation, not a plausible sourceType label.
+    const unified: UsageHistoryQuery = { ...query, view: "all", responseVersion: 3, chargeSource: "ALL" };
+    const all = await service.read(principal, unified);
+    assert.equal(all.schemaVersion, 3);
+    assert.equal(all.usagePagination.total, 8);
+    assert.equal(all.usagePagination.totalQuantity, 107);
+    assert.equal(all.usagePagination.billId, null);
+    assert.deepEqual(all.periodPage.items, []);
+    const freeOnly = await service.read(principal, { ...unified, chargeSource: "LIFETIME_FREE_CREDITS" });
+    assert.equal(freeOnly.usagePagination.totalQuantity, 1);
+    assert.deepEqual(new Set(freeOnly.usageEvents.map(row => row.id)), new Set([freeDebit.id, freeCorrection.id]));
+    const paidOnly = await service.read(principal, { ...unified, chargeSource: "INCLUDED_PLAN_ALLOWANCE" });
+    assert.equal(paidOnly.usagePagination.total, 2);
+    assert.equal(paidOnly.usagePagination.totalQuantity, 1);
+    const purchasedOnly = await service.read(principal, { ...unified, chargeSource: "PURCHASED_TOP_UP" });
+    assert.equal(purchasedOnly.usagePagination.total, 1);
+    assert.equal(purchasedOnly.usagePagination.totalQuantity, 2);
+    assert.equal(purchasedOnly.usageEvents[0]?.id, purchasedDebit.id);
+    const promoOnly = await service.read(principal, { ...unified, chargeSource: "PROMOTIONAL_CREDITS" });
+    assert.equal(promoOnly.usagePagination.totalQuantity, 1);
+    assert.equal(promoOnly.usageEvents[0]?.id, promotionalDebit.id);
+    const unproven = await service.read(principal, { ...unified, chargeSource: "UNATTRIBUTED" });
+    assert.equal(unproven.usagePagination.total, 2);
+    const filteredCurrent = await service.read(principal, { ...unified, view: "current", chargeSource: "INCLUDED_PLAN_ALLOWANCE", page: 2 });
+    assert.equal(filteredCurrent.usagePagination.billId, currentPeriod.id);
+    assert.equal(filteredCurrent.usagePagination.totalQuantity, 1);
+    assert.deepEqual(filteredCurrent.usageEvents, []);
 
     const pastPeriods = [];
     // Historical 30-day entitlements do not overlap. Using one-day offsets here
@@ -230,6 +292,10 @@ test("API-022 PostgreSQL: Free, paid, purchased/promo, signed corrections, pagin
     assert.equal((await service.read(rotatedPrincipal, query)).usagePagination.totalQuantity, 106);
   } finally {
     await db.usageReservation.deleteMany({ where: { shopId: { in: shops } } });
+    await db.promotionalCreditGrant.deleteMany({ where: { shopId: { in: shops } } });
+    await db.recoveryCreditPurchase.deleteMany({ where: { shopId: { in: shops } } });
+    await db.promotionCampaign.deleteMany({ where: { id: { in: campaigns } } });
+    await db.platformAdmin.deleteMany({ where: { id: { in: admins } } });
     await db.billingPeriodEntitlementCounter.deleteMany({ where: { shopId: { in: shops } } });
     await db.shopEntitlementCounter.deleteMany({ where: { shopId: { in: shops } } });
     await db.usageEvent.deleteMany({ where: { shopId: { in: shops } } });

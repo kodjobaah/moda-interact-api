@@ -7,6 +7,7 @@ import {
 import { readPeriodPageSnapshot, periodSelect, type PeriodRow } from "./periods.js";
 import { readUsageRecoverySources } from "./sources.js";
 import { readUsageChargeSources } from "./attribution.js";
+import { readUnifiedLedger } from "./unified-ledger.js";
 
 const lifetimeSourceTypes = [
   "FREE_RECOVERY_RESERVATION", "PURCHASED_RECOVERY_CREDITS", "PROMOTIONAL_RECOVERY_CREDITS",
@@ -112,6 +113,8 @@ export class MerchantUsageHistoryService {
         subscription.currentPeriodStart !== null || subscription.currentPeriodEnd !== null)) {
         throw new UsageHistoryIntegrityError();
       }
+      if (query.view === "all" && (query.responseVersion !== 3 || query.periodId !== null || query.periodCursor !== null))
+        throw new UsageHistoryRequestError("invalid_request");
       const now = this.now();
       const current = query.view === "current" && isPaid && subscription?.billingPeriodId
         ? await tx.billingPeriod.findFirst({
@@ -141,16 +144,35 @@ export class MerchantUsageHistoryService {
       } else {
         selected = periodSnapshot.rows[0] ?? null;
       }
-      const freeLifetime = query.view === "current" && isFree;
-      const available = freeLifetime || selected !== null;
+      const unified = query.responseVersion === 3;
+      const freeLifetime = query.view === "current" && isFree && !unified;
+      const available = (unified && query.view === "all") || freeLifetime || selected !== null;
       const empty = { page: query.page, pageSize: query.pageSize, total: 0, totalQuantity: 0,
         billId: null, periodStart: null, periodEnd: null };
       if (!available) {
         const common = { state: query.view === "current" ? "unavailable" as const : "ready" as const,
           usageView: query.view, periodPage, usageEvents: [], usagePagination: empty };
-        return query.responseVersion === 2
-          ? { schemaVersion: 2, ...common }
+        return query.responseVersion === 2 || unified
+          ? { schemaVersion: unified ? 3 : 2, ...common }
           : { schemaVersion: 1, ...common };
+      }
+      if (unified) {
+        const ledger = await readUnifiedLedger(tx, {
+          shopId: principal.shopId, provider: "WOOCOMMERCE",
+          source: query.chargeSource ?? "ALL", period: selected,
+          page: query.page, pageSize: query.pageSize,
+        });
+        const sources = await readUsageRecoverySources(tx, principal.shopId, ledger.events);
+        return { schemaVersion: 3, state: "ready", usageView: query.view, periodPage,
+          usageEvents: ledger.events.map(event => ({
+            id: event.id, metric: event.metric, quantity: event.quantity,
+            occurredAt: event.occurredAt.toISOString(), chargedAgainst: event.chargedAgainst,
+            sourceRecovery: sources.get(event.id) ?? null,
+          })),
+          usagePagination: { ...empty, total: ledger.total, totalQuantity: ledger.totalQuantity,
+            billId: selected?.id ?? null, periodStart: selected?.periodStart.toISOString() ?? null,
+            periodEnd: selected?.periodEnd.toISOString() ?? null },
+        };
       }
       const where = usageWhere(principal.shopId, query, selected, freeLifetime);
       const [events, aggregated] = await Promise.all([
