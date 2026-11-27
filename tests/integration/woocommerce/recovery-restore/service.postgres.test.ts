@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { after, test } from "node:test";
+import { createHash } from "node:crypto";
+import { createRecoveryIdempotencyKey } from "@modainteract/moda-interact-shared/billing";
 import { PrismaClient } from "@prisma/client";
 import { WooConfirmedSentOfferResolver } from "../../../../src/woocommerce/recovery-restore/offer-resolver.js";
 import { WooRecoveryRestoreService } from "../../../../src/woocommerce/recovery-restore/service.js";
@@ -222,6 +224,68 @@ test("PostgreSQL resolver query enforces latest generation and returns coupon co
       { method: "AUTOMATIC", providerDiscountId: "discount-two" },
     ],
   });
+  // The restored checkout must never inherit the failed attempt's promise.
+  // Seed the same exact compensation lineage and historical dispatch evidence
+  // that Background persists; no provider or billing writer is mocked here.
+  const retryRecoveryId = "restore_retry_offer";
+  const retryToken = token(12);
+  const retryConversationId = "conversation_retry_offer";
+  const earlier = new Date(now.getTime() - 60_000);
+  const failedAt = new Date(earlier.getTime() + 1_000);
+  const sentAt = new Date(now.getTime() - 1_000);
+  const account = "1234567890123", phone = "1234567890124";
+  await insertRecovery({ id: retryRecoveryId, token: retryToken, checkoutToken: "retry_offer_checkout",
+    generation: 1, status: "MESSAGE_SENT", lastActivityAt: earlier, snapshot: originalSnapshot });
+  await insertConversation(retryRecoveryId, retryConversationId);
+  const codeReceipt = (code: string) => JSON.stringify({ contract: "moda.whatsapp.automated-template-parameters.v1",
+    recoveryPromise: { kind: "CODE_OFFER", promotionTarget: "CHECKOUT", providerDiscountId: `discount-${code}`, code } });
+  const originalMessage = await prisma.conversationMessage.create({ data: { conversationId: retryConversationId,
+    direction: "OUTBOUND", senderType: "AUTOMATION", status: "FAILED", content: codeReceipt("OLD10"),
+    providerMessageId: "wamid.restore-old", sentAt: earlier, failedAt, providerFailureCode: "131016",
+    dispatchProviderAccountId: account, dispatchProviderPhoneNumberId: phone } });
+  const originalAttempt = await prisma.recoveryOutreachAttempt.create({ data: { checkoutRecoveryId: retryRecoveryId,
+    sequence: 1, trigger: "INITIAL", status: "FAILED", recipient: "447400000000", configuredOfferMode: "NONE",
+    sentAt: earlier, outboundMessageId: originalMessage.id } });
+  const reservationId = "restore_retry_offer_reservation";
+  const reservation = await prisma.$transaction(async tx => {
+    const counter = await tx.shopEntitlementCounter.create({ data: { shopId, counter: "LIFETIME_FREE_RECOVERY_CREDITS", grantedQuantity: 2 } });
+    const sourceKey = createRecoveryIdempotencyKey(shopId, `recovery-outreach:${originalAttempt.id}`);
+    const debit = await tx.usageEvent.create({ data: { shopId, provider: "WOOCOMMERCE", metric: "RECOVERY_CONVERSATION",
+      quantity: 1, idempotencyKey: createRecoveryIdempotencyKey(shopId, sourceKey), sourceType: "FREE_RECOVERY_RESERVATION",
+      sourceId: reservationId, occurredAt: earlier } });
+    const correction = await tx.usageEvent.create({ data: { shopId, provider: "WOOCOMMERCE", metric: "RECOVERY_CONVERSATION",
+      quantity: -1, idempotencyKey: `arch028-undelivered:${reservationId}`, sourceType: "RECOVERY_UNDELIVERABLE_COMPENSATION",
+      sourceId: reservationId, correctionOfUsageEventId: debit.id, occurredAt: failedAt } });
+    return tx.usageReservation.create({ data: { id: reservationId, shopId, counterId: counter.id, sourceKey,
+      status: "COMMITTED", quantity: 1, committedUsageEventId: debit.id, compensationUsageEventId: correction.id,
+      compensationReason: "WHATSAPP_DELIVERY_FAILED", compensationDisposition: "RESTORED_SPENDABLE", compensatedAt: failedAt } });
+  });
+  const intent = await prisma.recoveryOutreachRetryIntent.create({ data: { failedAttemptId: originalAttempt.id,
+    failedMessageId: originalMessage.id, fundingReservationId: reservation.id, providerFailureCode: "131016",
+    policy: "AFTER_COOLDOWN", notBeforeAt: sentAt, expectedGeneration: 1, expectedLastExternalActivityAt: earlier } });
+  const retryId = `retry_${intent.id}`;
+  const retry = await prisma.recoveryOutreachAttempt.create({ data: { id: retryId, checkoutRecoveryId: retryRecoveryId,
+    sequence: 3, trigger: "INITIAL", status: "PENDING", recipient: originalAttempt.recipient, configuredOfferMode: "NONE" } });
+  const resolveRetry = () => resolver.resolve(principal, { schemaVersion: "woo.restore.resolve.v1",
+    recoveryId: retryRecoveryId, token: retryToken });
+  const noOffer = { kind: "NONE", reason: "NO_CONFIRMED_OFFER" };
+  assert.deepEqual((await resolveRetry())?.outreachOffer, noOffer);
+  const retryMessage = await prisma.conversationMessage.create({ data: { conversationId: retryConversationId,
+    direction: "OUTBOUND", senderType: "AUTOMATION", status: "SENT", content: codeReceipt("RETRY25"),
+    providerMessageId: "wamid.restore-retry", sentAt,
+    providerDispatchKey: `arch046-woo-initial-${createHash("sha256").update(shopId).update("\0").update(retry.id).digest("hex")}`,
+    providerDispatchAdmittedAt: sentAt, providerDispatchControlRevision: 0,
+    dispatchProviderAccountId: account, dispatchProviderPhoneNumberId: phone } });
+  await prisma.recoveryOutreachAttempt.update({ where: { id: retry.id }, data: { status: "WAITING_FOR_RESPONSE",
+    outboundMessageId: retryMessage.id, sentAt } });
+  assert.deepEqual((await resolveRetry())?.outreachOffer, noOffer);
+  await prisma.conversationMessage.update({ where: { id: retryMessage.id }, data: { status: "DELIVERED", deliveredAt: sentAt } });
+  const resumed = await resolveRetry();
+  assert.deepEqual(resumed?.snapshot, originalSnapshot);
+  assert.deepEqual(resumed?.outreachOffer, { kind: "CHECKOUT_CODE", code: "RETRY25", providerDiscountId: "discount-RETRY25" });
+  await prisma.conversationMessage.update({ where: { id: originalMessage.id }, data: { status: "READ", readAt: sentAt } });
+  assert.deepEqual((await resolveRetry())?.outreachOffer, { kind: "NONE", reason: "UNVERIFIABLE" });
+
   for (const [id, tokenValue] of [
     ["restore_failed_attempt", failedToken],
     ["restore_unconfirmed_attempt", unconfirmedToken],

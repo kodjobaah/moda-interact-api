@@ -31,7 +31,7 @@ function ownsOutbound(attempt: MerchantOutreachAttempt, conversationId: string):
 /** Match the Background's historical initial-retry receipt fence. A positive
  * callback must identify the exact admitted physical send and historical sender,
  * not merely a higher sequence or a message bearing a provider ID. */
-function confirmedRetry(scope: MerchantOutreachScope, chain: readonly MerchantOutreachAttempt[],
+export function confirmedRetry(scope: MerchantOutreachScope, chain: readonly MerchantOutreachAttempt[],
   current: MerchantOutreachAttempt): boolean {
   const message = current.outboundMessage;
   if (!message || !hasConfirmedOutreachDelivery(current, scope.conversationId) || message.failedAt ||
