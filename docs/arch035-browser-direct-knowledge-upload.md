@@ -39,6 +39,7 @@ The complete versioned HTTP schema is `openapi/merchant-knowledge-v1.yaml`.
    by WooCommerce. A signed URL is an **object-scoped bearer capability**;
    its SigV4 query may reveal the access-key identifier, but never the R2
    **secret access key**. A URL is not permission to list/read other objects.
+
 3. **WordPress -> browser:** return only these bounded intent fields to the
    authorised administrator over HTTPS with `Cache-Control: no-store`. Neither
    WordPress nor Moda logs, stores, reflects into errors/HTML, or adds the URL
@@ -77,6 +78,7 @@ The complete versioned HTTP schema is `openapi/merchant-knowledge-v1.yaml`.
    calculate checksums only when required: it must not accidentally sign an
    SDK-generated CRC32 for the **empty presigning request** as if it described
    the later browser Blob. The API's authoritative SHA-256 verification remains.
+
 5. **Browser -> WordPress -> Moda API:** after a confirmed PUT only, the browser
    sends the metadata `assetId`, `purposeKey`, `name`, `languageTag`,
    `contentType`, `sizeBytes`, `sha256`, optional owned replacement `sourceId`
@@ -89,17 +91,17 @@ The complete versioned HTTP schema is `openapi/merchant-knowledge-v1.yaml`.
 
 ## Time, replay and error semantics
 
-| Condition | Expected client behaviour | Server result / durable state |
-|---|---|---|
-| PUT 2xx | Broker finalise with exact metadata | HEAD + streamed hash verification is mandatory; accept only verified bytes |
-| Existing object, R2 412 | Do not overwrite; check if prior PUT succeeded, then finalise only with the **same** immutable intent/bytes | Existing valid bytes may finalise; wrong bytes are rejected |
-| Wrong/missing signed header, modified URL or signature | Stop; do not finalise | R2 SigV4 rejection; the API never authorises an alternative object |
-| Expired signature or durable `expiresAt` | Stop; request a fresh intent with a new upload UUID if expired | Reusing an expired intent/finalise returns `409 knowledge_upload_expired` |
-| Redirect or unsafe host | Treat as failed; do not forward URL/body/credentials | No finalise; no redirect-following |
-| CORS/preflight failure | Stop; show safe retry guidance after policy correction | The browser never establishes a valid PUT; this is **not** an API authentication failure |
-| Network failure or user cancellation | Do not assume completion; retry only when safe within the remaining intent time | No new source created merely by issuing an intent |
-| API finalise `409` | Show integrity/conflict/expiry; never mark uploaded | No new available revision without verification |
-| API/WordPress `401`, `403`, `404`, `413`, `503` | Show bounded error, avoid URL/payload in notifications | Auth/entitlement/quota/network errors fail closed; unrelated reads are still available |
+| Condition                                              | Expected client behaviour                                                                                   | Server result / durable state                                                            |
+| ------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| PUT 2xx                                                | Broker finalise with exact metadata                                                                         | HEAD + streamed hash verification is mandatory; accept only verified bytes               |
+| Existing object, R2 412                                | Do not overwrite; check if prior PUT succeeded, then finalise only with the **same** immutable intent/bytes | Existing valid bytes may finalise; wrong bytes are rejected                              |
+| Wrong/missing signed header, modified URL or signature | Stop; do not finalise                                                                                       | R2 SigV4 rejection; the API never authorises an alternative object                       |
+| Expired signature or durable `expiresAt`               | Stop; request a fresh intent with a new upload UUID if expired                                              | Reusing an expired intent/finalise returns `409 knowledge_upload_expired`                |
+| Redirect or unsafe host                                | Treat as failed; do not forward URL/body/credentials                                                        | No finalise; no redirect-following                                                       |
+| CORS/preflight failure                                 | Stop; show safe retry guidance after policy correction                                                      | The browser never establishes a valid PUT; this is **not** an API authentication failure |
+| Network failure or user cancellation                   | Do not assume completion; retry only when safe within the remaining intent time                             | No new source created merely by issuing an intent                                        |
+| API finalise `409`                                     | Show integrity/conflict/expiry; never mark uploaded                                                         | No new available revision without verification                                           |
+| API/WordPress `401`, `403`, `404`, `413`, `503`        | Show bounded error, avoid URL/payload in notifications                                                      | Auth/entitlement/quota/network errors fail closed; unrelated reads are still available   |
 
 Retry the **same** idempotency UUID only with byte-identical metadata. An
 in-flight or uncertain PUT may have reached R2: `412` does not automatically

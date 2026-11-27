@@ -1,10 +1,17 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { sendNoStoreJson as sendJson } from "../../http/response.js";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
-import { RecoverySummaryIntegrityError, type MerchantRecoverySummaryService } from "./recovery-summary.service.js";
+import {
+  WooUnauthenticatedError,
+  type WooInstallationAuthenticator,
+} from "../../auth/woo-installation/authenticator.js";
+import {
+  RecoverySummaryIntegrityError,
+  type MerchantRecoverySummaryService,
+} from "./recovery-summary.service.js";
 
-export const MERCHANT_RECOVERY_SUMMARY_ROUTE_PATH = "/v1/merchant/recovery-summary";
+export const MERCHANT_RECOVERY_SUMMARY_ROUTE_PATH =
+  "/v1/merchant/recovery-summary";
 
 /** Read-only authenticated endpoint; never accepts a shop identifier from browser input. */
 export function createMerchantRecoverySummaryRoute(options: {
@@ -15,9 +22,16 @@ export function createMerchantRecoverySummaryRoute(options: {
 }) {
   const { authenticator, service, logger, now = Date.now } = options;
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const url = new URL(request.url ?? "/", "http://localhost");
-      if (url.pathname !== MERCHANT_RECOVERY_SUMMARY_ROUTE_PATH || request.method !== "GET") return false;
+      if (
+        url.pathname !== MERCHANT_RECOVERY_SUMMARY_ROUTE_PATH ||
+        request.method !== "GET"
+      )
+        return false;
       const started = now();
       try {
         const principal = await authenticator.authenticate(request);
@@ -36,17 +50,23 @@ export function createMerchantRecoverySummaryRoute(options: {
         if (error instanceof WooUnauthenticatedError) {
           sendJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof RecoverySummaryIntegrityError) {
-          logger.warn("merchant.recovery_summary.read.failed", { reason: "integrity",
+          logger.warn("merchant.recovery_summary.read.failed", {
+            reason: "integrity",
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
-          sendJson(response, 409, { error: "recovery_summary_integrity_invalid" });
+          sendJson(response, 409, {
+            error: "recovery_summary_integrity_invalid",
+          });
         } else {
-          logger.error("merchant.recovery_summary.read.failed", { reason: "internal",
+          logger.error("merchant.recovery_summary.read.failed", {
+            reason: "internal",
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
@@ -63,7 +83,11 @@ function requestHasBody(request: IncomingMessage): boolean {
     const name = request.rawHeaders[i]?.toLowerCase();
     const value = request.rawHeaders[i + 1];
     if (name === "transfer-encoding") return true;
-    if (name === "content-length" && (value === undefined || !/^0+$/.test(value))) return true;
+    if (
+      name === "content-length" &&
+      (value === undefined || !/^0+$/.test(value))
+    )
+      return true;
   }
   return false;
 }

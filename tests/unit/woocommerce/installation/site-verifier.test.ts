@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { createServer as createHttpServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  createServer as createHttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import test from "node:test";
 import { randomSecret } from "../../../../src/auth/woo-installation/credential.js";
@@ -77,16 +81,22 @@ async function withHttpFixture(
     await callback(address.port);
   } finally {
     await new Promise<void>((resolve, reject) =>
-      server.close((error) => error ? reject(error) : resolve()),
+      server.close((error) => (error ? reject(error) : resolve())),
     );
   }
 }
 
 async function withHttpsFixture(
   handler: (request: IncomingMessage, response: ServerResponse) => void,
-  callback: (port: number, server: ReturnType<typeof createHttpsServer>) => Promise<void>,
+  callback: (
+    port: number,
+    server: ReturnType<typeof createHttpsServer>,
+  ) => Promise<void>,
 ): Promise<void> {
-  const server = createHttpsServer({ cert: testCertificate, key: testPrivateKey }, handler);
+  const server = createHttpsServer(
+    { cert: testCertificate, key: testPrivateKey },
+    handler,
+  );
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
   assert.ok(address && typeof address !== "string");
@@ -94,41 +104,51 @@ async function withHttpsFixture(
     await callback(address.port, server);
   } finally {
     await new Promise<void>((resolve, reject) =>
-      server.close((error) => error ? reject(error) : resolve()),
+      server.close((error) => (error ? reject(error) : resolve())),
     );
   }
 }
 
 test("local-development pins the HTTP socket and verifies exact challenge proof", async () => {
   let canonicalSiteUrl = "";
-  await withHttpFixture((request, response) => {
-    assert.equal(request.method, "GET");
-    assert.match(request.url ?? "", /^\/wp-json\/moda-interact\/v1\/connection\/challenge\?/);
-    const query = new URL(request.url ?? "/", "http://localhost").searchParams;
-    const responseBody = {
-      attemptId,
-      nonce: query.get("nonce"),
-      proof: createSiteProof(secret, attemptId, query.get("nonce") ?? "", canonicalSiteUrl),
-    };
-    response.writeHead(200, { "content-type": "application/json; charset=utf-8" });
-    response.end(JSON.stringify(responseBody));
-  }, async (port) => {
-    const site = canonicalizeWooSiteUrl(
-      `http://woocommerce-sandbox.local:${port}`,
-      "local-development",
-    );
-    canonicalSiteUrl = site.canonicalSiteUrl;
-    const verifier = new WooSiteVerifier({
-      mode: "local-development",
-      resolve: async () => [{ address: "127.0.0.1", family: 4 }],
-      nonceFactory: () => nonce,
-    });
-    await verifier.verify(
-      site,
-      attemptId,
-      secret,
-    );
-  });
+  await withHttpFixture(
+    (request, response) => {
+      assert.equal(request.method, "GET");
+      assert.match(
+        request.url ?? "",
+        /^\/wp-json\/moda-interact\/v1\/connection\/challenge\?/,
+      );
+      const query = new URL(request.url ?? "/", "http://localhost")
+        .searchParams;
+      const responseBody = {
+        attemptId,
+        nonce: query.get("nonce"),
+        proof: createSiteProof(
+          secret,
+          attemptId,
+          query.get("nonce") ?? "",
+          canonicalSiteUrl,
+        ),
+      };
+      response.writeHead(200, {
+        "content-type": "application/json; charset=utf-8",
+      });
+      response.end(JSON.stringify(responseBody));
+    },
+    async (port) => {
+      const site = canonicalizeWooSiteUrl(
+        `http://woocommerce-sandbox.local:${port}`,
+        "local-development",
+      );
+      canonicalSiteUrl = site.canonicalSiteUrl;
+      const verifier = new WooSiteVerifier({
+        mode: "local-development",
+        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+        nonceFactory: () => nonce,
+      });
+      await verifier.verify(site, attemptId, secret);
+    },
+  );
 });
 
 test("connected peer validation rejects addresses outside the pinned DNS answer set", () => {
@@ -149,34 +169,54 @@ test("challenge response identity, proof, schema and media type must match exact
   ];
   for (const testCase of cases) {
     let canonicalSiteUrl = "";
-    await withHttpFixture((request, response) => {
-      const queryNonce = new URL(request.url ?? "/", "http://localhost").searchParams.get("nonce") ?? "";
-      const payload: Record<string, unknown> = {
-        attemptId,
-        nonce: queryNonce,
-        proof: createSiteProof(secret, attemptId, queryNonce, canonicalSiteUrl),
-      };
-      if (testCase.kind === "attempt") payload.attemptId = "450e8400-e29b-41d4-a716-446655440000";
-      if (testCase.kind === "nonce") payload.nonce = Buffer.alloc(32, 6).toString("base64url");
-      if (testCase.kind === "proof") payload.proof = Buffer.alloc(32, 1).toString("base64url");
-      if (testCase.kind === "extra") payload.extra = true;
-      response.writeHead(200, {
-        "content-type": testCase.kind === "media" ? "text/plain" : "application/json",
-      });
-      response.end(JSON.stringify(payload));
-    }, async (port) => {
-      const site = canonicalizeWooSiteUrl(`http://woocommerce-sandbox.local:${port}`, "local-development");
-      canonicalSiteUrl = site.canonicalSiteUrl;
-      const verifier = new WooSiteVerifier({
-        mode: "local-development",
-        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
-        nonceFactory: () => nonce,
-      });
-      await assert.rejects(
-        verifier.verify(site, attemptId, secret),
-        (error: unknown) => error instanceof SiteVerificationError && error.code === testCase.code,
-      );
-    });
+    await withHttpFixture(
+      (request, response) => {
+        const queryNonce =
+          new URL(request.url ?? "/", "http://localhost").searchParams.get(
+            "nonce",
+          ) ?? "";
+        const payload: Record<string, unknown> = {
+          attemptId,
+          nonce: queryNonce,
+          proof: createSiteProof(
+            secret,
+            attemptId,
+            queryNonce,
+            canonicalSiteUrl,
+          ),
+        };
+        if (testCase.kind === "attempt")
+          payload.attemptId = "450e8400-e29b-41d4-a716-446655440000";
+        if (testCase.kind === "nonce")
+          payload.nonce = Buffer.alloc(32, 6).toString("base64url");
+        if (testCase.kind === "proof")
+          payload.proof = Buffer.alloc(32, 1).toString("base64url");
+        if (testCase.kind === "extra") payload.extra = true;
+        response.writeHead(200, {
+          "content-type":
+            testCase.kind === "media" ? "text/plain" : "application/json",
+        });
+        response.end(JSON.stringify(payload));
+      },
+      async (port) => {
+        const site = canonicalizeWooSiteUrl(
+          `http://woocommerce-sandbox.local:${port}`,
+          "local-development",
+        );
+        canonicalSiteUrl = site.canonicalSiteUrl;
+        const verifier = new WooSiteVerifier({
+          mode: "local-development",
+          resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+          nonceFactory: () => nonce,
+        });
+        await assert.rejects(
+          verifier.verify(site, attemptId, secret),
+          (error: unknown) =>
+            error instanceof SiteVerificationError &&
+            error.code === testCase.code,
+        );
+      },
+    );
   }
 });
 
@@ -192,14 +232,25 @@ test("public mode rejects mixed/private answers before opening a socket", async 
   const original = canonicalizeWooSiteUrl("https://merchant.example", "public");
   await assert.rejects(
     verifier.verify(original, attemptId, secret),
-    (error: unknown) => error instanceof SiteVerificationError && error.code === "site_address_rejected",
+    (error: unknown) =>
+      error instanceof SiteVerificationError &&
+      error.code === "site_address_rejected",
   );
 });
 
 test("public mode rejects loopback, mapped and special-use IPv6 answers", async () => {
   for (const address of [
-    "127.0.0.1", "10.0.0.1", "192.168.1.2", "100.64.0.1", "192.0.2.1",
-    "::", "::ffff:127.0.0.1", "2001:db8::1", "fc00::1", "fe80::1", "ff02::1",
+    "127.0.0.1",
+    "10.0.0.1",
+    "192.168.1.2",
+    "100.64.0.1",
+    "192.0.2.1",
+    "::",
+    "::ffff:127.0.0.1",
+    "2001:db8::1",
+    "fc00::1",
+    "fe80::1",
+    "ff02::1",
   ]) {
     const family = address.includes(":") ? 6 : 4;
     const verifier = new WooSiteVerifier({
@@ -218,7 +269,15 @@ test("public mode rejects loopback, mapped and special-use IPv6 answers", async 
 });
 
 test("address policy distinguishes local private ranges from public/global ranges", () => {
-  for (const address of ["10.2.3.4", "172.20.1.2", "192.168.1.3", "127.0.0.1", "169.254.1.1", "fc00::1", "fe80::1"]) {
+  for (const address of [
+    "10.2.3.4",
+    "172.20.1.2",
+    "192.168.1.3",
+    "127.0.0.1",
+    "169.254.1.1",
+    "fc00::1",
+    "fe80::1",
+  ]) {
     assert.equal(isLocalAddress(address), true, address);
     assert.equal(isPublicAddress(address), false, address);
   }
@@ -253,11 +312,16 @@ test("local-development public targets retain HTTPS default-port policy", async 
   });
   await assert.rejects(
     verifier.verify(
-      canonicalizeWooSiteUrl("https://merchant.example:8443", "local-development"),
+      canonicalizeWooSiteUrl(
+        "https://merchant.example:8443",
+        "local-development",
+      ),
       attemptId,
       secret,
     ),
-    (error: unknown) => error instanceof SiteVerificationError && error.code === "site_address_rejected",
+    (error: unknown) =>
+      error instanceof SiteVerificationError &&
+      error.code === "site_address_rejected",
   );
   assert.equal(nonceGenerated, false);
 });
@@ -282,90 +346,125 @@ test("local hostnames resolving publicly are rejected even when HTTPS is used", 
 test("pinned HTTPS preserves the original hostname for SNI and certificate verification", async () => {
   let canonicalSiteUrl = "";
   let serverName: string | undefined;
-  await withHttpsFixture((request, response) => {
-    const name = (request.socket as import("node:tls").TLSSocket).servername;
-    serverName = typeof name === "string" ? name : undefined;
-    const query = new URL(request.url ?? "/", "https://woocommerce-sandbox.local").searchParams;
-    const responseBody = {
-      attemptId,
-      nonce: query.get("nonce"),
-      proof: createSiteProof(secret, attemptId, query.get("nonce") ?? "", canonicalSiteUrl),
-    };
-    response.writeHead(200, { "content-type": "application/json" });
-    response.end(JSON.stringify(responseBody));
-  }, async (port) => {
-    const site = canonicalizeWooSiteUrl(
-      `https://woocommerce-sandbox.local:${port}`,
-      "local-development",
-    );
-    canonicalSiteUrl = site.canonicalSiteUrl;
-    const verifier = new WooSiteVerifier({
-      mode: "local-development",
-      resolve: async () => [{ address: "127.0.0.1", family: 4 }],
-      nonceFactory: () => nonce,
-      ca: testCertificate,
-    });
-    await verifier.verify(site, attemptId, secret);
-  });
+  await withHttpsFixture(
+    (request, response) => {
+      const name = (request.socket as import("node:tls").TLSSocket).servername;
+      serverName = typeof name === "string" ? name : undefined;
+      const query = new URL(
+        request.url ?? "/",
+        "https://woocommerce-sandbox.local",
+      ).searchParams;
+      const responseBody = {
+        attemptId,
+        nonce: query.get("nonce"),
+        proof: createSiteProof(
+          secret,
+          attemptId,
+          query.get("nonce") ?? "",
+          canonicalSiteUrl,
+        ),
+      };
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(responseBody));
+    },
+    async (port) => {
+      const site = canonicalizeWooSiteUrl(
+        `https://woocommerce-sandbox.local:${port}`,
+        "local-development",
+      );
+      canonicalSiteUrl = site.canonicalSiteUrl;
+      const verifier = new WooSiteVerifier({
+        mode: "local-development",
+        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+        nonceFactory: () => nonce,
+        ca: testCertificate,
+      });
+      await verifier.verify(site, attemptId, secret);
+    },
+  );
   assert.equal(serverName, "woocommerce-sandbox.local");
 });
 
 test("challenge transport rejects redirects, oversized bodies and stalled servers", async () => {
-  await withHttpFixture((_request, response) => {
-    response.writeHead(302, { location: "http://127.0.0.1/other" });
-    response.end();
-  }, async (port) => {
-    const verifier = new WooSiteVerifier({
-      mode: "local-development",
-      resolve: async () => [{ address: "127.0.0.1", family: 4 }],
-      nonceFactory: () => nonce,
-    });
-    await assert.rejects(
-      verifier.verify(
-        canonicalizeWooSiteUrl(`http://woocommerce-sandbox.local:${port}`, "local-development"),
-        attemptId,
-        secret,
-      ),
-      (error: unknown) => error instanceof SiteVerificationError && error.code === "site_response_rejected",
-    );
-  });
+  await withHttpFixture(
+    (_request, response) => {
+      response.writeHead(302, { location: "http://127.0.0.1/other" });
+      response.end();
+    },
+    async (port) => {
+      const verifier = new WooSiteVerifier({
+        mode: "local-development",
+        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+        nonceFactory: () => nonce,
+      });
+      await assert.rejects(
+        verifier.verify(
+          canonicalizeWooSiteUrl(
+            `http://woocommerce-sandbox.local:${port}`,
+            "local-development",
+          ),
+          attemptId,
+          secret,
+        ),
+        (error: unknown) =>
+          error instanceof SiteVerificationError &&
+          error.code === "site_response_rejected",
+      );
+    },
+  );
 
-  await withHttpFixture((_request, response) => {
-    response.writeHead(200, {
-      "content-type": "application/json",
-      "content-length": "4097",
-    });
-    response.end("{}");
-  }, async (port) => {
-    const verifier = new WooSiteVerifier({
-      mode: "local-development",
-      resolve: async () => [{ address: "127.0.0.1", family: 4 }],
-    });
-    await assert.rejects(
-      verifier.verify(
-        canonicalizeWooSiteUrl(`http://woocommerce-sandbox.local:${port}`, "local-development"),
-        attemptId,
-        secret,
-      ),
-      (error: unknown) => error instanceof SiteVerificationError && error.code === "site_response_rejected",
-    );
-  });
+  await withHttpFixture(
+    (_request, response) => {
+      response.writeHead(200, {
+        "content-type": "application/json",
+        "content-length": "4097",
+      });
+      response.end("{}");
+    },
+    async (port) => {
+      const verifier = new WooSiteVerifier({
+        mode: "local-development",
+        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+      });
+      await assert.rejects(
+        verifier.verify(
+          canonicalizeWooSiteUrl(
+            `http://woocommerce-sandbox.local:${port}`,
+            "local-development",
+          ),
+          attemptId,
+          secret,
+        ),
+        (error: unknown) =>
+          error instanceof SiteVerificationError &&
+          error.code === "site_response_rejected",
+      );
+    },
+  );
 
-  await withHttpFixture(() => undefined, async (port) => {
-    const verifier = new WooSiteVerifier({
-      mode: "local-development",
-      resolve: async () => [{ address: "127.0.0.1", family: 4 }],
-      timeoutMs: 80,
-    });
-    const startedAt = Date.now();
-    await assert.rejects(
-      verifier.verify(
-        canonicalizeWooSiteUrl(`http://woocommerce-sandbox.local:${port}`, "local-development"),
-        attemptId,
-        secret,
-      ),
-      (error: unknown) => error instanceof SiteVerificationError && error.code === "site_unreachable",
-    );
-    assert.ok(Date.now() - startedAt < 1000);
-  });
+  await withHttpFixture(
+    () => undefined,
+    async (port) => {
+      const verifier = new WooSiteVerifier({
+        mode: "local-development",
+        resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+        timeoutMs: 80,
+      });
+      const startedAt = Date.now();
+      await assert.rejects(
+        verifier.verify(
+          canonicalizeWooSiteUrl(
+            `http://woocommerce-sandbox.local:${port}`,
+            "local-development",
+          ),
+          attemptId,
+          secret,
+        ),
+        (error: unknown) =>
+          error instanceof SiteVerificationError &&
+          error.code === "site_unreachable",
+      );
+      assert.ok(Date.now() - startedAt < 1000);
+    },
+  );
 });

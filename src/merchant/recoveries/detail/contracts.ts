@@ -19,7 +19,10 @@ export interface RecoveryValue {
   currency: string | null;
   incomplete: boolean;
 }
-export interface RecoveryMoney { amount: string | null; currency: string | null }
+export interface RecoveryMoney {
+  amount: string | null;
+  currency: string | null;
+}
 export interface RecoveryBasketItem {
   title: string | null;
   variantTitle: string | null;
@@ -31,7 +34,12 @@ export interface RecoveryBasketItem {
 export interface RecoveryBasket {
   items: RecoveryBasketItem[];
   recoveryTotal: RecoveryMoney;
-  unavailableReason: "missing_snapshot" | "invalid_snapshot" | "oversized_snapshot" | "partial_snapshot" | null;
+  unavailableReason:
+    | "missing_snapshot"
+    | "invalid_snapshot"
+    | "oversized_snapshot"
+    | "partial_snapshot"
+    | null;
 }
 export interface RecoveryConversationDetail {
   id: string;
@@ -39,14 +47,21 @@ export interface RecoveryConversationDetail {
   controlRevision: number;
   lastInboundAt: string | null;
   windowExpiresAt: string | null;
-  followUp: { sequence2Used: boolean; initiatedBy: "HUMAN" | "AGENT" | "AUTOMATION" | null };
+  followUp: {
+    sequence2Used: boolean;
+    initiatedBy: "HUMAN" | "AGENT" | "AUTOMATION" | null;
+  };
 }
 export interface RecoveryDetailSummary {
   schemaVersion: 1;
   timeZone: string;
   id: string;
   status: CheckoutRecoveryStatus;
-  customer: { firstName: string | null; lastName: string | null; email: string | null } | null;
+  customer: {
+    firstName: string | null;
+    lastName: string | null;
+    email: string | null;
+  } | null;
   value: RecoveryValue;
   hasConversation: boolean;
   basket: RecoveryBasket;
@@ -71,7 +86,8 @@ export interface RecoveryDetailMessage {
     text: string | null;
     transcriptionStatus: MessageTranscriptionStatus | null;
   };
-  moderationStatus: "PENDING" | "ALLOW" | "BLOCK" | "REVIEW_REQUIRED" | "RETRYABLE_ERROR";
+  moderationStatus:
+    "PENDING" | "ALLOW" | "BLOCK" | "REVIEW_REQUIRED" | "RETRYABLE_ERROR";
   moderationReasonCode: string | null;
   delivery: {
     status: MessageStatus | null;
@@ -99,7 +115,10 @@ export function boundedText(value: string | null, max: number): string | null {
   return cleaned ? cleaned.slice(0, max) : null;
 }
 
-export function recoveryValue(amount: { toString(): string } | null, currency: string | null): RecoveryValue {
+export function recoveryValue(
+  amount: { toString(): string } | null,
+  currency: string | null,
+): RecoveryValue {
   const value = amount?.toString() ?? null;
   if (value !== null && !/^-?\d{1,40}(?:\.\d{1,30})?$/.test(value)) {
     throw new RecoveryDetailIntegrityError();
@@ -113,8 +132,19 @@ export function recoveryValue(amount: { toString(): string } | null, currency: s
 }
 
 /** Avoid sending unknown provider enum values, raw media, phone or tokens to the merchant browser. */
-export function knownEnum<T extends string>(values: Record<string, T>, input: string | null): T | null {
-  return input !== null && Object.values(values).includes(input as T) ? (input as T) : null;
+export function knownEnum<T extends string>(
+  values: Record<string, T>,
+  input: string | null,
+): T | null {
+  return input !== null && Object.values(values).includes(input as T)
+    ? (input as T)
+    : null;
 }
 
-export { MessageContentType, MessageDirection, MessageSenderType, MessageStatus, MessageTranscriptionStatus };
+export {
+  MessageContentType,
+  MessageDirection,
+  MessageSenderType,
+  MessageStatus,
+  MessageTranscriptionStatus,
+};

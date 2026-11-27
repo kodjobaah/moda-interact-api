@@ -3,76 +3,193 @@ import { randomUUID, createHash, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { PrismaClient } from "@prisma/client";
-import { encryptCredential, parseCredentialKeyring } from "@modainteract/moda-interact-shared/security/credentials/node";
+import {
+  encryptCredential,
+  parseCredentialKeyring,
+} from "@modainteract/moda-interact-shared/security/credentials/node";
 import { MerchantKnowledgeUploadService } from "../../../../src/merchant/merchant-knowledge/upload.service.js";
-import { deterministicAssetId, KnowledgeUploadError, parseFinalize, parseIntent } from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
+import {
+  deterministicAssetId,
+  KnowledgeUploadError,
+  parseFinalize,
+  parseIntent,
+} from "../../../../src/merchant/merchant-knowledge/upload-contract.js";
 import type { UploadR2 } from "../../../../src/merchant/merchant-knowledge/upload-r2.js";
 import { apiPlatformConfigurationAad } from "../../../../src/platform-configuration/contracts.js";
 import { createApiPlatformConfigurationReader } from "../../../../src/platform-configuration/composition.js";
 import { adminR2PlaintextFixture } from "../../../fixtures/platform-configuration/r2-admin-payload.js";
 
 const connection = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
-const config = { schemaVersion: 1, maxKnowledgeSources: 2, maxContentUnitsPerSource: 1500,
-  allowedSourceTypes: [{ purposeKey: "PRODUCT_INFORMATION", dataFormatKey: "CSV" },
-    { purposeKey: "PRODUCT_INFORMATION", dataFormatKey: "XLSX" }, { purposeKey: "PRICING", dataFormatKey: "CSV" }] };
+const config = {
+  schemaVersion: 1,
+  maxKnowledgeSources: 2,
+  maxContentUnitsPerSource: 1500,
+  allowedSourceTypes: [
+    { purposeKey: "PRODUCT_INFORMATION", dataFormatKey: "CSV" },
+    { purposeKey: "PRODUCT_INFORMATION", dataFormatKey: "XLSX" },
+    { purposeKey: "PRICING", dataFormatKey: "CSV" },
+  ],
+};
 const bytes = Buffer.from("sku,description\n1,Example product\n");
 const checksum = createHash("sha256").update(bytes).digest("hex");
-const xlsxBytes = readFileSync(new URL("./fixtures/sample-knowledge.xlsx", import.meta.url));
+const xlsxBytes = readFileSync(
+  new URL("./fixtures/sample-knowledge.xlsx", import.meta.url),
+);
 const xlsxChecksum = createHash("sha256").update(xlsxBytes).digest("hex");
-const xlsxContentType = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-const deferred = <T = void,>() => {
+const xlsxContentType =
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+const deferred = <T = void>() => {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((done) => { resolve = done; });
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
   return { promise, resolve };
 };
 
-test("migration-backed Woo upload: unique tenant asset, retries, replacement, reprocess, merchant-off and expiry",
-  { skip: !connection }, async () => {
+test(
+  "migration-backed Woo upload: unique tenant asset, retries, replacement, reprocess, merchant-off and expiry",
+  { skip: !connection },
+  async () => {
     if (!connection) return;
-    const db = new PrismaClient({ datasources: { db: { url: connection } }, log: [{ emit: "event", level: "query" }] });
+    const db = new PrismaClient({
+      datasources: { db: { url: connection } },
+      log: [{ emit: "event", level: "query" }],
+    });
     const statements: string[] = [];
     db.$on("query", (event) => statements.push(event.query));
     const marker = randomUUID();
     const domain = `https://${marker}.upload.example.invalid`;
-    const shop = await db.shop.create({ data: { domain, platform: "WOOCOMMERCE", status: "ACTIVE", defaultLanguageTag: "en" } });
-    const foreign = await db.shop.create({ data: { domain: `${domain}-other`, platform: "WOOCOMMERCE", status: "ACTIVE" } });
-    const installation = await db.wooCommerceInstallation.create({ data: {
-      shopId: shop.id, canonicalSiteUrl: domain, credentialDigest: Buffer.alloc(32), credentialVersion: 3,
-    } });
-    const alien = await db.wooCommerceInstallation.create({ data: {
-      shopId: foreign.id, canonicalSiteUrl: `${domain}-other`, credentialDigest: Buffer.alloc(32),
-    } });
-    const principal = { shopId: shop.id, installationId: installation.id, canonicalSiteUrl: domain, credentialVersion: 3 };
-    const foreignPrincipal = { shopId: foreign.id, installationId: alien.id,
-      canonicalSiteUrl: `${domain}-other`, credentialVersion: 1 };
-    const feature = await db.feature.upsert({ where: { key: "merchant_knowledge" },
-      create: { key: "merchant_knowledge", displayName: "Merchant Knowledge", active: true,
-        activationMode: "MERCHANT_OPT_IN" }, update: { active: true, activationMode: "MERCHANT_OPT_IN" } });
-    const plan = await db.billingPlan.create({ data: {
-      shopifyPlanHandle: `test-upload-${marker}`, name: "Woo upload test", kind: "PAID_METERED", active: true,
-    } });
-    await db.billingPlanFeature.create({ data: { planId: plan.id, featureId: feature.id, enabled: true, configuration: config } });
-    await db.subscription.create({ data: { shopId: shop.id, planId: plan.id, status: "ACTIVE" } });
-    const wrappingKeyJson = JSON.stringify({ wrapping: randomBytes(32).toString("base64") });
+    const shop = await db.shop.create({
+      data: {
+        domain,
+        platform: "WOOCOMMERCE",
+        status: "ACTIVE",
+        defaultLanguageTag: "en",
+      },
+    });
+    const foreign = await db.shop.create({
+      data: {
+        domain: `${domain}-other`,
+        platform: "WOOCOMMERCE",
+        status: "ACTIVE",
+      },
+    });
+    const installation = await db.wooCommerceInstallation.create({
+      data: {
+        shopId: shop.id,
+        canonicalSiteUrl: domain,
+        credentialDigest: Buffer.alloc(32),
+        credentialVersion: 3,
+      },
+    });
+    const alien = await db.wooCommerceInstallation.create({
+      data: {
+        shopId: foreign.id,
+        canonicalSiteUrl: `${domain}-other`,
+        credentialDigest: Buffer.alloc(32),
+      },
+    });
+    const principal = {
+      shopId: shop.id,
+      installationId: installation.id,
+      canonicalSiteUrl: domain,
+      credentialVersion: 3,
+    };
+    const foreignPrincipal = {
+      shopId: foreign.id,
+      installationId: alien.id,
+      canonicalSiteUrl: `${domain}-other`,
+      credentialVersion: 1,
+    };
+    const feature = await db.feature.upsert({
+      where: { key: "merchant_knowledge" },
+      create: {
+        key: "merchant_knowledge",
+        displayName: "Merchant Knowledge",
+        active: true,
+        activationMode: "MERCHANT_OPT_IN",
+      },
+      update: { active: true, activationMode: "MERCHANT_OPT_IN" },
+    });
+    const plan = await db.billingPlan.create({
+      data: {
+        shopifyPlanHandle: `test-upload-${marker}`,
+        name: "Woo upload test",
+        kind: "PAID_METERED",
+        active: true,
+      },
+    });
+    await db.billingPlanFeature.create({
+      data: {
+        planId: plan.id,
+        featureId: feature.id,
+        enabled: true,
+        configuration: config,
+      },
+    });
+    await db.subscription.create({
+      data: { shopId: shop.id, planId: plan.id, status: "ACTIVE" },
+    });
+    const wrappingKeyJson = JSON.stringify({
+      wrapping: randomBytes(32).toString("base64"),
+    });
     const wrappingKeyring = parseCredentialKeyring(wrappingKeyJson);
     const sealR2Configuration = (version: number, maxUploadBytes: number) => {
-      const envelope = encryptCredential({ keyring: wrappingKeyring, activeKeyId: "wrapping",
-        plaintext: JSON.stringify({ ...adminR2PlaintextFixture, maxUploadBytes }),
-        aad: apiPlatformConfigurationAad("test", "merchant.knowledge.r2", version) });
-      return { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM", wrappingKeyId: envelope.keyId,
-        nonce: Buffer.from(envelope.nonce).toString("base64"), ciphertext: Buffer.from(envelope.ciphertext).toString("base64"),
-        authTag: Buffer.from(envelope.authTag).toString("base64") };
+      const envelope = encryptCredential({
+        keyring: wrappingKeyring,
+        activeKeyId: "wrapping",
+        plaintext: JSON.stringify({
+          ...adminR2PlaintextFixture,
+          maxUploadBytes,
+        }),
+        aad: apiPlatformConfigurationAad(
+          "test",
+          "merchant.knowledge.r2",
+          version,
+        ),
+      });
+      return {
+        kind: "sealed",
+        schemaVersion: 1,
+        algorithm: "AES-256-GCM",
+        wrappingKeyId: envelope.keyId,
+        nonce: Buffer.from(envelope.nonce).toString("base64"),
+        ciphertext: Buffer.from(envelope.ciphertext).toString("base64"),
+        authTag: Buffer.from(envelope.authTag).toString("base64"),
+      };
     };
-    await db.platformConfiguration.create({ data: { environment: "test", key: "merchant.knowledge.r2", version: 1,
-      value: sealR2Configuration(1, 10000) } });
-    const platformConfiguration = createApiPlatformConfigurationReader({ prisma: db, environment: "test",
-      unsealEnvironment: { MODA_ENCRYPTION_KEYS_JSON: wrappingKeyJson, MODA_ENCRYPTION_ACTIVE_KEY_ID: "wrapping" } });
-    const objects = new Map<string, { bytes: Buffer; contentType: string; sha256: string }>();
+    await db.platformConfiguration.create({
+      data: {
+        environment: "test",
+        key: "merchant.knowledge.r2",
+        version: 1,
+        value: sealR2Configuration(1, 10000),
+      },
+    });
+    const platformConfiguration = createApiPlatformConfigurationReader({
+      prisma: db,
+      environment: "test",
+      unsealEnvironment: {
+        MODA_ENCRYPTION_KEYS_JSON: wrappingKeyJson,
+        MODA_ENCRYPTION_ACTIVE_KEY_ID: "wrapping",
+      },
+    });
+    const objects = new Map<
+      string,
+      { bytes: Buffer; contentType: string; sha256: string }
+    >();
     let verificationTarget: string | null = null;
     let verificationStarted = deferred();
     let allowVerification = deferred();
     const r2: UploadR2 = {
-      async sign({ key, contentType, sha256 }) { objects.set(key, { bytes: contentType === xlsxContentType ? xlsxBytes : bytes, contentType, sha256 }); return `https://r2.example.invalid/${key}`; },
+      async sign({ key, contentType, sha256 }) {
+        objects.set(key, {
+          bytes: contentType === xlsxContentType ? xlsxBytes : bytes,
+          contentType,
+          sha256,
+        });
+        return `https://r2.example.invalid/${key}`;
+      },
       async verify({ key, sizeBytes, contentType, sha256 }) {
         if (key === verificationTarget) {
           verificationStarted.resolve();
@@ -83,175 +200,506 @@ test("migration-backed Woo upload: unique tenant asset, retries, replacement, re
         assert.equal(object.bytes.length, sizeBytes);
         assert.equal(object.contentType, contentType);
         assert.equal(object.sha256, sha256);
-        assert.equal(createHash("sha256").update(object.bytes).digest("hex"), sha256);
+        assert.equal(
+          createHash("sha256").update(object.bytes).digest("hex"),
+          sha256,
+        );
       },
     };
     let current = new Date("2026-10-17T09:00:00Z");
-    const service = new MerchantKnowledgeUploadService(db, { r2, configuration: platformConfiguration,
-      environment: "test", now: () => current });
-    const request = parseIntent({ idempotencyKey: randomUUID(), purposeKey: "PRODUCT_INFORMATION",
-      dataFormatKey: "CSV", originalFileName: "products.csv", contentType: "text/csv",
-      sizeBytes: bytes.length, sha256: checksum });
+    const service = new MerchantKnowledgeUploadService(db, {
+      r2,
+      configuration: platformConfiguration,
+      environment: "test",
+      now: () => current,
+    });
+    const request = parseIntent({
+      idempotencyKey: randomUUID(),
+      purposeKey: "PRODUCT_INFORMATION",
+      dataFormatKey: "CSV",
+      originalFileName: "products.csv",
+      contentType: "text/csv",
+      sizeBytes: bytes.length,
+      sha256: checksum,
+    });
     try {
       const first = await service.intent(principal, request);
-      const firstObjectKey = (await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey;
-      assert.equal(firstObjectKey,
-        `merchant-knowledge/test/woocommerce/${shop.id}/${marker}.upload.example.invalid/20261017T090000000Z-${first.assetId}.csv`);
+      const firstObjectKey = (
+        await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({
+          where: { id: first.assetId },
+        })
+      ).objectKey;
+      assert.equal(
+        firstObjectKey,
+        `merchant-knowledge/test/woocommerce/${shop.id}/${marker}.upload.example.invalid/20261017T090000000Z-${first.assetId}.csv`,
+      );
       // Regenerating the key during replay would break a signed upload and create an orphan object.
       current = new Date("2026-10-17T09:00:05Z");
       const repeated = await service.intent(principal, request);
       assert.equal(first.assetId, repeated.assetId);
-      assert.equal((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey,
-        firstObjectKey);
+      assert.equal(
+        (
+          await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({
+            where: { id: first.assetId },
+          })
+        ).objectKey,
+        firstObjectKey,
+      );
       assert.ok(repeated.uploadUrl.includes(firstObjectKey));
-      await assert.rejects(() => service.intent(principal, { ...request, purposeKey: "PRICING" }),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 409);
+      await assert.rejects(
+        () => service.intent(principal, { ...request, purposeKey: "PRICING" }),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 409,
+      );
       // A changed verified shop hostname does not rewrite an already-persisted key.
       const movedDomain = `https://moved-${marker}.example.invalid`;
-      await db.shop.update({ where: { id: shop.id }, data: { domain: movedDomain } });
-      await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { canonicalSiteUrl: movedDomain } });
+      await db.shop.update({
+        where: { id: shop.id },
+        data: { domain: movedDomain },
+      });
+      await db.wooCommerceInstallation.update({
+        where: { id: installation.id },
+        data: { canonicalSiteUrl: movedDomain },
+      });
       const migratedPrincipal = { ...principal, canonicalSiteUrl: movedDomain };
-      assert.ok((await service.intent(migratedPrincipal, request)).uploadUrl.includes(firstObjectKey));
+      assert.ok(
+        (await service.intent(migratedPrincipal, request)).uploadUrl.includes(
+          firstObjectKey,
+        ),
+      );
       await db.shop.update({ where: { id: shop.id }, data: { domain } });
-      await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { canonicalSiteUrl: domain } });
+      await db.wooCommerceInstallation.update({
+        where: { id: installation.id },
+        data: { canonicalSiteUrl: domain },
+      });
       // A historical pending intent without a purpose binding cannot be rebound by replay.
       const oldRequest = { ...request, idempotencyKey: randomUUID() };
-      const oldAssetId = deterministicAssetId(shop.id, oldRequest.idempotencyKey);
-      const originalAsset = await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } });
+      const oldAssetId = deterministicAssetId(
+        shop.id,
+        oldRequest.idempotencyKey,
+      );
+      const originalAsset =
+        await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({
+          where: { id: first.assetId },
+        });
       const oldObjectKey = `merchant-knowledge/test/woocommerce/${shop.id}/${oldAssetId}/source.csv`;
-      await db.merchantKnowledgeUploadedAsset.create({ data: { id: oldAssetId, shopId: shop.id,
-        dataFormatId: originalAsset.dataFormatId, status: "PENDING_UPLOAD", objectKey: oldObjectKey,
-        originalFileName: request.originalFileName, contentType: request.contentType,
-        sizeBytes: BigInt(request.sizeBytes), sha256: request.sha256,
-        uploadExpiresAt: new Date("2026-10-17T09:10:00Z") } });
-      await assert.rejects(() => service.intent(principal, oldRequest),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 409);
-      await assert.rejects(() => service.finalize(principal, { assetId: oldAssetId, name: "Products",
-        purposeKey: "PRODUCT_INFORMATION", languageTag: "en", contentType: "text/csv", sizeBytes: bytes.length, sha256: checksum }),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 409);
-      await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
-        data: { value: sealR2Configuration(2, 10), version: 2 } });
-      await assert.rejects(() => service.intent(principal, { ...request, idempotencyKey: randomUUID() }),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 413);
-      await db.platformConfiguration.update({ where: { environment_key: { environment: "test", key: "merchant.knowledge.r2" } },
-        data: { value: sealR2Configuration(3, 10000), version: 3 } });
-      const refreshed = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
+      await db.merchantKnowledgeUploadedAsset.create({
+        data: {
+          id: oldAssetId,
+          shopId: shop.id,
+          dataFormatId: originalAsset.dataFormatId,
+          status: "PENDING_UPLOAD",
+          objectKey: oldObjectKey,
+          originalFileName: request.originalFileName,
+          contentType: request.contentType,
+          sizeBytes: BigInt(request.sizeBytes),
+          sha256: request.sha256,
+          uploadExpiresAt: new Date("2026-10-17T09:10:00Z"),
+        },
+      });
+      await assert.rejects(
+        () => service.intent(principal, oldRequest),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 409,
+      );
+      await assert.rejects(
+        () =>
+          service.finalize(principal, {
+            assetId: oldAssetId,
+            name: "Products",
+            purposeKey: "PRODUCT_INFORMATION",
+            languageTag: "en",
+            contentType: "text/csv",
+            sizeBytes: bytes.length,
+            sha256: checksum,
+          }),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 409,
+      );
+      await db.platformConfiguration.update({
+        where: {
+          environment_key: {
+            environment: "test",
+            key: "merchant.knowledge.r2",
+          },
+        },
+        data: { value: sealR2Configuration(2, 10), version: 2 },
+      });
+      await assert.rejects(
+        () =>
+          service.intent(principal, {
+            ...request,
+            idempotencyKey: randomUUID(),
+          }),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 413,
+      );
+      await db.platformConfiguration.update({
+        where: {
+          environment_key: {
+            environment: "test",
+            key: "merchant.knowledge.r2",
+          },
+        },
+        data: { value: sealR2Configuration(3, 10000), version: 3 },
+      });
+      const refreshed = await service.intent(principal, {
+        ...request,
+        idempotencyKey: randomUUID(),
+      });
       assert.equal(refreshed.maxUploadBytes, 10000);
-      assert.equal((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: first.assetId } })).objectKey,
-        firstObjectKey);
-      await assert.rejects(() => service.intent(principal, { ...request, sizeBytes: 3 }),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 409);
-      const finalize = parseFinalize({ assetId: first.assetId, name: "Products", purposeKey: "PRODUCT_INFORMATION",
-        languageTag: "en", contentType: "text/csv", sizeBytes: bytes.length, sha256: checksum });
-      await assert.rejects(() => service.finalize(foreignPrincipal, finalize),
-        (error: unknown) => error instanceof KnowledgeUploadError);
-      await assert.rejects(() => service.finalize(principal, { ...finalize, sha256: "b".repeat(64) }),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.code === "knowledge_upload_integrity_mismatch");
+      assert.equal(
+        (
+          await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({
+            where: { id: first.assetId },
+          })
+        ).objectKey,
+        firstObjectKey,
+      );
+      await assert.rejects(
+        () => service.intent(principal, { ...request, sizeBytes: 3 }),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 409,
+      );
+      const finalize = parseFinalize({
+        assetId: first.assetId,
+        name: "Products",
+        purposeKey: "PRODUCT_INFORMATION",
+        languageTag: "en",
+        contentType: "text/csv",
+        sizeBytes: bytes.length,
+        sha256: checksum,
+      });
+      await assert.rejects(
+        () => service.finalize(foreignPrincipal, finalize),
+        (error: unknown) => error instanceof KnowledgeUploadError,
+      );
+      await assert.rejects(
+        () =>
+          service.finalize(principal, { ...finalize, sha256: "b".repeat(64) }),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError &&
+          error.code === "knowledge_upload_integrity_mismatch",
+      );
       const created = await service.finalize(principal, finalize);
       assert.equal(created.status, "ACCEPTED");
-      assert.equal((await service.finalize(principal, finalize)).sourceId, created.sourceId);
-      const originalMetadata = await db.merchantKnowledgeSource.findUniqueOrThrow({
-        where: { id: created.sourceId }, select: { name: true, languageTag: true, updatedAt: true },
-      });
+      assert.equal(
+        (await service.finalize(principal, finalize)).sourceId,
+        created.sourceId,
+      );
+      const originalMetadata =
+        await db.merchantKnowledgeSource.findUniqueOrThrow({
+          where: { id: created.sourceId },
+          select: { name: true, languageTag: true, updatedAt: true },
+        });
       statements.length = 0;
       const unchanged = await service.edit(principal, created.sourceId, {
-        name: originalMetadata.name, languageTag: originalMetadata.languageTag,
+        name: originalMetadata.name,
+        languageTag: originalMetadata.languageTag,
       });
-      assert.deepEqual(unchanged, { schemaVersion: 1, sourceId: created.sourceId, updated: true });
-      assert.equal(statements.filter((sql) => /UPDATE\s+"commerce"\."MerchantKnowledgeSource"/i.test(sql)).length, 0);
-      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({
-        where: { id: created.sourceId }, select: { updatedAt: true },
-      })).updatedAt.getTime(), originalMetadata.updatedAt.getTime());
-      assert.equal(await db.merchantKnowledgeSourceRevision.count({ where: { sourceId: created.sourceId } }), 1);
-      assert.equal((await db.merchantKnowledgeSourceRevision.findUniqueOrThrow({
-        where: { sourceId_generation: { sourceId: created.sourceId, generation: 1 } },
-      })).status, "PENDING");
-      const next = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
-      const replaced = await service.finalize(principal, { ...finalize, assetId: next.assetId, sourceId: created.sourceId });
+      assert.deepEqual(unchanged, {
+        schemaVersion: 1,
+        sourceId: created.sourceId,
+        updated: true,
+      });
+      assert.equal(
+        statements.filter((sql) =>
+          /UPDATE\s+"commerce"\."MerchantKnowledgeSource"/i.test(sql),
+        ).length,
+        0,
+      );
+      assert.equal(
+        (
+          await db.merchantKnowledgeSource.findUniqueOrThrow({
+            where: { id: created.sourceId },
+            select: { updatedAt: true },
+          })
+        ).updatedAt.getTime(),
+        originalMetadata.updatedAt.getTime(),
+      );
+      assert.equal(
+        await db.merchantKnowledgeSourceRevision.count({
+          where: { sourceId: created.sourceId },
+        }),
+        1,
+      );
+      assert.equal(
+        (
+          await db.merchantKnowledgeSourceRevision.findUniqueOrThrow({
+            where: {
+              sourceId_generation: {
+                sourceId: created.sourceId,
+                generation: 1,
+              },
+            },
+          })
+        ).status,
+        "PENDING",
+      );
+      const next = await service.intent(principal, {
+        ...request,
+        idempotencyKey: randomUUID(),
+      });
+      const replaced = await service.finalize(principal, {
+        ...finalize,
+        assetId: next.assetId,
+        sourceId: created.sourceId,
+      });
       assert.equal(replaced.generation, 2);
-      await service.edit(principal, created.sourceId, { name: "Revised products", languageTag: "en" });
+      await service.edit(principal, created.sourceId, {
+        name: "Revised products",
+        languageTag: "en",
+      });
       const reprocessed = await service.reprocess(principal, created.sourceId);
       assert.equal(reprocessed.generation, 3);
       // Replaying an original intake after REPROCESS still returns its original identity.
-      await db.merchantKnowledgeUploadedAsset.update({ where: { id: first.assetId }, data: { intentPurposeKey: null } });
-      const originalReplay = await service.finalize(principal, finalize);
-      assert.deepEqual([originalReplay.sourceId, originalReplay.revisionId, originalReplay.generation],
-        [created.sourceId, created.revisionId, created.generation]);
-      // A failed revision insert must roll back the conditional generation advance.
-      const conflictingRevision = await db.merchantKnowledgeSourceRevision.create({ data: {
-        sourceId: created.sourceId, generation: 4, reason: "REPROCESS",
-        uploadedAssetId: first.assetId, status: "PENDING", requestedAt: current,
-      } });
-      await assert.rejects(() => service.reprocess(principal, created.sourceId),
-        (error: unknown) => error instanceof Error && "code" in error && error.code === "P2002");
-      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({
-        where: { id: created.sourceId }, select: { currentGeneration: true },
-      })).currentGeneration, 3);
-      await db.merchantKnowledgeSourceRevision.delete({ where: { id: conflictingRevision.id } });
-      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({ where: { id: created.sourceId } })).name, "Revised products");
-      // Merchant preference off is not a reason to reject configuration or claim ingestion.
-      const preferences = await db.shopFeaturePreference.findMany({ where: { shopId: shop.id } });
-      assert.equal(preferences.length, 0);
-      const pending = await db.merchantKnowledgeSourceRevision.findUniqueOrThrow({
-        where: { sourceId_generation: { sourceId: created.sourceId, generation: 3 } },
+      await db.merchantKnowledgeUploadedAsset.update({
+        where: { id: first.assetId },
+        data: { intentPurposeKey: null },
       });
+      const originalReplay = await service.finalize(principal, finalize);
+      assert.deepEqual(
+        [
+          originalReplay.sourceId,
+          originalReplay.revisionId,
+          originalReplay.generation,
+        ],
+        [created.sourceId, created.revisionId, created.generation],
+      );
+      // A failed revision insert must roll back the conditional generation advance.
+      const conflictingRevision =
+        await db.merchantKnowledgeSourceRevision.create({
+          data: {
+            sourceId: created.sourceId,
+            generation: 4,
+            reason: "REPROCESS",
+            uploadedAssetId: first.assetId,
+            status: "PENDING",
+            requestedAt: current,
+          },
+        });
+      await assert.rejects(
+        () => service.reprocess(principal, created.sourceId),
+        (error: unknown) =>
+          error instanceof Error && "code" in error && error.code === "P2002",
+      );
+      assert.equal(
+        (
+          await db.merchantKnowledgeSource.findUniqueOrThrow({
+            where: { id: created.sourceId },
+            select: { currentGeneration: true },
+          })
+        ).currentGeneration,
+        3,
+      );
+      await db.merchantKnowledgeSourceRevision.delete({
+        where: { id: conflictingRevision.id },
+      });
+      assert.equal(
+        (
+          await db.merchantKnowledgeSource.findUniqueOrThrow({
+            where: { id: created.sourceId },
+          })
+        ).name,
+        "Revised products",
+      );
+      // Merchant preference off is not a reason to reject configuration or claim ingestion.
+      const preferences = await db.shopFeaturePreference.findMany({
+        where: { shopId: shop.id },
+      });
+      assert.equal(preferences.length, 0);
+      const pending =
+        await db.merchantKnowledgeSourceRevision.findUniqueOrThrow({
+          where: {
+            sourceId_generation: { sourceId: created.sourceId, generation: 3 },
+          },
+        });
       assert.equal(pending.status, "PENDING");
-      const xlsxIntent = await service.intent(principal, parseIntent({ ...request, idempotencyKey: randomUUID(),
-        dataFormatKey: "XLSX", originalFileName: "products.xlsx", contentType: xlsxContentType,
-        sizeBytes: xlsxBytes.length, sha256: xlsxChecksum }));
-      const xlsxSource = await service.finalize(principal, parseFinalize({ ...finalize, assetId: xlsxIntent.assetId,
-        name: "XLSX products", contentType: xlsxContentType, sizeBytes: xlsxBytes.length, sha256: xlsxChecksum }));
+      const xlsxIntent = await service.intent(
+        principal,
+        parseIntent({
+          ...request,
+          idempotencyKey: randomUUID(),
+          dataFormatKey: "XLSX",
+          originalFileName: "products.xlsx",
+          contentType: xlsxContentType,
+          sizeBytes: xlsxBytes.length,
+          sha256: xlsxChecksum,
+        }),
+      );
+      const xlsxSource = await service.finalize(
+        principal,
+        parseFinalize({
+          ...finalize,
+          assetId: xlsxIntent.assetId,
+          name: "XLSX products",
+          contentType: xlsxContentType,
+          sizeBytes: xlsxBytes.length,
+          sha256: xlsxChecksum,
+        }),
+      );
       assert.notEqual(xlsxSource.sourceId, created.sourceId);
-      assert.equal((await service.finalize(principal, parseFinalize({ ...finalize, assetId: xlsxIntent.assetId,
-        name: "XLSX products", contentType: xlsxContentType, sizeBytes: xlsxBytes.length, sha256: xlsxChecksum }))).sourceId,
-        xlsxSource.sourceId);
-      assert.equal(await db.merchantKnowledgeSource.count({ where: { shopId: shop.id } }), 2);
-      const overQuota = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
-      await assert.rejects(() => service.finalize(principal, { ...finalize, assetId: overQuota.assetId }),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 403);
-      const expired = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
+      assert.equal(
+        (
+          await service.finalize(
+            principal,
+            parseFinalize({
+              ...finalize,
+              assetId: xlsxIntent.assetId,
+              name: "XLSX products",
+              contentType: xlsxContentType,
+              sizeBytes: xlsxBytes.length,
+              sha256: xlsxChecksum,
+            }),
+          )
+        ).sourceId,
+        xlsxSource.sourceId,
+      );
+      assert.equal(
+        await db.merchantKnowledgeSource.count({ where: { shopId: shop.id } }),
+        2,
+      );
+      const overQuota = await service.intent(principal, {
+        ...request,
+        idempotencyKey: randomUUID(),
+      });
+      await assert.rejects(
+        () =>
+          service.finalize(principal, {
+            ...finalize,
+            assetId: overQuota.assetId,
+          }),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 403,
+      );
+      const expired = await service.intent(principal, {
+        ...request,
+        idempotencyKey: randomUUID(),
+      });
       current = new Date("2026-10-17T09:11:00Z");
-      await assert.rejects(() => service.finalize(principal, { ...finalize, assetId: expired.assetId }),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.code === "knowledge_upload_expired");
-      const replacementRace = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
-      const raceAsset = await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: replacementRace.assetId } });
+      await assert.rejects(
+        () =>
+          service.finalize(principal, {
+            ...finalize,
+            assetId: expired.assetId,
+          }),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError &&
+          error.code === "knowledge_upload_expired",
+      );
+      const replacementRace = await service.intent(principal, {
+        ...request,
+        idempotencyKey: randomUUID(),
+      });
+      const raceAsset =
+        await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({
+          where: { id: replacementRace.assetId },
+        });
       verificationTarget = raceAsset.objectKey;
       verificationStarted = deferred();
       allowVerification = deferred();
-      const racingFinalize = service.finalize(principal, { ...finalize, assetId: replacementRace.assetId, sourceId: created.sourceId });
+      const racingFinalize = service.finalize(principal, {
+        ...finalize,
+        assetId: replacementRace.assetId,
+        sourceId: created.sourceId,
+      });
       await verificationStarted.promise;
       await db.$transaction(async (tx) => {
-        const advanced = await tx.merchantKnowledgeSource.updateMany({ where: { id: created.sourceId!, shopId: shop.id, currentGeneration: 3 },
-          data: { currentGeneration: 4 } });
+        const advanced = await tx.merchantKnowledgeSource.updateMany({
+          where: {
+            id: created.sourceId!,
+            shopId: shop.id,
+            currentGeneration: 3,
+          },
+          data: { currentGeneration: 4 },
+        });
         assert.equal(advanced.count, 1);
-        await tx.merchantKnowledgeSourceRevision.create({ data: { sourceId: created.sourceId!, generation: 4,
-          reason: "REPROCESS", uploadedAssetId: first.assetId, status: "PENDING", requestedAt: current } });
+        await tx.merchantKnowledgeSourceRevision.create({
+          data: {
+            sourceId: created.sourceId!,
+            generation: 4,
+            reason: "REPROCESS",
+            uploadedAssetId: first.assetId,
+            status: "PENDING",
+            requestedAt: current,
+          },
+        });
       });
       allowVerification.resolve();
-      await assert.rejects(() => racingFinalize,
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 409);
-      assert.equal((await db.merchantKnowledgeSource.findUniqueOrThrow({ where: { id: created.sourceId! } })).currentGeneration, 4);
-      assert.equal((await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({ where: { id: replacementRace.assetId } })).status, "PENDING_UPLOAD");
-      assert.equal(await db.merchantKnowledgeSourceRevision.count({ where: { uploadedAssetId: replacementRace.assetId } }), 0);
-      const live = await service.intent(principal, { ...request, idempotencyKey: randomUUID() });
+      await assert.rejects(
+        () => racingFinalize,
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 409,
+      );
+      assert.equal(
+        (
+          await db.merchantKnowledgeSource.findUniqueOrThrow({
+            where: { id: created.sourceId! },
+          })
+        ).currentGeneration,
+        4,
+      );
+      assert.equal(
+        (
+          await db.merchantKnowledgeUploadedAsset.findUniqueOrThrow({
+            where: { id: replacementRace.assetId },
+          })
+        ).status,
+        "PENDING_UPLOAD",
+      );
+      assert.equal(
+        await db.merchantKnowledgeSourceRevision.count({
+          where: { uploadedAssetId: replacementRace.assetId },
+        }),
+        0,
+      );
+      const live = await service.intent(principal, {
+        ...request,
+        idempotencyKey: randomUUID(),
+      });
       assert.ok(live.assetId);
-      const pendingCounts = await db.merchantKnowledgeUploadedAsset.groupBy({ by: ["status"], where: { shopId: shop.id }, _count: true });
-      const expiredIntentCount = await db.merchantKnowledgeUploadedAsset.count({ where: {
-        shopId: shop.id, status: "PENDING_UPLOAD", uploadExpiresAt: { lte: current },
-      } });
-      const liveIntentCount = await db.merchantKnowledgeUploadedAsset.count({ where: {
-        shopId: shop.id, status: "PENDING_UPLOAD", uploadExpiresAt: { gt: current },
-      } });
-      assert.ok(pendingCounts.some(({ status }) => status === "PENDING_UPLOAD"));
+      const pendingCounts = await db.merchantKnowledgeUploadedAsset.groupBy({
+        by: ["status"],
+        where: { shopId: shop.id },
+        _count: true,
+      });
+      const expiredIntentCount = await db.merchantKnowledgeUploadedAsset.count({
+        where: {
+          shopId: shop.id,
+          status: "PENDING_UPLOAD",
+          uploadExpiresAt: { lte: current },
+        },
+      });
+      const liveIntentCount = await db.merchantKnowledgeUploadedAsset.count({
+        where: {
+          shopId: shop.id,
+          status: "PENDING_UPLOAD",
+          uploadExpiresAt: { gt: current },
+        },
+      });
+      assert.ok(
+        pendingCounts.some(({ status }) => status === "PENDING_UPLOAD"),
+      );
       assert.ok(expiredIntentCount >= 1);
       assert.ok(liveIntentCount >= 1);
-      await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { status: "REVOKED", revokedAt: new Date() } });
-      await assert.rejects(() => service.reprocess(principal, created.sourceId),
-        (error: unknown) => error instanceof KnowledgeUploadError && error.status === 403);
+      await db.wooCommerceInstallation.update({
+        where: { id: installation.id },
+        data: { status: "REVOKED", revokedAt: new Date() },
+      });
+      await assert.rejects(
+        () => service.reprocess(principal, created.sourceId),
+        (error: unknown) =>
+          error instanceof KnowledgeUploadError && error.status === 403,
+      );
     } finally {
-      await db.merchantKnowledgeSourceRevision.deleteMany({ where: { source: { is: { shopId: shop.id } } } });
-      await db.shop.deleteMany({ where: { id: { in: [shop.id, foreign.id] } } });
+      await db.merchantKnowledgeSourceRevision.deleteMany({
+        where: { source: { is: { shopId: shop.id } } },
+      });
+      await db.shop.deleteMany({
+        where: { id: { in: [shop.id, foreign.id] } },
+      });
       await db.billingPlan.delete({ where: { id: plan.id } });
       await db.$disconnect();
     }
-  });
+  },
+);

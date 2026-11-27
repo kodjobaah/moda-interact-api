@@ -15,8 +15,14 @@ test("every supported merchant language has distinct approval and cancellation c
     assert.match(cancelled.html, /WooCommerce/);
     assert.notEqual(cancelled.html, approved.html);
     if (locale !== "en") {
-      assert.equal(approved.html.includes("Return to your WooCommerce admin."), false);
-      assert.equal(cancelled.html.includes("WooCommerce authorization was not completed."), false);
+      assert.equal(
+        approved.html.includes("Return to your WooCommerce admin."),
+        false,
+      );
+      assert.equal(
+        cancelled.html.includes("WooCommerce authorization was not completed."),
+        false,
+      );
     }
   }
 });

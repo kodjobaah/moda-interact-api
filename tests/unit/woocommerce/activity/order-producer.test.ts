@@ -1,9 +1,21 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { WOO_ORDER_QUEUE, type WooOrderJob } from "../../../../src/woocommerce/activity/contract.js";
+import {
+  WOO_ORDER_QUEUE,
+  type WooOrderJob,
+} from "../../../../src/woocommerce/activity/contract.js";
 import { WooCheckoutReplayConflict } from "../../../../src/woocommerce/activity/producer.js";
-import { WooOrderQueueProducer, wooOrderJobId, wooOrderContentDigest, type WooOrderQueueClient } from "../../../../src/woocommerce/activity/order-producer.js";
-import { orderPlaced, orderPaid, orderCancelled } from "../../../fixtures/woocommerce/activity/order-event.js";
+import {
+  WooOrderQueueProducer,
+  wooOrderJobId,
+  wooOrderContentDigest,
+  type WooOrderQueueClient,
+} from "../../../../src/woocommerce/activity/order-producer.js";
+import {
+  orderPlaced,
+  orderPaid,
+  orderCancelled,
+} from "../../../fixtures/woocommerce/activity/order-event.js";
 
 class OrderQueue implements WooOrderQueueClient {
   jobs = new Map<string, WooOrderJob>();
@@ -13,7 +25,11 @@ class OrderQueue implements WooOrderQueueClient {
     const data = this.jobs.get(jobId);
     return data ? { data } : null;
   }
-  async add(name: string, data: WooOrderJob, options: Parameters<WooOrderQueueClient["add"]>[2]) {
+  async add(
+    name: string,
+    data: WooOrderJob,
+    options: Parameters<WooOrderQueueClient["add"]>[2],
+  ) {
     assert.equal(name, "order-lifecycle");
     assert.equal(options.attempts, 3);
     assert.equal(options.backoff.type, "exponential");
@@ -35,23 +51,41 @@ test("three distinct events share checkout correlation without collapsing order 
     assert.equal(queue.jobs.get(result.jobId)?.eventType, event.eventType);
     assert.equal(queue.jobs.get(result.jobId)?.checkoutKey, "cart-001");
     assert.equal(queue.jobs.get(result.jobId)?.order.checkoutKey, "cart-001");
-    assert.equal(queue.jobs.get(result.jobId)?.contentDigest, wooOrderContentDigest(event));
+    assert.equal(
+      queue.jobs.get(result.jobId)?.contentDigest,
+      wooOrderContentDigest(event),
+    );
   }
   assert.equal(queue.calls, 3);
   assert.equal((await producer.publish("shop-a", orderPlaced)).duplicate, true);
   assert.equal(queue.calls, 3);
-  assert.notEqual(wooOrderJobId("shop-a", orderPlaced.eventId), wooOrderJobId("shop-b", orderPlaced.eventId));
-  assert.equal((await producer.publish("shop-b", orderPlaced)).duplicate, false);
+  assert.notEqual(
+    wooOrderJobId("shop-a", orderPlaced.eventId),
+    wooOrderJobId("shop-b", orderPlaced.eventId),
+  );
+  assert.equal(
+    (await producer.publish("shop-b", orderPlaced)).duplicate,
+    false,
+  );
   assert.equal(queue.calls, 4);
-  await assert.rejects(producer.publish("shop-a", {
-    ...orderPlaced, order: { ...orderPlaced.order, status: "completed" },
-  }), WooCheckoutReplayConflict);
+  await assert.rejects(
+    producer.publish("shop-a", {
+      ...orderPlaced,
+      order: { ...orderPlaced.order, status: "completed" },
+    }),
+    WooCheckoutReplayConflict,
+  );
 });
 
 test("a concurrent conflicting retained job is rejected after BullMQ add", async () => {
   const queue = new OrderQueue();
-  queue.add = async (_name, data, options) => { queue.jobs.set(options.jobId, { ...data, contentDigest: "different" }); };
-  await assert.rejects(new WooOrderQueueProducer(queue).publish("shop-a", orderPlaced), WooCheckoutReplayConflict);
+  queue.add = async (_name, data, options) => {
+    queue.jobs.set(options.jobId, { ...data, contentDigest: "different" });
+  };
+  await assert.rejects(
+    new WooOrderQueueProducer(queue).publish("shop-a", orderPlaced),
+    WooCheckoutReplayConflict,
+  );
 });
 
 test("queue failures are retryable and never treated as durable acceptance", async () => {

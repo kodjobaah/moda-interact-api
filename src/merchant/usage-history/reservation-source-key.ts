@@ -1,8 +1,7 @@
 import { createRecoveryIdempotencyKey } from "@modainteract/moda-interact-shared/billing";
 
 export type RecoverySourceIdentity =
-  | { kind: "recovery"; id: string }
-  | { kind: "outreach"; id: string };
+  { kind: "recovery"; id: string } | { kind: "outreach"; id: string };
 
 export type ReservationSourceEvidence = {
   shopId: string;
@@ -30,11 +29,18 @@ export function recoverySourceFromReservationKey(
   reservation: ReservationSourceEvidence,
   shopId: string,
 ): RecoverySourceIdentity | null {
-  if (reservation.shopId !== shopId || typeof reservation.sourceKey !== "string") return null;
+  if (
+    reservation.shopId !== shopId ||
+    typeof reservation.sourceKey !== "string"
+  )
+    return null;
   let logicalSource = reservation.sourceKey;
   if (reservation.billingPeriodEntitlementCounterId !== null) {
     const periodCounter = reservation.billingPeriodEntitlementCounter;
-    if (periodCounter?.shopId !== shopId || periodCounter.counter !== "INCLUDED_RECOVERY_CREDITS") {
+    if (
+      periodCounter?.shopId !== shopId ||
+      periodCounter.counter !== "INCLUDED_RECOVERY_CREDITS"
+    ) {
       return null;
     }
     const prefix = `paid-included:${periodCounter.billingPeriodId}:`;
@@ -50,12 +56,20 @@ export function recoverySourceFromReservationKey(
   const outreachPrefix = "recovery-outreach:";
   if (suffix.startsWith(outreachPrefix)) {
     const id = suffix.slice(outreachPrefix.length);
-    if (!IDENTIFIER.test(id) || logicalSource !== createRecoveryIdempotencyKey(shopId, suffix)) return null;
+    if (
+      !IDENTIFIER.test(id) ||
+      logicalSource !== createRecoveryIdempotencyKey(shopId, suffix)
+    )
+      return null;
     return { kind: "outreach", id };
   }
   // Shared uses `recovery:h<16 hex>` for oversized keys. Such a key is not
   // reversible; even a coincidentally matching recovery ID must fail closed.
   if (/^h[0-9a-f]{16}$/i.test(suffix)) return null;
-  if (!IDENTIFIER.test(suffix) || logicalSource !== createRecoveryIdempotencyKey(shopId, suffix)) return null;
+  if (
+    !IDENTIFIER.test(suffix) ||
+    logicalSource !== createRecoveryIdempotencyKey(shopId, suffix)
+  )
+    return null;
   return { kind: "recovery", id: suffix };
 }

@@ -9,7 +9,10 @@ export type MessageModeration = {
   moderationStatus: PublicModerationDecision;
   moderationReasonCode: string | null;
 };
-const pending: MessageModeration = { moderationStatus: "PENDING", moderationReasonCode: null };
+const pending: MessageModeration = {
+  moderationStatus: "PENDING",
+  moderationReasonCode: null,
+};
 
 /** One bounded query for each 50-message page. Assessments are applicable only
  * when their digest matches the *currently persisted* message content and input kind.
@@ -23,7 +26,9 @@ export async function readMessageModeration(
 ): Promise<Map<string, MessageModeration>> {
   const result = new Map<string, MessageModeration>();
   if (!messageIds.length) return result;
-  const rows = await tx.$queryRaw<Array<{ messageId: string; decision: string; reasonCode: string | null }>>(Prisma.sql`
+  const rows = await tx.$queryRaw<
+    Array<{ messageId: string; decision: string; reasonCode: string | null }>
+  >(Prisma.sql`
     SELECT DISTINCT ON (a."conversationMessageId")
       a."conversationMessageId" AS "messageId", a."decision"::text AS "decision", a."reasonCode"
     FROM "whatsapp"."ConversationModerationAssessment" a
@@ -40,11 +45,19 @@ export async function readMessageModeration(
   for (const row of rows) {
     if (!messageIds.includes(row.messageId)) continue;
     const moderationStatus = publicModerationDecision(row.decision);
-    result.set(row.messageId, { moderationStatus,
-      moderationReasonCode: publicModerationReason(moderationStatus, row.reasonCode) });
+    result.set(row.messageId, {
+      moderationStatus,
+      moderationReasonCode: publicModerationReason(
+        moderationStatus,
+        row.reasonCode,
+      ),
+    });
   }
   return result;
 }
-export function messageModeration(id: string, byId: ReadonlyMap<string, MessageModeration>): MessageModeration {
+export function messageModeration(
+  id: string,
+  byId: ReadonlyMap<string, MessageModeration>,
+): MessageModeration {
   return byId.get(id) ?? pending;
 }

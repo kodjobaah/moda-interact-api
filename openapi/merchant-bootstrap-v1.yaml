@@ -103,7 +103,13 @@ components:
     StoreProfile:
       type: object
       additionalProperties: false
-      required: [activeCategory, pendingCategory, pendingSelectionGeneration, pendingSelectedAt]
+      required:
+        [
+          activeCategory,
+          pendingCategory,
+          pendingSelectionGeneration,
+          pendingSelectedAt,
+        ]
       properties:
         activeCategory:
           oneOf:

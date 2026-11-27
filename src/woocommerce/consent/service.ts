@@ -3,26 +3,52 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import { normalizeRecipientPhone } from "@modainteract/moda-interact-shared/identity";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
-import { WooConsentHttpError,
-  type WooConsentEvent, type WooConsentResult } from "./contract.js";
+import {
+  WooConsentHttpError,
+  type WooConsentEvent,
+  type WooConsentResult,
+} from "./contract.js";
 
 type Database = Pick<PrismaClient, "$transaction">;
 type Tx = Prisma.TransactionClient;
-type InstallationShop = { id: string; shopId: string; canonicalSiteUrl: string;
-  installationStatus: string; credentialVersion: number; revokedAt: Date | null;
-  domain: string; platform: string; shopStatus: string; shopifyShopId: string | null };
-type Phone = { id: string; customerId: string; whatsappCanonicalPhone: string | null;
-  whatsappConsentSource: string | null; whatsappConsentDecision: string;
-  whatsappConsentRevision: bigint; whatsappConsentDecisionSequence: bigint;
-  whatsappConsentProviderObservedAt: Date | null; whatsappNoContact: boolean;
-  whatsappNoContactReason: string | null };
-type Evidence = { payloadDigest: Uint8Array; decision: "GRANT" | "REVOKE";
-  phoneConsentRevision: bigint; decisionSequence: bigint };
+type InstallationShop = {
+  id: string;
+  shopId: string;
+  canonicalSiteUrl: string;
+  installationStatus: string;
+  credentialVersion: number;
+  revokedAt: Date | null;
+  domain: string;
+  platform: string;
+  shopStatus: string;
+  shopifyShopId: string | null;
+};
+type Phone = {
+  id: string;
+  customerId: string;
+  whatsappCanonicalPhone: string | null;
+  whatsappConsentSource: string | null;
+  whatsappConsentDecision: string;
+  whatsappConsentRevision: bigint;
+  whatsappConsentDecisionSequence: bigint;
+  whatsappConsentProviderObservedAt: Date | null;
+  whatsappNoContact: boolean;
+  whatsappNoContactReason: string | null;
+};
+type Evidence = {
+  payloadDigest: Uint8Array;
+  decision: "GRANT" | "REVOKE";
+  phoneConsentRevision: bigint;
+  decisionSequence: bigint;
+};
 const conflict = (code: string) => new WooConsentHttpError(409, code);
 
 /** Called *inside* the write transaction so a revoked/rotated installation
  * cannot race the initial HTTP bearer authentication. */
-async function verifyInstallation(tx: Tx, principal: WooInstallationPrincipal): Promise<void> {
+async function verifyInstallation(
+  tx: Tx,
+  principal: WooInstallationPrincipal,
+): Promise<void> {
   // One indexed JOIN with share locks on *both* rows. PostgreSQL rechecks
   // current row versions after competing disconnect/rotation transactions.
   const rows = await tx.$queryRaw<InstallationShop[]>(Prisma.sql`
@@ -36,22 +62,38 @@ async function verifyInstallation(tx: Tx, principal: WooInstallationPrincipal): 
     FOR SHARE OF s, i
   `);
   const row = rows[0];
-  if (!row || row.shopId !== principal.shopId ||
-    row.domain !== principal.canonicalSiteUrl || row.canonicalSiteUrl !== row.domain ||
-    row.platform !== "WOOCOMMERCE" || row.shopifyShopId !== null || row.shopStatus !== "ACTIVE" ||
+  if (
+    !row ||
+    row.shopId !== principal.shopId ||
+    row.domain !== principal.canonicalSiteUrl ||
+    row.canonicalSiteUrl !== row.domain ||
+    row.platform !== "WOOCOMMERCE" ||
+    row.shopifyShopId !== null ||
+    row.shopStatus !== "ACTIVE" ||
     row.credentialVersion !== principal.credentialVersion ||
-    row.installationStatus !== "ACTIVE" || row.revokedAt !== null) throw new WooUnauthenticatedError();
+    row.installationStatus !== "ACTIVE" ||
+    row.revokedAt !== null
+  )
+    throw new WooUnauthenticatedError();
 }
 
 /** Lock by authenticated merchant + exact E.164 recipient even on first insertion.
  * Hash collisions only cause extra serialisation, never cross-tenant access. */
-async function lockConsentKey(tx: Tx, shopId: string, key: string): Promise<void> {
+async function lockConsentKey(
+  tx: Tx,
+  shopId: string,
+  key: string,
+): Promise<void> {
   await tx.$queryRaw<Array<{ locked: number }>>(Prisma.sql`
     SELECT 1 AS "locked" FROM pg_advisory_xact_lock(hashtext(${shopId}), hashtext(${key}))
   `);
 }
 
-async function locatePhone(tx: Tx, shopId: string, digits: string): Promise<Phone | null> {
+async function locatePhone(
+  tx: Tx,
+  shopId: string,
+  digits: string,
+): Promise<Phone | null> {
   const result = await tx.$queryRaw<Phone[]>(Prisma.sql`
     SELECT cp."id", cp."customerId", cp."whatsappCanonicalPhone",
       cp."whatsappConsentSource"::text AS "whatsappConsentSource",
@@ -67,16 +109,27 @@ async function locatePhone(tx: Tx, shopId: string, digits: string): Promise<Phon
   `);
   if (result.length > 1) throw conflict("ambiguous_customer_phone");
   const phone = result[0];
-  if (phone?.whatsappCanonicalPhone && phone.whatsappCanonicalPhone !== digits) {
+  if (
+    phone?.whatsappCanonicalPhone &&
+    phone.whatsappCanonicalPhone !== digits
+  ) {
     throw conflict("recipient_mismatch");
   }
-  if (phone?.whatsappConsentSource && phone.whatsappConsentSource !== "WOO_MODA_CHECKBOX") {
+  if (
+    phone?.whatsappConsentSource &&
+    phone.whatsappConsentSource !== "WOO_MODA_CHECKBOX"
+  ) {
     throw conflict("consent_source_conflict");
   }
   return phone ?? null;
 }
 
-async function insertPhone(tx: Tx, shopId: string, digits: string, now: Date): Promise<Phone> {
+async function insertPhone(
+  tx: Tx,
+  shopId: string,
+  digits: string,
+  now: Date,
+): Promise<Phone> {
   const customerId = randomUUID();
   const phoneId = randomUUID();
   await tx.$executeRaw(Prisma.sql`
@@ -88,62 +141,100 @@ async function insertPhone(tx: Tx, shopId: string, digits: string, now: Date): P
       "whatsappPhoneVerifiedAt", "startedAt", "createdAt", "updatedAt")
     VALUES (${phoneId}, ${customerId}, ${`+${digits}`}, ${digits}, ${now}, ${now}, ${now}, ${now})
   `);
-  return { id: phoneId, customerId, whatsappCanonicalPhone: digits,
-    whatsappConsentSource: null, whatsappConsentDecision: "UNKNOWN",
-    whatsappConsentRevision: 0n, whatsappConsentDecisionSequence: 0n,
-    whatsappConsentProviderObservedAt: null, whatsappNoContact: false, whatsappNoContactReason: null };
+  return {
+    id: phoneId,
+    customerId,
+    whatsappCanonicalPhone: digits,
+    whatsappConsentSource: null,
+    whatsappConsentDecision: "UNKNOWN",
+    whatsappConsentRevision: 0n,
+    whatsappConsentDecisionSequence: 0n,
+    whatsappConsentProviderObservedAt: null,
+    whatsappNoContact: false,
+    whatsappNoContactReason: null,
+  };
 }
 
 /** No queue, outbox, checkout lookup, outbound message, billing or recovery model
  * is imported here. Consent is deliberately NOT a recovery work item. */
 export class WooConsentService {
-  constructor(private readonly database: Database, private readonly now: () => Date = () => new Date()) {}
+  constructor(
+    private readonly database: Database,
+    private readonly now: () => Date = () => new Date(),
+  ) {}
 
-  async record(principal: WooInstallationPrincipal, event: WooConsentEvent): Promise<WooConsentResult> {
+  async record(
+    principal: WooInstallationPrincipal,
+    event: WooConsentEvent,
+  ): Promise<WooConsentResult> {
     const normalized = normalizeRecipientPhone(`+${event.canonicalPhone}`);
     if (!normalized.ok || normalized.e164.slice(1) !== event.canonicalPhone) {
       throw new WooConsentHttpError(422, "recipient_mismatch");
     }
     const digest = createHash("sha256")
-      .update(JSON.stringify({ installationId: principal.installationId, event }))
+      .update(
+        JSON.stringify({ installationId: principal.installationId, event }),
+      )
       .digest();
     try {
-      return await this.database.$transaction(async tx => {
-        await verifyInstallation(tx, principal);
-        // Serialize the event identity before checking immutable evidence.
-        await lockConsentKey(tx, principal.shopId, `event:${event.eventId}`);
-        // An identical event remains idempotent after a later decision or STOP.
-        const existing = await tx.$queryRaw<Evidence[]>(Prisma.sql`
+      return await this.database.$transaction(
+        async (tx) => {
+          await verifyInstallation(tx, principal);
+          // Serialize the event identity before checking immutable evidence.
+          await lockConsentKey(tx, principal.shopId, `event:${event.eventId}`);
+          // An identical event remains idempotent after a later decision or STOP.
+          const existing = await tx.$queryRaw<Evidence[]>(Prisma.sql`
           SELECT "payloadDigest", "decision"::text AS "decision", "phoneConsentRevision", "decisionSequence"
           FROM "commerce"."WhatsAppConsentEvidence"
           WHERE "shopId" = ${principal.shopId} AND "eventId" = ${event.eventId} FOR SHARE
         `);
-        if (existing.length) {
-          const previous = existing[0]!;
-          if (!Buffer.from(previous.payloadDigest).equals(digest)) throw conflict("consent_event_replay_conflict");
-          return { schemaVersion: event.schemaVersion, status: "duplicate", decision: previous.decision,
-            consentRevision: previous.phoneConsentRevision.toString(),
-            decisionSequence: previous.decisionSequence.toString() };
-        }
-        // New events coordinate recipient state only after the replay fast path.
-        await lockConsentKey(tx, principal.shopId, `phone:${event.canonicalPhone}`);
-        const now = this.now();
-        const occurred = new Date(event.occurredAt);
-        // Woo validates the action timestamp, then the API bounds clock skew and
-        // insists that *accepted* decisions have increasing observed times.
-        if (occurred.getTime() > now.getTime() ||
-          (event.decision === "GRANT" && now.getTime() - occurred.getTime() > 300_000)) {
-          throw conflict("stale_consent_action");
-        }
-        const phone = await locatePhone(tx, principal.shopId, event.canonicalPhone) ??
-          await insertPhone(tx, principal.shopId, event.canonicalPhone, now);
-        if (phone.whatsappConsentProviderObservedAt &&
-          occurred <= phone.whatsappConsentProviderObservedAt) throw conflict("stale_consent_action");
-        const revision = phone.whatsappConsentRevision + 1n;
-        const sequence = phone.whatsappConsentDecisionSequence + 1n;
-        const decision = event.decision === "GRANT" ? "GRANTED" : "REVOKED";
-        // Do not touch whatsappNoContact / reason / revision / clearedAt.
-        await tx.$executeRaw(Prisma.sql`
+          if (existing.length) {
+            const previous = existing[0]!;
+            if (!Buffer.from(previous.payloadDigest).equals(digest))
+              throw conflict("consent_event_replay_conflict");
+            return {
+              schemaVersion: event.schemaVersion,
+              status: "duplicate",
+              decision: previous.decision,
+              consentRevision: previous.phoneConsentRevision.toString(),
+              decisionSequence: previous.decisionSequence.toString(),
+            };
+          }
+          // New events coordinate recipient state only after the replay fast path.
+          await lockConsentKey(
+            tx,
+            principal.shopId,
+            `phone:${event.canonicalPhone}`,
+          );
+          const now = this.now();
+          const occurred = new Date(event.occurredAt);
+          // Woo validates the action timestamp, then the API bounds clock skew and
+          // insists that *accepted* decisions have increasing observed times.
+          if (
+            occurred.getTime() > now.getTime() ||
+            (event.decision === "GRANT" &&
+              now.getTime() - occurred.getTime() > 300_000)
+          ) {
+            throw conflict("stale_consent_action");
+          }
+          const phone =
+            (await locatePhone(tx, principal.shopId, event.canonicalPhone)) ??
+            (await insertPhone(
+              tx,
+              principal.shopId,
+              event.canonicalPhone,
+              now,
+            ));
+          if (
+            phone.whatsappConsentProviderObservedAt &&
+            occurred <= phone.whatsappConsentProviderObservedAt
+          )
+            throw conflict("stale_consent_action");
+          const revision = phone.whatsappConsentRevision + 1n;
+          const sequence = phone.whatsappConsentDecisionSequence + 1n;
+          const decision = event.decision === "GRANT" ? "GRANTED" : "REVOKED";
+          // Do not touch whatsappNoContact / reason / revision / clearedAt.
+          await tx.$executeRaw(Prisma.sql`
           UPDATE "commerce"."CustomerPhone" SET
             "whatsappCanonicalPhone" = ${event.canonicalPhone},
             "whatsappPhoneVerifiedAt" = ${now},
@@ -155,7 +246,7 @@ export class WooConsentService {
             "whatsappConsentDecisionSequence" = ${sequence}, "updatedAt" = ${now}
           WHERE "id" = ${phone.id} AND "customerId" = ${phone.customerId} AND "endedAt" IS NULL
         `);
-        await tx.$executeRaw(Prisma.sql`
+          await tx.$executeRaw(Prisma.sql`
           INSERT INTO "commerce"."WhatsAppConsentEvidence"
             ("id", "shopId", "installationId", "eventId", "payloadDigest", "customerId",
              "customerPhoneId", "canonicalPhone", "decision", "decisionSequence",
@@ -166,14 +257,29 @@ export class WooConsentService {
             ${sequence}, ${revision}, ${occurred}, ${event.disclosure?.text ?? null},
             ${event.disclosure?.version ?? null}, ${event.disclosure?.locale ?? null})
         `);
-        return { schemaVersion: event.schemaVersion, status: "recorded", decision: event.decision,
-          consentRevision: revision.toString(), decisionSequence: sequence.toString() };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 10_000 });
+          return {
+            schemaVersion: event.schemaVersion,
+            status: "recorded",
+            decision: event.decision,
+            consentRevision: revision.toString(),
+            decisionSequence: sequence.toString(),
+          };
+        },
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+          timeout: 10_000,
+        },
+      );
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError &&
-        ["P2002", "P2034"].includes(error.code)) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        ["P2002", "P2034"].includes(error.code)
+      ) {
         const mapped = conflict("consent_write_conflict");
-        Object.defineProperty(mapped, "cause", { value: error, configurable: true });
+        Object.defineProperty(mapped, "cause", {
+          value: error,
+          configurable: true,
+        });
         throw mapped;
       }
       throw error;

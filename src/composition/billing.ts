@@ -20,34 +20,54 @@ export function createBillingRoutes(options: {
   authenticator: WooInstallationAuthenticator;
   logger: StructuredLogger;
   wooBilling: RuntimeConfig["wooBilling"];
-  platformConfiguration?: Pick<ApiPlatformConfigurationReader, "requireWooBillingCredentials">;
+  platformConfiguration?: Pick<
+    ApiPlatformConfigurationReader,
+    "requireWooBillingCredentials"
+  >;
 }): readonly ApiRouteHandler[] {
   const { prisma, authenticator, logger, wooBilling } = options;
-  const resolveWooBillingClient = wooBilling ? async () => {
-    if (!options.platformConfiguration) throw new Error("billing_configuration_unavailable");
-    // Fetch one atomic credential pair on each command; no provider call inside a DB transaction.
-    const credentials = await options.platformConfiguration.requireWooBillingCredentials();
-    return new WooBillingClient({ ...wooBilling, ...credentials });
-  } : undefined;
+  const resolveWooBillingClient = wooBilling
+    ? async () => {
+        if (!options.platformConfiguration)
+          throw new Error("billing_configuration_unavailable");
+        // Fetch one atomic credential pair on each command; no provider call inside a DB transaction.
+        const credentials =
+          await options.platformConfiguration.requireWooBillingCredentials();
+        return new WooBillingClient({ ...wooBilling, ...credentials });
+      }
+    : undefined;
   return [
     createWooPurchaseHistoryRoute({
-      authenticator, service: new WooPurchaseHistoryReadService(prisma), logger,
+      authenticator,
+      service: new WooPurchaseHistoryReadService(prisma),
+      logger,
     }),
     createBillingReadRoutes({
       billingReadService: new BillingPresentationReadService(prisma),
-      billingPlanCatalogueReadService: new BillingPlanCatalogueReadService(prisma, logger),
+      billingPlanCatalogueReadService: new BillingPlanCatalogueReadService(
+        prisma,
+        logger,
+      ),
       authenticator,
       logger,
     }),
     createBillingCommandRoutes({
-      ...(resolveWooBillingClient && wooBilling ? {
-        recurringSubscriptionCommandService: new RecurringSubscriptionCommandService(
-          prisma, resolveWooBillingClient, wooBilling.environment,
-        ),
-        recoveryCreditPurchaseCommandService: new RecoveryCreditPurchaseCommandService(
-          prisma, resolveWooBillingClient, wooBilling.environment,
-        ),
-      } : {}),
+      ...(resolveWooBillingClient && wooBilling
+        ? {
+            recurringSubscriptionCommandService:
+              new RecurringSubscriptionCommandService(
+                prisma,
+                resolveWooBillingClient,
+                wooBilling.environment,
+              ),
+            recoveryCreditPurchaseCommandService:
+              new RecoveryCreditPurchaseCommandService(
+                prisma,
+                resolveWooBillingClient,
+                wooBilling.environment,
+              ),
+          }
+        : {}),
       authenticator,
       logger,
     }),

@@ -2,11 +2,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import type { ApiRouteHandler } from "../../../http/route-handler.js";
 import { WooBillingWebhookError } from "./webhook-errors.js";
-import { parseWooBillingWebhookPayload, validateWooBillingWebhookTopic } from "./webhook-payload.js";
+import {
+  parseWooBillingWebhookPayload,
+  validateWooBillingWebhookTopic,
+} from "./webhook-payload.js";
 import { WooBillingWebhookReceiptService } from "./webhook-receipt.service.js";
 import { verifyWooWebhookSignature } from "./webhook-signature.js";
 
-export const WOO_BILLING_WEBHOOK_ROUTE_PATH = "/v1/billing/webhooks/woocommerce";
+export const WOO_BILLING_WEBHOOK_ROUTE_PATH =
+  "/v1/billing/webhooks/woocommerce";
 export const MAX_WOO_BILLING_WEBHOOK_BODY_BYTES = 262144;
 
 interface WooBillingWebhookRouteOptions {
@@ -24,7 +28,11 @@ export function createWooBillingWebhookRoute({
   return {
     async handle(request, response) {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
-      if (requestUrl.pathname !== WOO_BILLING_WEBHOOK_ROUTE_PATH || request.method !== "POST") return false;
+      if (
+        requestUrl.pathname !== WOO_BILLING_WEBHOOK_ROUTE_PATH ||
+        request.method !== "POST"
+      )
+        return false;
 
       try {
         assertDeclaredBodyLength(request);
@@ -41,16 +49,26 @@ export function createWooBillingWebhookRoute({
           signingSecret = await resolveApiSecret?.();
         } catch (error) {
           // Preserve the cause for diagnostics while keeping the response and fail-closed behaviour unchanged.
-          throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable", error);
+          throw new WooBillingWebhookError(
+            503,
+            "webhook_acceptance_unavailable",
+            error,
+          );
         }
-        if (!signingSecret) throw new WooBillingWebhookError(503, "webhook_acceptance_unavailable");
+        if (!signingSecret)
+          throw new WooBillingWebhookError(
+            503,
+            "webhook_acceptance_unavailable",
+          );
 
         if (!verifyWooWebhookSignature(rawBody, signatures[0], signingSecret)) {
           throw new WooBillingWebhookError(401, "invalid_webhook_signature");
         }
 
         const topicHeaders = rawHeaderValues(request, "x-wc-webhook-topic");
-        const topic = validateWooBillingWebhookTopic(topicHeaders.length === 1 ? topicHeaders[0] : undefined);
+        const topic = validateWooBillingWebhookTopic(
+          topicHeaders.length === 1 ? topicHeaders[0] : undefined,
+        );
         const payload = parseWooBillingWebhookPayload(rawBody, topic);
         const persisted = await receiptService.persist({ ...payload, rawBody });
         logger.info("billing.woocommerce_webhook.accepted", {
@@ -62,13 +80,19 @@ export function createWooBillingWebhookRoute({
         response.writeHead(204, { "cache-control": "no-store" });
         response.end();
       } catch (error) {
-        const failure = error instanceof WooBillingWebhookError
-          ? error
-          : new WooBillingWebhookError(422, "invalid_webhook_payload");
-        if (failure.code === "webhook_acceptance_unavailable" || failure.code === "webhook_receipt_integrity_error") {
-          logger.error("billing.woocommerce_webhook.failed", { reason: failure.code,
+        const failure =
+          error instanceof WooBillingWebhookError
+            ? error
+            : new WooBillingWebhookError(422, "invalid_webhook_payload");
+        if (
+          failure.code === "webhook_acceptance_unavailable" ||
+          failure.code === "webhook_receipt_integrity_error"
+        ) {
+          logger.error("billing.woocommerce_webhook.failed", {
+            reason: failure.code,
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
@@ -86,7 +110,9 @@ function assertContentType(request: IncomingMessage): void {
   if (
     values.length !== 1 ||
     !contentType ||
-    !/^application\/json(?:\s*;\s*charset\s*=\s*(?:"[^"]+"|[^;\s]+))?\s*$/i.test(contentType)
+    !/^application\/json(?:\s*;\s*charset\s*=\s*(?:"[^"]+"|[^;\s]+))?\s*$/i.test(
+      contentType,
+    )
   ) {
     throw new WooBillingWebhookError(415, "unsupported_webhook_content_type");
   }
@@ -94,17 +120,29 @@ function assertContentType(request: IncomingMessage): void {
 
 function assertContentEncoding(request: IncomingMessage): void {
   const values = rawHeaderValues(request, "content-encoding");
-  if (values.length > 1 || (values.length === 1 && values[0]?.trim().toLowerCase() !== "identity")) {
-    throw new WooBillingWebhookError(415, "unsupported_webhook_content_encoding");
+  if (
+    values.length > 1 ||
+    (values.length === 1 && values[0]?.trim().toLowerCase() !== "identity")
+  ) {
+    throw new WooBillingWebhookError(
+      415,
+      "unsupported_webhook_content_encoding",
+    );
   }
 }
 
 function assertDeclaredBodyLength(request: IncomingMessage): void {
   const values = rawHeaderValues(request, "content-length");
-  if (values.length > 1 || (values.length === 1 && !/^\d+$/.test(values[0] ?? ""))) {
+  if (
+    values.length > 1 ||
+    (values.length === 1 && !/^\d+$/.test(values[0] ?? ""))
+  ) {
     throw new WooBillingWebhookError(422, "invalid_webhook_payload");
   }
-  if (values.length === 1 && Number(values[0]) > MAX_WOO_BILLING_WEBHOOK_BODY_BYTES) {
+  if (
+    values.length === 1 &&
+    Number(values[0]) > MAX_WOO_BILLING_WEBHOOK_BODY_BYTES
+  ) {
     throw new WooBillingWebhookError(413, "webhook_payload_too_large");
   }
 }
@@ -142,7 +180,9 @@ function readBoundedRawBody(request: IncomingMessage): Promise<Buffer> {
       const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
       size += bytes.length;
       if (size > MAX_WOO_BILLING_WEBHOOK_BODY_BYTES) {
-        rejectOnce(new WooBillingWebhookError(413, "webhook_payload_too_large"));
+        rejectOnce(
+          new WooBillingWebhookError(413, "webhook_payload_too_large"),
+        );
         return;
       }
       chunks.push(bytes);
@@ -153,8 +193,10 @@ function readBoundedRawBody(request: IncomingMessage): Promise<Buffer> {
       cleanup();
       resolve(Buffer.concat(chunks));
     };
-    const onAbort = () => rejectOnce(new WooBillingWebhookError(422, "invalid_webhook_payload"));
-    const onError = () => rejectOnce(new WooBillingWebhookError(422, "invalid_webhook_payload"));
+    const onAbort = () =>
+      rejectOnce(new WooBillingWebhookError(422, "invalid_webhook_payload"));
+    const onError = () =>
+      rejectOnce(new WooBillingWebhookError(422, "invalid_webhook_payload"));
     request.on("data", onData);
     request.once("end", onEnd);
     request.once("aborted", onAbort);
@@ -162,7 +204,11 @@ function readBoundedRawBody(request: IncomingMessage): Promise<Buffer> {
   });
 }
 
-function sendError(response: ServerResponse, statusCode: number, code: string): void {
+function sendError(
+  response: ServerResponse,
+  statusCode: number,
+  code: string,
+): void {
   if (response.destroyed || response.headersSent) return;
   response.writeHead(statusCode, {
     "cache-control": "no-store",

@@ -4,81 +4,222 @@ import { MerchantKnowledgeReadService } from "../../../../src/merchant/merchant-
 import { MerchantKnowledgeReadError } from "../../../../src/merchant/merchant-knowledge/contract.js";
 import type { KnowledgeTimings } from "../../../../src/merchant/merchant-knowledge/timing.js";
 
-const principal = { shopId: "shop-woo", installationId: "install-woo", canonicalSiteUrl: "https://woo.example",
-  credentialVersion: 3 };
-const configuration = { schemaVersion: 1, maxKnowledgeSources: 1, maxContentUnitsPerSource: 1500,
-  allowedSourceTypes: [{ purposeKey: "FAQ", dataFormatKey: "WEB_PAGE" }, { purposeKey: "PRODUCT_INFORMATION", dataFormatKey: "CSV" }] };
+const principal = {
+  shopId: "shop-woo",
+  installationId: "install-woo",
+  canonicalSiteUrl: "https://woo.example",
+  credentialVersion: 3,
+};
+const configuration = {
+  schemaVersion: 1,
+  maxKnowledgeSources: 1,
+  maxContentUnitsPerSource: 1500,
+  allowedSourceTypes: [
+    { purposeKey: "FAQ", dataFormatKey: "WEB_PAGE" },
+    { purposeKey: "PRODUCT_INFORMATION", dataFormatKey: "CSV" },
+  ],
+};
 const purpose = { key: "FAQ", displayName: "FAQ", active: true };
 const webFormat = { key: "WEB_PAGE", displayName: "Web page", active: true };
-function row(index: number, options: { purpose?: typeof purpose; format?: typeof webFormat; status?: string } = {}) {
-  return { id: `source-${index}`, name: `Source ${index}`, position: index, languageTag: "en", currentGeneration: 2,
-    purpose: options.purpose ?? purpose, dataFormat: options.format ?? webFormat,
-    revisions: [{ id: `latest-${index}`, generation: 2, reason: "REFRESH", status: options.status ?? "FAILED",
-      requestedUrl: "https://example.org/help?signature=SECRET#private",
-      resolvedUrl: "https://bucket.r2.dev/object-key?signature=SECRET", contentUnits: null, truncated: false,
-      fetchedAt: null, completedAt: null, failureCode: "PROVIDER_SECRET=https://example.org/private",
-      uploadedAsset: null }],
+function row(
+  index: number,
+  options: {
+    purpose?: typeof purpose;
+    format?: typeof webFormat;
+    status?: string;
+  } = {},
+) {
+  return {
+    id: `source-${index}`,
+    name: `Source ${index}`,
+    position: index,
+    languageTag: "en",
+    currentGeneration: 2,
+    purpose: options.purpose ?? purpose,
+    dataFormat: options.format ?? webFormat,
+    revisions: [
+      {
+        id: `latest-${index}`,
+        generation: 2,
+        reason: "REFRESH",
+        status: options.status ?? "FAILED",
+        requestedUrl: "https://example.org/help?signature=SECRET#private",
+        resolvedUrl: "https://bucket.r2.dev/object-key?signature=SECRET",
+        contentUnits: null,
+        truncated: false,
+        fetchedAt: null,
+        completedAt: null,
+        failureCode: "PROVIDER_SECRET=https://example.org/private",
+        uploadedAsset: null,
+      },
+    ],
   };
 }
-function fake(options: { mapping?: unknown; preference?: boolean; feature?: boolean; count?: number;
-  rows?: ReturnType<typeof row>[]; active?: boolean; platform?: string; version?: number; fail?: boolean } = {}) {
+function fake(
+  options: {
+    mapping?: unknown;
+    preference?: boolean;
+    feature?: boolean;
+    count?: number;
+    rows?: ReturnType<typeof row>[];
+    active?: boolean;
+    platform?: string;
+    version?: number;
+    fail?: boolean;
+  } = {},
+) {
   const calls: Array<{ name: string; args?: unknown }> = [];
-  const track = (name: string, args?: unknown) => { calls.push({ name, args }); };
+  const track = (name: string, args?: unknown) => {
+    calls.push({ name, args });
+  };
   const sources = options.rows ?? [row(1), row(2)];
   const delegates = {
-    shop: { findUnique: async (args: unknown) => {
-      track("shop", args);
-      return { id: principal.shopId, domain: principal.canonicalSiteUrl, platform: options.platform ?? "WOOCOMMERCE",
-        shopifyShopId: null, status: "ACTIVE", defaultLanguageTag: "en" };
-    } },
-    wooCommerceInstallation: { findUnique: async (args: unknown) => {
-      track("installation", args);
-      return { id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl,
-        credentialVersion: options.version ?? 3, status: "ACTIVE", revokedAt: null };
-    } },
-    subscription: { findUnique: async (args: unknown) => {
-      track("subscription", args);
-      return { status: "ACTIVE", planId: "plan-1", plan: { active: true,
-        features: options.mapping === null ? [] : [{ featureId: "feature-1", configuration: options.mapping ?? configuration }] } };
-    } },
-    feature: { findUnique: async () => options.feature === false ? null : { id: "feature-1", active: true, activationMode: "MERCHANT_OPT_IN" } },
-    shopFeaturePreference: { findUnique: async () => ({ enabled: options.preference ?? false }) },
-    merchantKnowledgeSource: {
-      count: async (args: { where: { OR?: unknown[]; position?: { lte: number } } }) => {
-        track("count", args);
-        if (options.fail) throw new Error("raw DB connection string secret");
-        return args.where.OR ? args.where.position ? 0 : (options.count ?? sources.length) : (options.count ?? sources.length);
-      },
-      findMany: async (args: { where: { shopId: string; position?: { gt: number } }; take: number }) => {
-        track("sources", args);
-        return sources.filter((source) => source.position > (args.where.position?.gt ?? -1)).slice(0, args.take);
+    shop: {
+      findUnique: async (args: unknown) => {
+        track("shop", args);
+        return {
+          id: principal.shopId,
+          domain: principal.canonicalSiteUrl,
+          platform: options.platform ?? "WOOCOMMERCE",
+          shopifyShopId: null,
+          status: "ACTIVE",
+          defaultLanguageTag: "en",
+        };
       },
     },
-    merchantKnowledgePurposeDataFormat: { findMany: async (args: unknown) => {
-      track("catalogue", args);
-      return [{ purpose: { key: "FAQ", displayName: "FAQ" }, dataFormat: { key: "WEB_PAGE", displayName: "Web page",
-        inputKind: "REMOTE_URL", canonicalExtension: null, acceptedContentTypes: ["text/html"] } },
-        { purpose: { key: "PRODUCT_INFORMATION", displayName: "Products" }, dataFormat: { key: "CSV", displayName: "CSV",
-          inputKind: "UPLOAD", canonicalExtension: ".csv", acceptedContentTypes: ["text/csv"] } }];
-    } },
+    wooCommerceInstallation: {
+      findUnique: async (args: unknown) => {
+        track("installation", args);
+        return {
+          id: principal.installationId,
+          shopId: principal.shopId,
+          canonicalSiteUrl: principal.canonicalSiteUrl,
+          credentialVersion: options.version ?? 3,
+          status: "ACTIVE",
+          revokedAt: null,
+        };
+      },
+    },
+    subscription: {
+      findUnique: async (args: unknown) => {
+        track("subscription", args);
+        return {
+          status: "ACTIVE",
+          planId: "plan-1",
+          plan: {
+            active: true,
+            features:
+              options.mapping === null
+                ? []
+                : [
+                    {
+                      featureId: "feature-1",
+                      configuration: options.mapping ?? configuration,
+                    },
+                  ],
+          },
+        };
+      },
+    },
+    feature: {
+      findUnique: async () =>
+        options.feature === false
+          ? null
+          : {
+              id: "feature-1",
+              active: true,
+              activationMode: "MERCHANT_OPT_IN",
+            },
+    },
+    shopFeaturePreference: {
+      findUnique: async () => ({ enabled: options.preference ?? false }),
+    },
+    merchantKnowledgeSource: {
+      count: async (args: {
+        where: { OR?: unknown[]; position?: { lte: number } };
+      }) => {
+        track("count", args);
+        if (options.fail) throw new Error("raw DB connection string secret");
+        return args.where.OR
+          ? args.where.position
+            ? 0
+            : (options.count ?? sources.length)
+          : (options.count ?? sources.length);
+      },
+      findMany: async (args: {
+        where: { shopId: string; position?: { gt: number } };
+        take: number;
+      }) => {
+        track("sources", args);
+        return sources
+          .filter((source) => source.position > (args.where.position?.gt ?? -1))
+          .slice(0, args.take);
+      },
+    },
+    merchantKnowledgePurposeDataFormat: {
+      findMany: async (args: unknown) => {
+        track("catalogue", args);
+        return [
+          {
+            purpose: { key: "FAQ", displayName: "FAQ" },
+            dataFormat: {
+              key: "WEB_PAGE",
+              displayName: "Web page",
+              inputKind: "REMOTE_URL",
+              canonicalExtension: null,
+              acceptedContentTypes: ["text/html"],
+            },
+          },
+          {
+            purpose: { key: "PRODUCT_INFORMATION", displayName: "Products" },
+            dataFormat: {
+              key: "CSV",
+              displayName: "CSV",
+              inputKind: "UPLOAD",
+              canonicalExtension: ".csv",
+              acceptedContentTypes: ["text/csv"],
+            },
+          },
+        ];
+      },
+    },
     merchantKnowledgeSourceRevision: {
       groupBy: async (args: unknown) => {
         track("activeGroup", args);
-        return options.active ? [{ sourceId: "source-1", _max: { generation: 1 } }] : [];
+        return options.active
+          ? [{ sourceId: "source-1", _max: { generation: 1 } }]
+          : [];
       },
       findMany: async (args: unknown) => {
         track("activeRevisions", args);
-        return [{ id: "older-active", sourceId: "source-1", generation: 1, contentUnits: 42, truncated: false,
-          fetchedAt: new Date("2026-10-14T00:00:00.000Z") }];
+        return [
+          {
+            id: "older-active",
+            sourceId: "source-1",
+            generation: 1,
+            contentUnits: 42,
+            truncated: false,
+            fetchedAt: new Date("2026-10-14T00:00:00.000Z"),
+          },
+        ];
       },
     },
   };
   // A regression to an interactive read transaction must fail even with fake delegates.
-  const database = { ...delegates, $transaction: () => {
-    track("transaction");
-    throw new Error("Merchant Knowledge GET must never open a database transaction");
-  } };
-  return { service: new MerchantKnowledgeReadService(database as never, "1024"), calls, database };
+  const database = {
+    ...delegates,
+    $transaction: () => {
+      track("transaction");
+      throw new Error(
+        "Merchant Knowledge GET must never open a database transaction",
+      );
+    },
+  };
+  return {
+    service: new MerchantKnowledgeReadService(database as never, "1024"),
+    calls,
+    database,
+  };
 }
 
 test("entitled, preference-off read returns existing capacity, correct dormant states, and safe revision projections", async () => {
@@ -101,12 +242,18 @@ test("entitled, preference-off read returns existing capacity, correct dormant s
   assert.equal(result.sources[0]?.revision?.generation, 2);
   assert.equal(result.sources[0]?.activeRevision?.generation, 1);
   assert.equal(result.sources[0]?.revision?.activeContentUnits, 42);
-  assert.equal(result.sources[0]?.revision?.requestedUrl, "https://example.org/help");
+  assert.equal(
+    result.sources[0]?.revision?.requestedUrl,
+    "https://example.org/help",
+  );
   assert.equal(result.sources[0]?.revision?.resolvedUrl, null);
   assert.equal(result.sources[0]?.revision?.failureCode, null);
   assert.equal(result.catalogue.length, 2);
   assert.equal(result.supportedLanguageTags.length, 20);
-  assert.equal(calls.some(({ name }) => name === "transaction"), false);
+  assert.equal(
+    calls.some(({ name }) => name === "transaction"),
+    false,
+  );
   assert.ok(calls.some(({ name }) => name === "shop"));
   assert.ok(calls.some(({ name }) => name === "installation"));
   assert.equal(JSON.stringify(result).includes("SECRET"), false);
@@ -131,12 +278,20 @@ test("public revision failure codes are strictly allowlisted, never inferred fro
     source.revisions[0]!.failureCode = failureCode;
     const response = await fake({ rows: [source] }).service.read(principal);
     const serialized = JSON.stringify(response);
-    assert.equal(response.sources[0]?.revision?.failureCode, expected, failureCode);
+    assert.equal(
+      response.sources[0]?.revision?.failureCode,
+      expected,
+      failureCode,
+    );
     if (expected === null) {
       assert.equal(serialized.includes(failureCode), false, failureCode);
       assert.match(serialized, /"failureCode":null/);
     } else {
-      assert.equal(serialized.includes(`"failureCode":"${expected}"`), true, failureCode);
+      assert.equal(
+        serialized.includes(`"failureCode":"${expected}"`),
+        true,
+        failureCode,
+      );
     }
   }
 });
@@ -157,15 +312,29 @@ test("without entitlement preserve existing sources without leaking prior plan c
   assert.equal(result.configuredCount, 2);
   assert.equal(result.maxKnowledgeSources, 0);
   assert.deepEqual(result.catalogue, []);
-  assert.deepEqual(result.sources.map((source) => source.dormantReason), ["NO_CURRENT_PLAN", "NO_CURRENT_PLAN"]);
-  assert.equal(calls.some(({ name }) => name === "catalogue"), false);
+  assert.deepEqual(
+    result.sources.map((source) => source.dormantReason),
+    ["NO_CURRENT_PLAN", "NO_CURRENT_PLAN"],
+  );
+  assert.equal(
+    calls.some(({ name }) => name === "catalogue"),
+    false,
+  );
 });
 
 test("filters disabled or unapproved source pairs, retains their lifecycle as SOURCE_TYPE", async () => {
-  const unsupported = row(1, { format: { ...webFormat, key: "XLSX", active: true } });
+  const unsupported = row(1, {
+    format: { ...webFormat, key: "XLSX", active: true },
+  });
   const disabled = row(2, { purpose: { ...purpose, active: false } });
-  const out = await fake({ rows: [unsupported, disabled], preference: true }).service.read(principal);
-  assert.deepEqual(out.sources.map((source) => source.dormantReason), ["SOURCE_TYPE", "SOURCE_TYPE"]);
+  const out = await fake({
+    rows: [unsupported, disabled],
+    preference: true,
+  }).service.read(principal);
+  assert.deepEqual(
+    out.sources.map((source) => source.dormantReason),
+    ["SOURCE_TYPE", "SOURCE_TYPE"],
+  );
 });
 
 test("returns bounded pages using shop-owned position cursor", async () => {
@@ -184,51 +353,85 @@ test("returns bounded pages using shop-owned position cursor", async () => {
 test("rejects revoked/rotated or non-Woo tenant identity and never reads its source rows", async () => {
   for (const options of [{ platform: "SHOPIFY" }, { version: 4 }]) {
     const { service, calls } = fake(options);
-    await assert.rejects(() => service.read(principal), (error: unknown) =>
-      error instanceof MerchantKnowledgeReadError && error.status === 409);
-    assert.equal(calls.some(({ name }) => name === "sources"), false);
+    await assert.rejects(
+      () => service.read(principal),
+      (error: unknown) =>
+        error instanceof MerchantKnowledgeReadError && error.status === 409,
+    );
+    assert.equal(
+      calls.some(({ name }) => name === "sources"),
+      false,
+    );
   }
 });
 
 test("invalid plan schema and database failures are explicit unavailable, not unentitled", async () => {
-  for (const options of [{ mapping: { ...configuration, maxKnowledgeSources: 0 } }, { fail: true }]) {
-    await assert.rejects(() => fake(options).service.read(principal), (error: unknown) =>
-      error instanceof MerchantKnowledgeReadError && error.status === 503 &&
-      error.code === "merchant_knowledge_unavailable");
+  for (const options of [
+    { mapping: { ...configuration, maxKnowledgeSources: 0 } },
+    { fail: true },
+  ]) {
+    await assert.rejects(
+      () => fake(options).service.read(principal),
+      (error: unknown) =>
+        error instanceof MerchantKnowledgeReadError &&
+        error.status === 503 &&
+        error.code === "merchant_knowledge_unavailable",
+    );
   }
 });
 
 test("invalid query bounds and absent upload configuration do not enable writes", async () => {
   const data = fake();
-  await assert.rejects(() => data.service.read(principal, -1), (error: unknown) =>
-    error instanceof MerchantKnowledgeReadError && error.status === 400);
+  await assert.rejects(
+    () => data.service.read(principal, -1),
+    (error: unknown) =>
+      error instanceof MerchantKnowledgeReadError && error.status === 400,
+  );
   // An omitted upload policy affects only upload size, not source/catalogue reads.
   const service = new MerchantKnowledgeReadService(data.database as never);
   const result = await service.read(principal);
   assert.equal(result.maxUploadBytes, 0);
   assert.equal(result.catalogue.length, 2);
   assert.equal(result.sources.length, 2);
-  assert.equal(data.calls.some(({ name }) => name === "transaction"), false);
+  assert.equal(
+    data.calls.some(({ name }) => name === "transaction"),
+    false,
+  );
 });
-
 
 test("read service records safe timings for configuration, shop checks, queries and active revisions", async () => {
   const timings: KnowledgeTimings = {};
   await fake({ active: true }).service.read(principal, null, timings);
-  for (const phase of ["configurationMs", "shopValidationMs", "entitlementAndCountMs",
-    "sourceQueriesMs", "activeRevisionsMs"] as const) {
+  for (const phase of [
+    "configurationMs",
+    "shopValidationMs",
+    "entitlementAndCountMs",
+    "sourceQueriesMs",
+    "activeRevisionsMs",
+  ] as const) {
     assert.equal(typeof timings[phase], "number", phase);
     assert.ok(Number.isFinite(timings[phase]), phase);
     assert.ok(timings[phase]! >= 0, phase);
   }
-  assert.deepEqual(Object.keys(timings).sort(), ["configurationMs", "shopValidationMs", "entitlementAndCountMs",
-    "sourceQueriesMs", "activeRevisionsMs"].sort());
+  assert.deepEqual(
+    Object.keys(timings).sort(),
+    [
+      "configurationMs",
+      "shopValidationMs",
+      "entitlementAndCountMs",
+      "sourceQueriesMs",
+      "activeRevisionsMs",
+    ].sort(),
+  );
 });
 
 test("read service retains timing for a failing database phase without exposing its error", async () => {
   const timings: KnowledgeTimings = {};
-  await assert.rejects(() => fake({ fail: true }).service.read(principal, null, timings),
-    (error: unknown) => error instanceof MerchantKnowledgeReadError && error.status === 503);
+  await assert.rejects(
+    () => fake({ fail: true }).service.read(principal, null, timings),
+    (error: unknown) =>
+      error instanceof MerchantKnowledgeReadError && error.status === 503,
+  );
   assert.equal(typeof timings.entitlementAndCountMs, "number");
   assert.equal(timings.sourceQueriesMs, undefined);
 });

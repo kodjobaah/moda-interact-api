@@ -22,19 +22,41 @@ async function main(): Promise<void> {
     const database = createDatabase(config.databaseUrl);
     const authenticator = new WooInstallationAuthenticator(database.prisma);
     const platformConfiguration = createApiPlatformConfigurationReader({
-      prisma: database.prisma, environment: config.environment, logger,
+      prisma: database.prisma,
+      environment: config.environment,
+      logger,
     });
-    const supportTranslations = new MerchantSupportTranslationDispatcher(process.env.REDIS_URL, logger);
+    const supportTranslations = new MerchantSupportTranslationDispatcher(
+      process.env.REDIS_URL,
+      logger,
+    );
     const merchant = createMerchantRoutes({
-      prisma: database.prisma, authenticator, logger, environment: config.environment, platformConfiguration,
+      prisma: database.prisma,
+      authenticator,
+      logger,
+      environment: config.environment,
+      platformConfiguration,
       supportTranslationDispatch: supportTranslations,
     });
     const billing = createBillingRoutes({
-      prisma: database.prisma, authenticator, logger, wooBilling: config.wooBilling, platformConfiguration,
+      prisma: database.prisma,
+      authenticator,
+      logger,
+      wooBilling: config.wooBilling,
+      platformConfiguration,
     });
-    const activityQueues = createWooCheckoutRedisProducer(process.env.REDIS_URL);
-    const woo = createWooRoutes({ prisma: database.prisma, config, authenticator, logger, platformConfiguration,
-      checkoutPublisher: activityQueues.publisher, orderPublisher: activityQueues.orderPublisher });
+    const activityQueues = createWooCheckoutRedisProducer(
+      process.env.REDIS_URL,
+    );
+    const woo = createWooRoutes({
+      prisma: database.prisma,
+      config,
+      authenticator,
+      logger,
+      platformConfiguration,
+      checkoutPublisher: activityQueues.publisher,
+      orderPublisher: activityQueues.orderPublisher,
+    });
     const handlers = composeApiRoutes({
       ...(woo.restRead ? { wooRestRead: woo.restRead } : {}),
       wooBillingWebhook: woo.billingWebhook,
@@ -48,13 +70,23 @@ async function main(): Promise<void> {
       billing,
       wooInstallation: woo.installation,
     });
-    const runtime = createApiRuntime(config, database, logger, handlers, async () => {
-      await Promise.all([activityQueues.close(),supportTranslations.close()]);
-    });
+    const runtime = createApiRuntime(
+      config,
+      database,
+      logger,
+      handlers,
+      async () => {
+        await Promise.all([
+          activityQueues.close(),
+          supportTranslations.close(),
+        ]);
+      },
+    );
     registerShutdownHandlers(runtime);
     await runtime.start();
   } catch (error) {
-    logger.error("api.startup.failed", { error,
+    logger.error("api.startup.failed", {
+      error,
       errorName: error instanceof Error ? error.name : typeof error,
       errorMessage: error instanceof Error ? error.message : String(error),
       errorStack: error instanceof Error ? error.stack : undefined,

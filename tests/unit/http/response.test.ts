@@ -9,8 +9,12 @@ function fixture(options: { destroyed?: boolean; headersSent?: boolean } = {}) {
   const response = {
     destroyed: options.destroyed ?? false,
     headersSent: options.headersSent ?? false,
-    writeHead(status: number, headers: Record<string, string>) { calls.push({ status, headers }); },
-    end(body: string) { bodies.push(body); },
+    writeHead(status: number, headers: Record<string, string>) {
+      calls.push({ status, headers });
+    },
+    end(body: string) {
+      bodies.push(body);
+    },
   } as unknown as ServerResponse;
   return { response, calls, bodies };
 }
@@ -18,14 +22,16 @@ function fixture(options: { destroyed?: boolean; headersSent?: boolean } = {}) {
 test("sendNoStoreJson preserves the exact no-store JSON response headers and payload", () => {
   const { response, calls, bodies } = fixture();
   sendNoStoreJson(response, 409, { error: "some_conflict" });
-  assert.deepEqual(calls, [{
-    status: 409,
-    headers: {
-      "cache-control": "no-store",
-      "content-type": "application/json; charset=utf-8",
-      "x-content-type-options": "nosniff",
+  assert.deepEqual(calls, [
+    {
+      status: 409,
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/json; charset=utf-8",
+        "x-content-type-options": "nosniff",
+      },
     },
-  }]);
+  ]);
   assert.deepEqual(bodies, ['{"error":"some_conflict"}']);
 });
 

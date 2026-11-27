@@ -17,11 +17,21 @@ export interface ApiPlatformConfigurationDatabase {
   };
 }
 
-const ENVIRONMENTS = new Set(["local", "test", "development", "staging", "production"]);
+const ENVIRONMENTS = new Set([
+  "local",
+  "test",
+  "development",
+  "staging",
+  "production",
+]);
 
 /** A trusted deployment identity is injected once by the server composition owner. */
-export function assertApiDeploymentEnvironment(environment: string, key: ApiConfigurationKey): void {
-  if (!ENVIRONMENTS.has(environment)) configurationError(key, "INVALID_ENVIRONMENT");
+export function assertApiDeploymentEnvironment(
+  environment: string,
+  key: ApiConfigurationKey,
+): void {
+  if (!ENVIRONMENTS.has(environment))
+    configurationError(key, "INVALID_ENVIRONMENT");
 }
 
 export async function readApiPlatformConfiguration(
@@ -42,8 +52,12 @@ export async function readApiPlatformConfiguration(
   }
   if (!row) configurationError(key, "MISSING");
   if (
-    row.environment !== environment || row.key !== key ||
-    !Number.isSafeInteger(row.version) || row.version < 1 || row.version > 2147483647
-  ) configurationError(key, "INVALID_ROW");
+    row.environment !== environment ||
+    row.key !== key ||
+    !Number.isSafeInteger(row.version) ||
+    row.version < 1 ||
+    row.version > 2147483647
+  )
+    configurationError(key, "INVALID_ROW");
   return row;
 }

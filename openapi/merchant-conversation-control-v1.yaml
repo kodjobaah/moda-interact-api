@@ -23,15 +23,15 @@ paths:
           required: true
           schema:
             type: string
-            pattern: '^[A-Za-z0-9_-]{1,191}$'
+            pattern: "^[A-Za-z0-9_-]{1,191}$"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ControlCommand'
+              $ref: "#/components/schemas/ControlCommand"
       responses:
-        '200':
+        "200":
           description: Committed transition or same-mode/current-revision no-op
           headers:
             Cache-Control:
@@ -39,22 +39,30 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ControlSnapshot'
-        '400': { description: Invalid path, query, content type or control command }
-        '401': { description: Installation authentication missing, revoked or rotated }
-        '403':
+                $ref: "#/components/schemas/ControlSnapshot"
+        "400":
+          { description: Invalid path, query, content type or control command }
+        "401":
+          {
+            description: Installation authentication missing,
+            revoked or rotated,
+          }
+        "403":
           description: Shop HUMAN messaging suspended (Resume AI remains permitted)
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
-        '404': { description: Missing or foreign recovery-linked conversation }
-        '409':
+              schema: { $ref: "#/components/schemas/Error" }
+        "404": { description: Missing or foreign recovery-linked conversation }
+        "409":
           description: Stale revision or database integrity conflict
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/ConflictResponse' }
-        '413': { description: JSON request body exceeds 512 bytes }
-        '500': { description: Unexpected internal failure; no private diagnostic data }
+              schema: { $ref: "#/components/schemas/ConflictResponse" }
+        "413": { description: JSON request body exceeds 512 bytes }
+        "500":
+          {
+            description: Unexpected internal failure; no private diagnostic data,
+          }
 components:
   securitySchemes:
     InstallationBearer: { type: http, scheme: bearer }
@@ -66,17 +74,25 @@ components:
       required: [targetMode, expectedControlRevision]
       properties:
         targetMode: { type: string, enum: [AI, HUMAN] }
-        expectedControlRevision: { type: integer, minimum: 0, maximum: 2147483647 }
+        expectedControlRevision:
+          { type: integer, minimum: 0, maximum: 2147483647 }
     ControlSnapshot:
       type: object
       additionalProperties: false
-      required: [schemaVersion, conversationId, controlMode, controlRevision, controlChangedAt]
+      required:
+        [
+          schemaVersion,
+          conversationId,
+          controlMode,
+          controlRevision,
+          controlChangedAt,
+        ]
       properties:
         schemaVersion: { type: integer, const: 1 }
-        conversationId: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        conversationId: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
         controlMode: { type: string, enum: [AI, HUMAN] }
         controlRevision: { type: integer, minimum: 0 }
-        controlChangedAt: { type: [string, 'null'], format: date-time }
+        controlChangedAt: { type: [string, "null"], format: date-time }
     Error:
       type: object
       additionalProperties: false
@@ -88,6 +104,15 @@ components:
       additionalProperties: false
       required: [error]
       properties:
-        error: { type: string, enum: [stale_control_revision, conversation_control_conflict, conversation_control_integrity_invalid] }
+        error:
+          {
+            type: string,
+            enum:
+              [
+                stale_control_revision,
+                conversation_control_conflict,
+                conversation_control_integrity_invalid,
+              ],
+          }
         controlMode: { type: string, enum: [AI, HUMAN] }
         controlRevision: { type: integer, minimum: 0 }

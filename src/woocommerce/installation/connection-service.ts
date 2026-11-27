@@ -1,7 +1,11 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { FreePlanDatabase } from "../billing/free-plan-preparation.service.js";
 import type { CanonicalWooSite } from "./site-url.js";
-import { digestSecret, encodeSecret, randomSecret } from "../../auth/woo-installation/credential.js";
+import {
+  digestSecret,
+  encodeSecret,
+  randomSecret,
+} from "../../auth/woo-installation/credential.js";
 import { SiteVerificationError, WooSiteVerifier } from "./site-verifier.js";
 import {
   FreePlanConfigurationUnavailableError,
@@ -13,7 +17,10 @@ import {
 // Global catalogue preparation is performed before the transaction begins.
 const WOO_CONNECTION_TRANSACTION_TIMEOUT_MS = 15_000;
 
-export type WooConnectionDatabase = Pick<PrismaClient, "$transaction" | "shop" | "wooCommerceInstallation"> &
+export type WooConnectionDatabase = Pick<
+  PrismaClient,
+  "$transaction" | "shop" | "wooCommerceInstallation"
+> &
   FreePlanDatabase;
 
 export interface WooConnectInput {
@@ -51,7 +58,10 @@ export class WooInstallationConnectionService {
     private readonly verifier: WooSiteVerifier,
     private readonly now: () => Date = () => new Date(),
     private readonly issueCredential: () => Buffer = randomSecret,
-    private readonly freeActivation: Pick<InitialWooFreeActivationService, "prepare" | "activate"> = new InitialWooFreeActivationService(),
+    private readonly freeActivation: Pick<
+      InitialWooFreeActivationService,
+      "prepare" | "activate"
+    > = new InitialWooFreeActivationService(),
   ) {}
 
   async connect(input: WooConnectInput): Promise<WooConnectResult> {
@@ -61,19 +71,33 @@ export class WooInstallationConnectionService {
         id: true,
         shopId: true,
         credentialVersion: true,
-        shop: { select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true } },
+        shop: {
+          select: {
+            id: true,
+            status: true,
+            platform: true,
+            shopifyShopId: true,
+            onboardingCompleted: true,
+          },
+        },
       },
     });
 
     try {
-      await this.verifier.verify(input.site, input.attemptId, input.bootstrapSecret);
+      await this.verifier.verify(
+        input.site,
+        input.attemptId,
+        input.bootstrapSecret,
+      );
     } catch (error) {
-      if (error instanceof SiteVerificationError) throw new WooSiteControlRejectedError();
+      if (error instanceof SiteVerificationError)
+        throw new WooSiteControlRejectedError();
       throw error;
     }
 
     const rawCredential = this.issueCredential();
-    if (rawCredential.length !== 32) throw new Error("credential_generation_failed");
+    if (rawCredential.length !== 32)
+      throw new Error("credential_generation_failed");
     const credential = encodeSecret(rawCredential);
     const credentialDigest = Uint8Array.from(digestSecret(rawCredential));
     const issuedAt = this.now();
@@ -81,9 +105,10 @@ export class WooInstallationConnectionService {
     try {
       // Prepare shared Free catalogue/operational plan state before entering a Shop transaction.
       // An already-onboarded reconnect is an entitlement no-op and must not require a valid Free catalogue.
-      const prepared = !observed || !observed.shop.onboardingCompleted
-        ? await this.freeActivation.prepare(this.database, !observed)
-        : null;
+      const prepared =
+        !observed || !observed.shop.onboardingCompleted
+          ? await this.freeActivation.prepare(this.database, !observed)
+          : null;
       if (!observed) {
         const created = await this.runTransaction(async (transaction) => {
           const shop = await transaction.shop.create({
@@ -123,38 +148,60 @@ export class WooInstallationConnectionService {
       const reconnected = await this.runTransaction(async (transaction) => {
         const shop = await transaction.shop.findUnique({
           where: { id: observed.shop.id },
-          select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true },
+          select: {
+            id: true,
+            status: true,
+            platform: true,
+            shopifyShopId: true,
+            onboardingCompleted: true,
+          },
         });
-        if (!shop || shop.status === "SUSPENDED" || shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null) {
+        if (
+          !shop ||
+          shop.status === "SUSPENDED" ||
+          shop.platform !== "WOOCOMMERCE" ||
+          shop.shopifyShopId !== null
+        ) {
           throw new WooConnectionConflictError();
         }
 
-        await this.freeActivation.activate(transaction, shop.id, prepared, shop);
+        await this.freeActivation.activate(
+          transaction,
+          shop.id,
+          prepared,
+          shop,
+        );
 
         if (shop.status === "UNINSTALLED") {
           const restored = await transaction.shop.updateMany({
             where: { id: shop.id, status: "UNINSTALLED" },
-            data: { status: "ACTIVE", uninstalledAt: null, reinstallPendingAt: null },
+            data: {
+              status: "ACTIVE",
+              uninstalledAt: null,
+              reinstallPendingAt: null,
+            },
           });
           if (restored.count !== 1) throw new WooConnectionConflictError();
         }
 
-        const updated = await transaction.wooCommerceInstallation.updateManyAndReturn({
-          where: {
-            id: observed.id,
-            shopId: observed.shopId,
-            credentialVersion: observed.credentialVersion,
-          },
-          data: {
-            credentialDigest,
-            credentialVersion: { increment: 1 },
-            credentialIssuedAt: issuedAt,
-            status: "ACTIVE",
-            revokedAt: null,
-          },
-          select: { id: true, shopId: true, credentialVersion: true },
-        });
-        if (updated.length !== 1 || !updated[0]) throw new WooConnectionConflictError();
+        const updated =
+          await transaction.wooCommerceInstallation.updateManyAndReturn({
+            where: {
+              id: observed.id,
+              shopId: observed.shopId,
+              credentialVersion: observed.credentialVersion,
+            },
+            data: {
+              credentialDigest,
+              credentialVersion: { increment: 1 },
+              credentialIssuedAt: issuedAt,
+              status: "ACTIVE",
+              revokedAt: null,
+            },
+            select: { id: true, shopId: true, credentialVersion: true },
+          });
+        if (updated.length !== 1 || !updated[0])
+          throw new WooConnectionConflictError();
 
         return updated[0];
       });
@@ -189,18 +236,26 @@ export class WooInstallationConnectionService {
           timeout: WOO_CONNECTION_TRANSACTION_TIMEOUT_MS,
         });
       } catch (error) {
-        const retryable = error instanceof RetryFreeActivationTransactionError || isPrismaError(error, "P2034");
+        const retryable =
+          error instanceof RetryFreeActivationTransactionError ||
+          isPrismaError(error, "P2034");
         if (retryable && attempt === 0) continue;
         if (error instanceof RetryFreeActivationTransactionError) {
-          throw new FreePlanConfigurationUnavailableError("activation_retry_exhausted");
+          throw new FreePlanConfigurationUnavailableError(
+            "activation_retry_exhausted",
+          );
         }
         throw error;
       }
     }
-    throw new FreePlanConfigurationUnavailableError("activation_retry_exhausted");
+    throw new FreePlanConfigurationUnavailableError(
+      "activation_retry_exhausted",
+    );
   }
 }
 
 function isPrismaError(error: unknown, code: string): boolean {
-  return error instanceof Prisma.PrismaClientKnownRequestError && error.code === code;
+  return (
+    error instanceof Prisma.PrismaClientKnownRequestError && error.code === code
+  );
 }

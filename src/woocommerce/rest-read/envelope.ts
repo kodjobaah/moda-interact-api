@@ -41,12 +41,17 @@ export function sealWooReadCredentials(
   context: WooGrantContext,
   config: Pick<WooRestReadAuthorizationConfig, "keyring" | "activeKeyId">,
 ): WooSealedGrant {
-  return toDatabaseEnvelope(encryptCredential({
-    keyring: config.keyring,
-    activeKeyId: config.activeKeyId,
-    plaintext: JSON.stringify([credentials.consumerKey, credentials.consumerSecret]),
-    aad: createWooRestReadGrantAad(context),
-  }));
+  return toDatabaseEnvelope(
+    encryptCredential({
+      keyring: config.keyring,
+      activeKeyId: config.activeKeyId,
+      plaintext: JSON.stringify([
+        credentials.consumerKey,
+        credentials.consumerSecret,
+      ]),
+      aad: createWooRestReadGrantAad(context),
+    }),
+  );
 }
 
 /** Decrypted text is never trusted as valid Woo credential data without domain checks. */
@@ -67,10 +72,17 @@ export function openWooReadCredentials(
       aad: createWooRestReadGrantAad(context),
     });
     const parsed: unknown = JSON.parse(text);
-    if (!Array.isArray(parsed) || parsed.length !== 2 || !parsed.every((item) => typeof item === "string")) {
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length !== 2 ||
+      !parsed.every((item) => typeof item === "string")
+    ) {
       throw new Error("invalid");
     }
-    return { consumerKey: parsed[0] as string, consumerSecret: parsed[1] as string };
+    return {
+      consumerKey: parsed[0] as string,
+      consumerSecret: parsed[1] as string,
+    };
   } catch {
     // Preserve the existing bounded provider-unavailable classification.
     throw new Error("woo_rest_read_envelope_invalid");

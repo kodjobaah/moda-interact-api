@@ -38,8 +38,8 @@ paths:
           application/json:
             schema:
               oneOf:
-                - $ref: '#/components/schemas/CheckoutEvent'
-                - $ref: '#/components/schemas/OrderEvent'
+                - $ref: "#/components/schemas/CheckoutEvent"
+                - $ref: "#/components/schemas/OrderEvent"
             examples:
               checkout:
                 summary: Accepted checkout update
@@ -48,15 +48,15 @@ paths:
                   eventId: woo-checkout-123-v2
                   eventType: CHECKOUT_UPDATED
                   checkoutKey: cart-123
-                  occurredAt: '2026-10-20T12:00:00.000Z'
+                  occurredAt: "2026-10-20T12:00:00.000Z"
                   checkout:
                     currency: GBP
-                    total: '29.99'
+                    total: "29.99"
                     items:
-                      - productId: '101'
+                      - productId: "101"
                         quantity: 1
-                        unitPrice: '29.99'
-                        total: '29.99'
+                        unitPrice: "29.99"
+                        total: "29.99"
               orderPlaced:
                 summary: Accepted order placement with its original checkout key
                 value:
@@ -64,13 +64,13 @@ paths:
                   eventId: woo-order-123-placed
                   eventType: ORDER_PLACED
                   checkoutKey: cart-123
-                  occurredAt: '2026-10-20T12:01:00.000Z'
+                  occurredAt: "2026-10-20T12:01:00.000Z"
                   order:
-                    orderId: '123'
+                    orderId: "123"
                     checkoutKey: cart-123
                     status: processing
       responses:
-        '202':
+        "202":
           description: The job was accepted into BullMQ (or an identical job is retained)
           headers:
             Cache-Control: { schema: { type: string, enum: [no-store] } }
@@ -82,25 +82,25 @@ paths:
                 required: [status]
                 properties:
                   status: { type: string, enum: [accepted] }
-        '400': { $ref: '#/components/responses/InvalidRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '409':
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409":
           description: Conflicting eventId while a different job is still retained
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
               example: { error: event_replay_conflict }
-        '413':
+        "413":
           description: More than 65,536 request bytes
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
               example: { error: request_too_large }
-        '503':
+        "503":
           description: Queue not configured or Redis/BullMQ failed; retry the same eventId
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/Error' }
+              schema: { $ref: "#/components/schemas/Error" }
               example: { error: queue_unavailable }
 components:
   securitySchemes:
@@ -113,13 +113,13 @@ components:
       description: Unsupported, malformed, untrusted or oversized input fields
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
           example: { error: invalid_request }
     Unauthorized:
       description: Missing, rotated, revoked or non-Woo installation credential
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
           example: { error: unauthorized }
   schemas:
     Error:
@@ -138,7 +138,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
           description: Stable opaque emitted-event ID, never a shopper identifier
         eventType:
           type: string
@@ -147,7 +147,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
           description: Stable Shop-scoped checkout identity carried forward into order metadata
         occurredAt:
           type: string
@@ -157,25 +157,34 @@ components:
     CheckoutEvent:
       type: object
       additionalProperties: false
-      required: [schemaVersion, eventId, eventType, checkoutKey, occurredAt, checkout]
+      required:
+        [schemaVersion, eventId, eventType, checkoutKey, occurredAt, checkout]
       properties:
         schemaVersion: { type: string, enum: [woo.activity.v1] }
-        eventId: { $ref: '#/components/schemas/EventIdentity/properties/eventId' }
+        eventId:
+          { $ref: "#/components/schemas/EventIdentity/properties/eventId" }
         eventType: { type: string, enum: [CHECKOUT_UPDATED] }
-        checkoutKey: { $ref: '#/components/schemas/EventIdentity/properties/checkoutKey' }
-        occurredAt: { $ref: '#/components/schemas/EventIdentity/properties/occurredAt' }
-        checkout: { $ref: '#/components/schemas/CheckoutSnapshot' }
+        checkoutKey:
+          { $ref: "#/components/schemas/EventIdentity/properties/checkoutKey" }
+        occurredAt:
+          { $ref: "#/components/schemas/EventIdentity/properties/occurredAt" }
+        checkout: { $ref: "#/components/schemas/CheckoutSnapshot" }
     OrderEvent:
       type: object
       additionalProperties: false
       description: Authenticated Woo order lifecycle evidence, capture only
-      required: [schemaVersion, eventId, eventType, checkoutKey, occurredAt, order]
+      required:
+        [schemaVersion, eventId, eventType, checkoutKey, occurredAt, order]
       properties:
         schemaVersion: { type: string, enum: [woo.activity.v1] }
-        eventId: { $ref: '#/components/schemas/EventIdentity/properties/eventId' }
-        eventType: { type: string, enum: [ORDER_PLACED, ORDER_PAID, ORDER_CANCELLED] }
-        checkoutKey: { $ref: '#/components/schemas/EventIdentity/properties/checkoutKey' }
-        occurredAt: { $ref: '#/components/schemas/EventIdentity/properties/occurredAt' }
+        eventId:
+          { $ref: "#/components/schemas/EventIdentity/properties/eventId" }
+        eventType:
+          { type: string, enum: [ORDER_PLACED, ORDER_PAID, ORDER_CANCELLED] }
+        checkoutKey:
+          { $ref: "#/components/schemas/EventIdentity/properties/checkoutKey" }
+        occurredAt:
+          { $ref: "#/components/schemas/EventIdentity/properties/occurredAt" }
         order:
           type: object
           additionalProperties: false
@@ -185,16 +194,16 @@ components:
               type: string
               minLength: 1
               maxLength: 128
-              pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+              pattern: "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
             checkoutKey:
               allOf:
-                - $ref: '#/components/schemas/EventIdentity/properties/checkoutKey'
+                - $ref: "#/components/schemas/EventIdentity/properties/checkoutKey"
               description: Must exactly equal the envelope checkoutKey; no customer/contact matching
             status:
               type: string
               minLength: 1
               maxLength: 64
-              pattern: '^[a-z][a-z0-9_-]{0,63}$'
+              pattern: "^[a-z][a-z0-9_-]{0,63}$"
               description: Observed Woo order status, never inferred as payment success
     Money:
       type: string
@@ -206,16 +215,16 @@ components:
       additionalProperties: false
       required: [currency, total]
       properties:
-        currency: { type: string, pattern: '^[A-Z]{3}$' }
-        total: { $ref: '#/components/schemas/Money' }
+        currency: { type: string, pattern: "^[A-Z]{3}$" }
+        total: { $ref: "#/components/schemas/Money" }
         items:
           type: array
           maxItems: 50
-          items: { $ref: '#/components/schemas/CheckoutItem' }
+          items: { $ref: "#/components/schemas/CheckoutItem" }
         contact:
-          $ref: '#/components/schemas/CheckoutContact'
+          $ref: "#/components/schemas/CheckoutContact"
         restoration:
-          $ref: '#/components/schemas/WooCartRestoreSnapshotV1'
+          $ref: "#/components/schemas/WooCartRestoreSnapshotV1"
     CheckoutItem:
       type: object
       additionalProperties: false
@@ -226,8 +235,8 @@ components:
         variationId: { type: string, minLength: 1, maxLength: 128 }
         sku: { type: string, minLength: 1, maxLength: 128 }
         title: { type: string, minLength: 1, maxLength: 200 }
-        unitPrice: { $ref: '#/components/schemas/Money' }
-        total: { $ref: '#/components/schemas/Money' }
+        unitPrice: { $ref: "#/components/schemas/Money" }
+        total: { $ref: "#/components/schemas/Money" }
     CheckoutContact:
       type: object
       additionalProperties: false
@@ -247,20 +256,20 @@ components:
           type: string
           minLength: 2
           maxLength: 15
-          pattern: '^[1-9][0-9]{1,14}$'
+          pattern: "^[1-9][0-9]{1,14}$"
           description: Required with phone; digits-only E.164 without the plus sign
         verifiedCountryCode:
           type: string
           minLength: 2
           maxLength: 2
-          pattern: '^[A-Z]{2}$'
+          pattern: "^[A-Z]{2}$"
           description: Optional region used to verify a national phone number
         firstName: { type: string, minLength: 1, maxLength: 100 }
         lastName: { type: string, minLength: 1, maxLength: 100 }
     WooCartRestoreSnapshotV1:
       oneOf:
-        - $ref: '#/components/schemas/WooCartRestoreSupportedSnapshotV1'
-        - $ref: '#/components/schemas/WooCartRestoreUnsupportedSnapshotV1'
+        - $ref: "#/components/schemas/WooCartRestoreSupportedSnapshotV1"
+        - $ref: "#/components/schemas/WooCartRestoreUnsupportedSnapshotV1"
       discriminator:
         propertyName: kind
     WooCartRestoreSupportedSnapshotV1:
@@ -279,7 +288,7 @@ components:
           type: array
           minItems: 1
           maxItems: 50
-          items: { $ref: '#/components/schemas/WooCartRestoreLineV1' }
+          items: { $ref: "#/components/schemas/WooCartRestoreLineV1" }
     WooCartRestoreUnsupportedSnapshotV1:
       type: object
       additionalProperties: false
@@ -289,7 +298,15 @@ components:
         kind: { type: string, enum: [unsupported] }
         reason:
           type: string
-          enum: [ITEMS_UNAVAILABLE, UNSUPPORTED_PRODUCT_TYPE, CUSTOM_CART_ITEM_DATA, INVALID_VARIATION, COUPONS_UNAVAILABLE, LIMIT_EXCEEDED]
+          enum:
+            [
+              ITEMS_UNAVAILABLE,
+              UNSUPPORTED_PRODUCT_TYPE,
+              CUSTOM_CART_ITEM_DATA,
+              INVALID_VARIATION,
+              COUPONS_UNAVAILABLE,
+              LIMIT_EXCEEDED,
+            ]
         appliedCouponCodes:
           type: array
           maxItems: 10
@@ -299,8 +316,20 @@ components:
       additionalProperties: false
       required: [productId, quantity]
       properties:
-        productId: { type: string, minLength: 1, maxLength: 20, pattern: '^[1-9][0-9]*$' }
-        variationId: { type: string, minLength: 1, maxLength: 20, pattern: '^[1-9][0-9]*$' }
+        productId:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 20,
+            pattern: "^[1-9][0-9]*$",
+          }
+        variationId:
+          {
+            type: string,
+            minLength: 1,
+            maxLength: 20,
+            pattern: "^[1-9][0-9]*$",
+          }
         quantity: { type: integer, minimum: 1, maximum: 100000 }
         attributes:
           type: object

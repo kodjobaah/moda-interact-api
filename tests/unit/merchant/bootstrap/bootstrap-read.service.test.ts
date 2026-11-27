@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
-import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../../../src/merchant/bootstrap/bootstrap-read.service.js";
+import {
+  MerchantBootstrapIntegrityError,
+  MerchantBootstrapReadService,
+} from "../../../../src/merchant/bootstrap/bootstrap-read.service.js";
 import { isMerchantBootstrapResponse } from "../../../../src/merchant/bootstrap/schema.js";
 
 const principal: WooInstallationPrincipal = {
@@ -39,12 +42,23 @@ function makeService(row: unknown) {
       },
     },
   };
-  return { service: new MerchantBootstrapReadService(database as never), calls };
+  return {
+    service: new MerchantBootstrapReadService(database as never),
+    calls,
+  };
 }
 
 test("bootstrap reads only the authenticated Shop and projects bounded active/pending categories", async () => {
-  const activeCategory = { id: "category_active", slug: "fashion", displayName: "Fashion" };
-  const pendingCategory = { id: "category_pending", slug: "home-goods", displayName: "Home goods" };
+  const activeCategory = {
+    id: "category_active",
+    slug: "fashion",
+    displayName: "Fashion",
+  };
+  const pendingCategory = {
+    id: "category_pending",
+    slug: "home-goods",
+    displayName: "Home goods",
+  };
   const row = shop({
     onboardingCompleted: true,
     defaultLanguageTag: "pt-BR",
@@ -83,44 +97,52 @@ test("bootstrap reads only the authenticated Shop and projects bounded active/pe
       pendingSelectedAt: "2026-10-03T12:30:00.000Z",
     },
   });
-  assert.deepEqual(calls, [{
-    where: { id: principal.shopId },
-    select: {
-      id: true,
-      domain: true,
-      platform: true,
-      shopifyShopId: true,
-      status: true,
-      onboardingCompleted: true,
-      installedAt: true,
-      storeLocale: true,
-      defaultLanguageTag: true,
-      defaultTimeZone: true,
-      defaultCountryCode: true,
-      commerceShopProfile: {
-        select: {
-          shopId: true,
-          activeCategoryId: true,
-          activeCategory: { select: { id: true, slug: true, displayName: true } },
-          pendingCategoryId: true,
-          pendingCategory: { select: { id: true, slug: true, displayName: true } },
-          pendingSelectionGeneration: true,
-          pendingSelectedAt: true,
+  assert.deepEqual(calls, [
+    {
+      where: { id: principal.shopId },
+      select: {
+        id: true,
+        domain: true,
+        platform: true,
+        shopifyShopId: true,
+        status: true,
+        onboardingCompleted: true,
+        installedAt: true,
+        storeLocale: true,
+        defaultLanguageTag: true,
+        defaultTimeZone: true,
+        defaultCountryCode: true,
+        commerceShopProfile: {
+          select: {
+            shopId: true,
+            activeCategoryId: true,
+            activeCategory: {
+              select: { id: true, slug: true, displayName: true },
+            },
+            pendingCategoryId: true,
+            pendingCategory: {
+              select: { id: true, slug: true, displayName: true },
+            },
+            pendingSelectionGeneration: true,
+            pendingSelectedAt: true,
+          },
         },
       },
     },
-  }]);
+  ]);
   assert.equal(JSON.stringify(response).includes("shopifyShopId"), false);
   assert.equal(JSON.stringify(response).includes("promptRevision"), false);
 });
 
 test("empty profile is returned without materializing it and preserves nullable shared context", async () => {
-  const { service, calls } = makeService(shop({
-    storeLocale: "zz_UNLISTED",
-    defaultLanguageTag: null,
-    defaultTimeZone: null,
-    defaultCountryCode: null,
-  }));
+  const { service, calls } = makeService(
+    shop({
+      storeLocale: "zz_UNLISTED",
+      defaultLanguageTag: null,
+      defaultTimeZone: null,
+      defaultCountryCode: null,
+    }),
+  );
   const response = await service.read(principal);
 
   assert.equal(response.shop.onboardingCompleted, false);
@@ -137,11 +159,20 @@ test("empty profile is returned without materializing it and preserves nullable 
     pendingSelectedAt: null,
   });
   assert.equal(calls.length, 1);
-  assert.equal(isMerchantBootstrapResponse({ ...response, unexpected: true }), false);
-  assert.equal(isMerchantBootstrapResponse({
-    ...response,
-    internationalContext: { ...response.internationalContext, unexpected: true },
-  }), false);
+  assert.equal(
+    isMerchantBootstrapResponse({ ...response, unexpected: true }),
+    false,
+  );
+  assert.equal(
+    isMerchantBootstrapResponse({
+      ...response,
+      internationalContext: {
+        ...response.internationalContext,
+        unexpected: true,
+      },
+    }),
+    false,
+  );
 });
 
 test("missing or incompatible Shop and broken profile category references fail closed", async () => {
@@ -152,37 +183,50 @@ test("missing or incompatible Shop and broken profile category references fail c
     shop({ status: "SUSPENDED" }),
     shop({ domain: "https://different.example" }),
     shop({ id: "different_shop" }),
-    shop({ commerceShopProfile: {
-      shopId: principal.shopId,
-      activeCategoryId: "missing_category",
-      activeCategory: null,
-      pendingCategoryId: null,
-      pendingCategory: null,
-      pendingSelectionGeneration: 0,
-      pendingSelectedAt: null,
-    } }),
-    shop({ commerceShopProfile: {
-      shopId: principal.shopId,
-      activeCategoryId: null,
-      activeCategory: { id: "unexpected_category", slug: "unexpected", displayName: "Unexpected" },
-      pendingCategoryId: null,
-      pendingCategory: null,
-      pendingSelectionGeneration: 0,
-      pendingSelectedAt: null,
-    } }),
-    shop({ commerceShopProfile: {
-      shopId: "other_shop",
-      activeCategoryId: null,
-      activeCategory: null,
-      pendingCategoryId: null,
-      pendingCategory: null,
-      pendingSelectionGeneration: 0,
-      pendingSelectedAt: null,
-    } }),
+    shop({
+      commerceShopProfile: {
+        shopId: principal.shopId,
+        activeCategoryId: "missing_category",
+        activeCategory: null,
+        pendingCategoryId: null,
+        pendingCategory: null,
+        pendingSelectionGeneration: 0,
+        pendingSelectedAt: null,
+      },
+    }),
+    shop({
+      commerceShopProfile: {
+        shopId: principal.shopId,
+        activeCategoryId: null,
+        activeCategory: {
+          id: "unexpected_category",
+          slug: "unexpected",
+          displayName: "Unexpected",
+        },
+        pendingCategoryId: null,
+        pendingCategory: null,
+        pendingSelectionGeneration: 0,
+        pendingSelectedAt: null,
+      },
+    }),
+    shop({
+      commerceShopProfile: {
+        shopId: "other_shop",
+        activeCategoryId: null,
+        activeCategory: null,
+        pendingCategoryId: null,
+        pendingCategory: null,
+        pendingSelectionGeneration: 0,
+        pendingSelectedAt: null,
+      },
+    }),
   ];
 
   for (const row of invalidRows) {
     const { service } = makeService(row);
-    await assert.rejects(service.read(principal), MerchantBootstrapIntegrityError);
+    await assert.rejects(
+      service.read(principal),
+      MerchantBootstrapIntegrityError,
+    );
   }
 });

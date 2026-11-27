@@ -32,7 +32,9 @@ export type FreePlanConfigurationFailureReason =
   | "unspecified";
 
 export class FreePlanConfigurationUnavailableError extends Error {
-  constructor(readonly reason: FreePlanConfigurationFailureReason = "unspecified") {
+  constructor(
+    readonly reason: FreePlanConfigurationFailureReason = "unspecified",
+  ) {
     super("free_plan_configuration_unavailable");
     this.name = "FreePlanConfigurationUnavailableError";
   }
@@ -63,7 +65,10 @@ export type OperationalCataloguePlan = MerchantPricingPlan & {
 export class InitialWooFreeActivationService {
   private readonly preparation = new WooFreePlanPreparationService();
 
-  prepare(database: FreePlanDatabase, requireFirstGrantPolicy: boolean): Promise<PreparedFreePlan> {
+  prepare(
+    database: FreePlanDatabase,
+    requireFirstGrantPolicy: boolean,
+  ): Promise<PreparedFreePlan> {
     return this.preparation.prepare(database, requireFirstGrantPolicy);
   }
 
@@ -73,14 +78,19 @@ export class InitialWooFreeActivationService {
     prepared: PreparedFreePlan | null,
     currentShop?: { id: string; onboardingCompleted: boolean },
   ): Promise<"ACTIVATED_FREE" | "ALREADY_ONBOARDED"> {
-    const shop = currentShop ?? await transaction.shop.findUnique({
-      where: { id: shopId },
-      select: { id: true, onboardingCompleted: true },
-    });
-    if (!shop || shop.id !== shopId) throw new FreePlanConfigurationUnavailableError("shop_missing");
+    const shop =
+      currentShop ??
+      (await transaction.shop.findUnique({
+        where: { id: shopId },
+        select: { id: true, onboardingCompleted: true },
+      }));
+    if (!shop || shop.id !== shopId)
+      throw new FreePlanConfigurationUnavailableError("shop_missing");
     if (shop.onboardingCompleted) return "ALREADY_ONBOARDED";
 
-    const subscription = await transaction.subscription.findUnique({ where: { shopId } });
+    const subscription = await transaction.subscription.findUnique({
+      where: { shopId },
+    });
     if (subscription && !isEmptyInitialSubscription(subscription)) {
       throw new InitialFreeActivationConflictError();
     }
@@ -88,7 +98,8 @@ export class InitialWooFreeActivationService {
     // Resolve and materialise global Free-plan configuration outside this Shop transaction.
     // Recheck its small, mutable invariants here to fail closed if Admin changed it
     // after preparation, without re-running feature/knowledge materialisation queries.
-    if (!prepared) throw new FreePlanConfigurationUnavailableError("free_catalogue_missing");
+    if (!prepared)
+      throw new FreePlanConfigurationUnavailableError("free_catalogue_missing");
     const cataloguePlans = await transaction.merchantPricingPlan.findMany({
       where: { planKind: MerchantPricingPlanKind.FREE },
       select: {
@@ -103,32 +114,49 @@ export class InitialWooFreeActivationService {
       },
     });
     const catalogue = cataloguePlans[0];
-    if (cataloguePlans.length !== 1 || !catalogue || catalogue.id !== prepared.catalogueId ||
-      catalogue.shopifyPlanHandle !== prepared.shopifyPlanHandle || !isValidFreeCataloguePlan(catalogue)) {
+    if (
+      cataloguePlans.length !== 1 ||
+      !catalogue ||
+      catalogue.id !== prepared.catalogueId ||
+      catalogue.shopifyPlanHandle !== prepared.shopifyPlanHandle ||
+      !isValidFreeCataloguePlan(catalogue)
+    ) {
       throw new FreePlanConfigurationUnavailableError("free_catalogue_invalid");
     }
     const plan = await transaction.billingPlan.findUnique({
       where: { id: prepared.operationalPlanId },
       select: { id: true, active: true, kind: true, shopifyPlanHandle: true },
     });
-    if (!plan || !plan.active || plan.kind !== BillingPlanKind.FREE ||
-      plan.shopifyPlanHandle !== prepared.shopifyPlanHandle) {
-      throw new FreePlanConfigurationUnavailableError("operational_free_plan_invalid");
+    if (
+      !plan ||
+      !plan.active ||
+      plan.kind !== BillingPlanKind.FREE ||
+      plan.shopifyPlanHandle !== prepared.shopifyPlanHandle
+    ) {
+      throw new FreePlanConfigurationUnavailableError(
+        "operational_free_plan_invalid",
+      );
     }
 
-    const lifetimeCounter = await transaction.shopEntitlementCounter.findUnique({
-      where: {
-        shopId_counter: {
-          shopId,
-          counter: EntitlementCounter.LIFETIME_FREE_RECOVERY_CREDITS,
+    const lifetimeCounter = await transaction.shopEntitlementCounter.findUnique(
+      {
+        where: {
+          shopId_counter: {
+            shopId,
+            counter: EntitlementCounter.LIFETIME_FREE_RECOVERY_CREDITS,
+          },
         },
       },
-    });
+    );
     const policy = lifetimeCounter
       ? null
-      : await transaction.platformBillingPolicy.findUnique({ where: { id: "default" } });
+      : await transaction.platformBillingPolicy.findUnique({
+          where: { id: "default" },
+        });
     if (!lifetimeCounter && !isValidLifetimeFreePolicy(policy)) {
-      throw new FreePlanConfigurationUnavailableError("free_recovery_policy_invalid");
+      throw new FreePlanConfigurationUnavailableError(
+        "free_recovery_policy_invalid",
+      );
     }
 
     await transaction.subscription.upsert({
@@ -149,7 +177,8 @@ export class InitialWooFreeActivationService {
           },
         });
       } catch (error) {
-        if (isPrismaCode(error, "P2002")) throw new RetryFreeActivationTransactionError({ cause: error });
+        if (isPrismaCode(error, "P2002"))
+          throw new RetryFreeActivationTransactionError({ cause: error });
         throw error;
       }
     }
@@ -164,13 +193,23 @@ export class InitialWooFreeActivationService {
     catalogue: OperationalCataloguePlan,
   ): Promise<BillingPlan> {
     if (
-      catalogue.planKind !== MerchantPricingPlanKind.PAID_METERED || !catalogue.isActive ||
-      catalogue.allowancePeriod !== MerchantPricingAllowancePeriod.EVERY_30_DAYS ||
-      catalogue.billingPeriod !== "EVERY_30_DAYS" || !Number.isSafeInteger(catalogue.includedRecoveryCredits) ||
-      catalogue.includedRecoveryCredits < 0 || !Number.isSafeInteger(catalogue.recurringAmountMinor) ||
-      catalogue.recurringAmountMinor <= 0 || catalogue.currency !== "USD"
-    ) throw new FreePlanConfigurationUnavailableError("paid_catalogue_invalid");
-    return this.resolveOperationalPlan(transaction, catalogue, BillingPlanKind.PAID_METERED);
+      catalogue.planKind !== MerchantPricingPlanKind.PAID_METERED ||
+      !catalogue.isActive ||
+      catalogue.allowancePeriod !==
+        MerchantPricingAllowancePeriod.EVERY_30_DAYS ||
+      catalogue.billingPeriod !== "EVERY_30_DAYS" ||
+      !Number.isSafeInteger(catalogue.includedRecoveryCredits) ||
+      catalogue.includedRecoveryCredits < 0 ||
+      !Number.isSafeInteger(catalogue.recurringAmountMinor) ||
+      catalogue.recurringAmountMinor <= 0 ||
+      catalogue.currency !== "USD"
+    )
+      throw new FreePlanConfigurationUnavailableError("paid_catalogue_invalid");
+    return this.resolveOperationalPlan(
+      transaction,
+      catalogue,
+      BillingPlanKind.PAID_METERED,
+    );
   }
 
   private async resolveOperationalPlan(
@@ -184,21 +223,36 @@ export class InitialWooFreeActivationService {
     if (existing) {
       if (!existing.active || existing.kind !== expectedKind) {
         throw new FreePlanConfigurationUnavailableError(
-          expectedKind === BillingPlanKind.FREE ? "operational_free_plan_invalid" : "operational_paid_plan_invalid",
+          expectedKind === BillingPlanKind.FREE
+            ? "operational_free_plan_invalid"
+            : "operational_paid_plan_invalid",
         );
       }
       await markCatalogueMaterialized(transaction, catalogue);
       return existing;
     }
 
-    const features = catalogue.features ?? await transaction.merchantPricingPlanFeature.findMany({
-      where: { merchantPricingPlanId: catalogue.id },
-      select: { featureId: true, configuration: true, feature: { select: { key: true, systemRequired: true } } },
-    });
+    const features =
+      catalogue.features ??
+      (await transaction.merchantPricingPlanFeature.findMany({
+        where: { merchantPricingPlanId: catalogue.id },
+        select: {
+          featureId: true,
+          configuration: true,
+          feature: { select: { key: true, systemRequired: true } },
+        },
+      }));
     const materializationCatalogue = { ...catalogue, features };
-    if (!(await isValidMaterializationConfiguration(transaction, materializationCatalogue))) {
+    if (
+      !(await isValidMaterializationConfiguration(
+        transaction,
+        materializationCatalogue,
+      ))
+    ) {
       throw new FreePlanConfigurationUnavailableError(
-        expectedKind === BillingPlanKind.FREE ? "free_feature_configuration_invalid" : "paid_feature_configuration_invalid",
+        expectedKind === BillingPlanKind.FREE
+          ? "free_feature_configuration_invalid"
+          : "paid_feature_configuration_invalid",
       );
     }
     try {
@@ -208,12 +262,14 @@ export class InitialWooFreeActivationService {
           name: catalogue.displayName,
           kind: expectedKind,
           active: true,
-          shopifyUsageEventHandle: expectedKind === BillingPlanKind.PAID_METERED
-            ? catalogue.shopifyRecoveryUsageEventHandle
-            : null,
-          includedRecoveryConversationAllowance: expectedKind === BillingPlanKind.PAID_METERED
-            ? catalogue.includedRecoveryCredits
-            : null,
+          shopifyUsageEventHandle:
+            expectedKind === BillingPlanKind.PAID_METERED
+              ? catalogue.shopifyRecoveryUsageEventHandle
+              : null,
+          includedRecoveryConversationAllowance:
+            expectedKind === BillingPlanKind.PAID_METERED
+              ? catalogue.includedRecoveryCredits
+              : null,
           recoveryCreditPackEnabled: false,
           recoveryCreditsPerPack: null,
           shopifyRecoveryCreditPackEventHandle: null,
@@ -221,9 +277,10 @@ export class InitialWooFreeActivationService {
             create: features.map((mapping) => ({
               featureId: mapping.featureId,
               enabled: true,
-              configuration: mapping.configuration === null
-                ? Prisma.JsonNull
-                : mapping.configuration as Prisma.InputJsonValue,
+              configuration:
+                mapping.configuration === null
+                  ? Prisma.JsonNull
+                  : (mapping.configuration as Prisma.InputJsonValue),
             })),
           },
         },
@@ -231,7 +288,8 @@ export class InitialWooFreeActivationService {
       await markCatalogueMaterialized(transaction, catalogue);
       return plan;
     } catch (error) {
-      if (isPrismaCode(error, "P2002")) throw new RetryFreeActivationTransactionError({ cause: error });
+      if (isPrismaCode(error, "P2002"))
+        throw new RetryFreeActivationTransactionError({ cause: error });
       throw error;
     }
   }
@@ -259,7 +317,8 @@ function isEmptyInitialSubscription(subscription: {
   lastProviderLifecycleEventId: string | null;
   lastProviderLifecycleEventAt: Date | null;
 }): boolean {
-  return subscription.status === SubscriptionProjectionStatus.NO_CONTRACT &&
+  return (
+    subscription.status === SubscriptionProjectionStatus.NO_CONTRACT &&
     subscription.planId === null &&
     subscription.observedShopifyPlanHandle === null &&
     subscription.billingPeriodId === null &&
@@ -278,24 +337,29 @@ function isEmptyInitialSubscription(subscription: {
     subscription.nextReconcileAt === null &&
     subscription.lastProviderLifecycleState === null &&
     subscription.lastProviderLifecycleEventId === null &&
-    subscription.lastProviderLifecycleEventAt === null;
+    subscription.lastProviderLifecycleEventAt === null
+  );
 }
 
 async function isValidMaterializationConfiguration(
   transaction: Prisma.TransactionClient,
-  catalogue: OperationalCataloguePlan & { features: NonNullable<OperationalCataloguePlan["features"]> },
+  catalogue: OperationalCataloguePlan & {
+    features: NonNullable<OperationalCataloguePlan["features"]>;
+  },
 ): Promise<boolean> {
   if (
-    !catalogue.features.some((mapping) =>
-      mapping.feature?.key === "checkout_recovery" && mapping.feature.systemRequired,
+    !catalogue.features.some(
+      (mapping) =>
+        mapping.feature?.key === "checkout_recovery" &&
+        mapping.feature.systemRequired,
     ) ||
     catalogue.features.some((mapping) => !mapping.feature)
   ) {
     return false;
   }
 
-  const merchantKnowledgeMappings = catalogue.features.filter((mapping) =>
-    mapping.feature?.key === "merchant_knowledge",
+  const merchantKnowledgeMappings = catalogue.features.filter(
+    (mapping) => mapping.feature?.key === "merchant_knowledge",
   );
   if (merchantKnowledgeMappings.length === 0) return true;
   if (merchantKnowledgeMappings.length !== 1) return false;
@@ -304,19 +368,24 @@ async function isValidMaterializationConfiguration(
   );
   if (!configuration.success) return false;
 
-  const activeRows = await transaction.merchantKnowledgePurposeDataFormat.findMany({
-    where: {
-      purpose: { is: { active: true } },
-      dataFormat: { is: { active: true } },
-    },
-    select: {
-      purpose: { select: { key: true } },
-      dataFormat: { select: { key: true } },
-    },
-  });
-  const activePairs = new Set(activeRows.map((row) => `${row.purpose.key}\u0000${row.dataFormat.key}`));
+  const activeRows =
+    await transaction.merchantKnowledgePurposeDataFormat.findMany({
+      where: {
+        purpose: { is: { active: true } },
+        dataFormat: { is: { active: true } },
+      },
+      select: {
+        purpose: { select: { key: true } },
+        dataFormat: { select: { key: true } },
+      },
+    });
+  const activePairs = new Set(
+    activeRows.map((row) => `${row.purpose.key}\u0000${row.dataFormat.key}`),
+  );
   return configuration.data.allowedSourceTypes.every((sourceType) =>
-    activePairs.has(`${sourceType.purposeKey}\u0000${sourceType.dataFormatKey}`),
+    activePairs.has(
+      `${sourceType.purposeKey}\u0000${sourceType.dataFormatKey}`,
+    ),
   );
 }
 
@@ -326,7 +395,10 @@ async function markCatalogueMaterialized(
 ): Promise<void> {
   if (catalogue.materializedAt === null) {
     await transaction.merchantPricingPlan.updateMany({
-      where: { shopifyPlanHandle: catalogue.shopifyPlanHandle, materializedAt: null },
+      where: {
+        shopifyPlanHandle: catalogue.shopifyPlanHandle,
+        materializedAt: null,
+      },
       data: { materializedAt: new Date() },
     });
   }
@@ -358,5 +430,10 @@ function freeSubscriptionProjection(planId: string) {
 }
 
 function isPrismaCode(error: unknown, code: string): boolean {
-  return Boolean(error && typeof error === "object" && "code" in error && error.code === code);
+  return Boolean(
+    error &&
+    typeof error === "object" &&
+    "code" in error &&
+    error.code === code,
+  );
 }

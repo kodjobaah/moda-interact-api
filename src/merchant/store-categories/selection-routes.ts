@@ -4,16 +4,26 @@ import { singleHeader } from "../../http/headers.js";
 import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import { Prisma } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
+import {
+  WooUnauthenticatedError,
+  type WooInstallationAuthenticator,
+} from "../../auth/woo-installation/authenticator.js";
 import { StoreCategorySelectionError } from "./selection-errors.js";
-import { isStoreCategorySelectionRequest, type StoreCategorySelectionRequest } from "./selection-schema.js";
+import {
+  isStoreCategorySelectionRequest,
+  type StoreCategorySelectionRequest,
+} from "./selection-schema.js";
 import type { StoreCategorySelectionService } from "./store-category-selection.service.js";
 
-export const MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH = "/v1/merchant/store-category";
+export const MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH =
+  "/v1/merchant/store-category";
 export const MAX_CATEGORY_SELECTION_BODY_BYTES = 4096;
 
 class CategoryRequestError extends Error {
-  constructor(readonly status: 400 | 413, readonly code: "invalid_request" | "request_too_large") {
+  constructor(
+    readonly status: 400 | 413,
+    readonly code: "invalid_request" | "request_too_large",
+  ) {
     super(code);
   }
 }
@@ -27,9 +37,16 @@ export function createStoreCategorySelectionRoute(options: {
 }) {
   const { authenticator, service, logger, now = Date.now } = options;
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const url = new URL(request.url ?? "/", "http://localhost");
-      if (url.pathname !== MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH || request.method !== "POST") return false;
+      if (
+        url.pathname !== MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH ||
+        request.method !== "POST"
+      )
+        return false;
       const startedAt = now();
       try {
         const principal = await authenticator.authenticate(request);
@@ -46,21 +63,34 @@ export function createStoreCategorySelectionRoute(options: {
         });
         sendJson(response, 200, result);
       } catch (error) {
-        if (error instanceof WooUnauthenticatedError) sendJson(response, 401, { error: "unauthorized" });
-        else if (error instanceof CategoryRequestError) sendJson(response, error.status, { error: error.code });
+        if (error instanceof WooUnauthenticatedError)
+          sendJson(response, 401, { error: "unauthorized" });
+        else if (error instanceof CategoryRequestError)
+          sendJson(response, error.status, { error: error.code });
         else if (error instanceof StoreCategorySelectionError) {
-          logger.warn("merchant.store_category.select.failed", { reason: error.code, durationMs: Math.max(0, now() - startedAt),
+          logger.warn("merchant.store_category.select.failed", {
+            reason: error.code,
+            durationMs: Math.max(0, now() - startedAt),
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
-          sendJson(response, error.code === "category_unavailable" ? 422 : 409, { error: error.code });
-        } else if (error instanceof Prisma.PrismaClientKnownRequestError &&
-          ["P2002", "P2034"].includes(error.code)) {
-          logger.warn("merchant.store_category.select.failed", { reason: "store_category_conflict",
+          sendJson(
+            response,
+            error.code === "category_unavailable" ? 422 : 409,
+            { error: error.code },
+          );
+        } else if (
+          error instanceof Prisma.PrismaClientKnownRequestError &&
+          ["P2002", "P2034"].includes(error.code)
+        ) {
+          logger.warn("merchant.store_category.select.failed", {
+            reason: "store_category_conflict",
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
@@ -69,8 +99,12 @@ export function createStoreCategorySelectionRoute(options: {
           logger.error("merchant.store_category.select.failed", {
             reason: "internal",
             errorName: error instanceof Error ? error.name : "UnknownError",
-            prismaCode: error instanceof Prisma.PrismaClientKnownRequestError ? error.code : null,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            prismaCode:
+              error instanceof Prisma.PrismaClientKnownRequestError
+                ? error.code
+                : null,
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
@@ -82,28 +116,45 @@ export function createStoreCategorySelectionRoute(options: {
   };
 }
 
-async function parseCategorySelectionRequest(request: IncomingMessage): Promise<StoreCategorySelectionRequest> {
+async function parseCategorySelectionRequest(
+  request: IncomingMessage,
+): Promise<StoreCategorySelectionRequest> {
   const contentType = singleHeader(request, "content-type");
   const encoding = singleHeader(request, "content-encoding");
   const length = singleHeader(request, "content-length");
-  if (contentType.count !== 1 ||
-    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType.value ?? "") ||
-    encoding.count > 1 || (encoding.count === 1 && encoding.value?.toLowerCase() !== "identity") ||
-    length.count > 1 || (length.count === 1 && !/^\d+$/.test(length.value ?? ""))) {
+  if (
+    contentType.count !== 1 ||
+    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(
+      contentType.value ?? "",
+    ) ||
+    encoding.count > 1 ||
+    (encoding.count === 1 && encoding.value?.toLowerCase() !== "identity") ||
+    length.count > 1 ||
+    (length.count === 1 && !/^\d+$/.test(length.value ?? ""))
+  ) {
     throw new CategoryRequestError(400, "invalid_request");
   }
-  if (length.value && Number(length.value) > MAX_CATEGORY_SELECTION_BODY_BYTES) {
+  if (
+    length.value &&
+    Number(length.value) > MAX_CATEGORY_SELECTION_BODY_BYTES
+  ) {
     throw new CategoryRequestError(413, "request_too_large");
   }
-  const bytes = await readBoundedBody(request, MAX_CATEGORY_SELECTION_BODY_BYTES, (reason) => reason === "oversized"
-    ? new CategoryRequestError(413, "request_too_large")
-    : new CategoryRequestError(400, "invalid_request"));
+  const bytes = await readBoundedBody(
+    request,
+    MAX_CATEGORY_SELECTION_BODY_BYTES,
+    (reason) =>
+      reason === "oversized"
+        ? new CategoryRequestError(413, "request_too_large")
+        : new CategoryRequestError(400, "invalid_request"),
+  );
   let value: unknown;
   try {
     value = decodeStrictJsonBody(bytes);
   } catch {
     throw new CategoryRequestError(400, "invalid_request");
   }
-  if (!isStoreCategorySelectionRequest(value)) throw new CategoryRequestError(400, "invalid_request");
+  if (!isStoreCategorySelectionRequest(value))
+    throw new CategoryRequestError(400, "invalid_request");
   return value;
 }

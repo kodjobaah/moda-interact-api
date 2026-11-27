@@ -1,10 +1,14 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 
 export const CREDIT_SOURCES = [
-  "ALL", "LIFETIME_FREE_CREDITS", "INCLUDED_PLAN_ALLOWANCE",
-  "PURCHASED_TOP_UP", "PROMOTIONAL_CREDITS", "UNATTRIBUTED",
+  "ALL",
+  "LIFETIME_FREE_CREDITS",
+  "INCLUDED_PLAN_ALLOWANCE",
+  "PURCHASED_TOP_UP",
+  "PROMOTIONAL_CREDITS",
+  "UNATTRIBUTED",
 ] as const;
-export type CreditSource = typeof CREDIT_SOURCES[number];
+export type CreditSource = (typeof CREDIT_SOURCES)[number];
 export type ChargedAgainst = Exclude<CreditSource, "ALL">;
 export type LedgerPeriod = { id: string; periodStart: Date; periodEnd: Date };
 export type LedgerInput = {
@@ -29,7 +33,10 @@ type LedgerRow = {
 };
 
 export function isCreditSource(value: unknown): value is CreditSource {
-  return typeof value === "string" && CREDIT_SOURCES.some(source => source === value);
+  return (
+    typeof value === "string" &&
+    CREDIT_SOURCES.some((source) => source === value)
+  );
 }
 
 /** One statement for matching rows and signed totals. Classification is based
@@ -40,16 +47,26 @@ export function isCreditSource(value: unknown): value is CreditSource {
  */
 export function unifiedLedgerQuery(input: LedgerInput): Prisma.Sql {
   const { shopId, provider, source, period, page, pageSize } = input;
-  if (!isCreditSource(source) || !Number.isSafeInteger(page) || page < 1 ||
-      ![10, 25, 50, 100].includes(pageSize) || (page - 1) * pageSize > 2147483647) {
+  if (
+    !isCreditSource(source) ||
+    !Number.isSafeInteger(page) ||
+    page < 1 ||
+    ![10, 25, 50, 100].includes(pageSize) ||
+    (page - 1) * pageSize > 2147483647
+  ) {
     throw new Error("Invalid unified usage filter");
   }
-  const periodPredicate = period ? Prisma.sql`
+  const periodPredicate = period
+    ? Prisma.sql`
     AND (o."billingPeriodId" = ${period.id} OR
       (o."billingPeriodId" IS NULL AND o."id" IS NOT NULL
        AND o."occurredAt" >= (${period.periodStart.toISOString()}::timestamptz AT TIME ZONE 'UTC')
-       AND o."occurredAt" < (${period.periodEnd.toISOString()}::timestamptz AT TIME ZONE 'UTC')))` : Prisma.empty;
-  const sourcePredicate = source === "ALL" ? Prisma.empty : Prisma.sql`WHERE "chargedAgainst" = ${source}`;
+       AND o."occurredAt" < (${period.periodEnd.toISOString()}::timestamptz AT TIME ZONE 'UTC')))`
+    : Prisma.empty;
+  const sourcePredicate =
+    source === "ALL"
+      ? Prisma.empty
+      : Prisma.sql`WHERE "chargedAgainst" = ${source}`;
   return Prisma.sql`
     WITH classified AS (
       SELECT e."id", e."metric"::text AS "metric", e."quantity", e."occurredAt",
@@ -106,7 +123,8 @@ export function unifiedLedgerQuery(input: LedgerInput): Prisma.Sql {
 }
 
 export async function readUnifiedLedger(
-  db: Pick<PrismaClient, "$queryRaw">, input: LedgerInput,
+  db: Pick<PrismaClient, "$queryRaw">,
+  input: LedgerInput,
 ) {
   const rows = await db.$queryRaw<LedgerRow[]>(unifiedLedgerQuery(input));
   const head = rows[0];
@@ -114,22 +132,40 @@ export async function readUnifiedLedger(
   const total = Number(head.total);
   const quantity = (value: Prisma.Decimal | null) => {
     const number = value === null ? 0 : Number(value);
-    if (!Number.isSafeInteger(number) || (value !== null && !new Prisma.Decimal(number).equals(value)))
+    if (
+      !Number.isSafeInteger(number) ||
+      (value !== null && !new Prisma.Decimal(number).equals(value))
+    )
       throw new Error("Invalid recovery credit quantity");
     return number;
   };
   if (!Number.isSafeInteger(total) || total < 0 || rows.length > input.pageSize)
     throw new Error("Invalid usage page aggregate");
-  const events = rows.flatMap(row => {
+  const events = rows.flatMap((row) => {
     if (row.id === null) return [];
-    if (row.metric !== "RECOVERY_CONVERSATION" || row.occurredAt === null ||
-      row.chargedAgainst === null || row.quantity === null || !isCreditSource(row.chargedAgainst) || String(row.chargedAgainst) === "ALL") throw new Error("Invalid usage row");
-    if (input.source !== "ALL" && row.chargedAgainst !== input.source) throw new Error("Invalid usage source");
-    return [{
-      id: row.id, metric: row.metric, quantity: quantity(row.quantity), occurredAt: row.occurredAt,
-      sourceId: row.sourceId, billingPeriodId: row.billingPeriodId,
-      correctionOfUsageEventId: row.correctionOfUsageEventId, chargedAgainst: row.chargedAgainst,
-    }];
+    if (
+      row.metric !== "RECOVERY_CONVERSATION" ||
+      row.occurredAt === null ||
+      row.chargedAgainst === null ||
+      row.quantity === null ||
+      !isCreditSource(row.chargedAgainst) ||
+      String(row.chargedAgainst) === "ALL"
+    )
+      throw new Error("Invalid usage row");
+    if (input.source !== "ALL" && row.chargedAgainst !== input.source)
+      throw new Error("Invalid usage source");
+    return [
+      {
+        id: row.id,
+        metric: row.metric,
+        quantity: quantity(row.quantity),
+        occurredAt: row.occurredAt,
+        sourceId: row.sourceId,
+        billingPeriodId: row.billingPeriodId,
+        correctionOfUsageEventId: row.correctionOfUsageEventId,
+        chargedAgainst: row.chargedAgainst,
+      },
+    ];
   });
   if (events.length > total) throw new Error("Invalid usage page count");
   return { events, total, totalQuantity: quantity(head.totalQuantity) };

@@ -24,9 +24,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WooConsentEvent'
+              $ref: "#/components/schemas/WooConsentEvent"
       responses:
-        '200':
+        "200":
           description: Committed event or original immutable idempotent result
           headers:
             Cache-Control:
@@ -36,18 +36,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WooConsentResponse'
-        '400':
+                $ref: "#/components/schemas/WooConsentResponse"
+        "400":
           description: Invalid/forged request or checkout assertion
-        '401':
+        "401":
           description: Missing, invalid, revoked or rotated installation
-        '409':
+        "409":
           description: Event replay conflict, stale choice, ambiguous phone or disabled grant
-        '413':
+        "413":
           description: Request exceeds 8192 bytes
-        '422':
+        "422":
           description: Unverifiable or mismatched phone recipient
-        '503':
+        "503":
           description: No durable consent acknowledgement; request can be retried
 components:
   securitySchemes:
@@ -63,7 +63,16 @@ components:
     WooConsentEvent:
       type: object
       additionalProperties: false
-      required: [schemaVersion, eventId, decision, purpose, canonicalPhone, checkoutAction, disclosure]
+      required:
+        [
+          schemaVersion,
+          eventId,
+          decision,
+          purpose,
+          canonicalPhone,
+          checkoutAction,
+          disclosure,
+        ]
       properties:
         schemaVersion:
           const: woo.whatsapp-consent.v1
@@ -71,7 +80,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
         decision:
           enum: [GRANT, REVOKE]
         purpose:
@@ -79,13 +88,13 @@ components:
         canonicalPhone:
           type: string
           maxLength: 15
-          pattern: '^[1-9][0-9]{1,14}$'
+          pattern: "^[1-9][0-9]{1,14}$"
         checkoutAction:
-          $ref: '#/components/schemas/VerifiedCheckoutAction'
+          $ref: "#/components/schemas/VerifiedCheckoutAction"
         disclosure:
           oneOf:
-            - $ref: '#/components/schemas/MarketingDisclosure'
-            - type: 'null'
+            - $ref: "#/components/schemas/MarketingDisclosure"
+            - type: "null"
       allOf:
         - if:
             properties:
@@ -94,19 +103,30 @@ components:
           then:
             properties:
               disclosure:
-                $ref: '#/components/schemas/MarketingDisclosure'
+                $ref: "#/components/schemas/MarketingDisclosure"
     VerifiedCheckoutAction:
       type: object
       additionalProperties: false
-      required: [checkoutKey, checkoutMode, source, fieldId, selection,
-        userInitiated, nonceVerified, sessionVerified, serverObservedPhone,
-        verifiedCountryCode, occurredAt]
+      required:
+        [
+          checkoutKey,
+          checkoutMode,
+          source,
+          fieldId,
+          selection,
+          userInitiated,
+          nonceVerified,
+          sessionVerified,
+          serverObservedPhone,
+          verifiedCountryCode,
+          occurredAt,
+        ]
       properties:
         checkoutKey:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
         checkoutMode:
           enum: [CLASSIC, BLOCKS]
         source:
@@ -128,8 +148,8 @@ components:
         verifiedCountryCode:
           oneOf:
             - type: string
-              pattern: '^[A-Z]{2}$'
-            - type: 'null'
+              pattern: "^[A-Z]{2}$"
+            - type: "null"
         occurredAt:
           type: string
           description: UTC millisecond ISO-8601, strictly increasing by recipient
@@ -167,7 +187,8 @@ components:
     WooConsentResponse:
       type: object
       additionalProperties: false
-      required: [schemaVersion, status, decision, consentRevision, decisionSequence]
+      required:
+        [schemaVersion, status, decision, consentRevision, decisionSequence]
       properties:
         schemaVersion:
           const: woo.whatsapp-consent.v1
@@ -177,7 +198,7 @@ components:
           enum: [GRANT, REVOKE]
         consentRevision:
           type: string
-          pattern: '^[1-9][0-9]*$'
+          pattern: "^[1-9][0-9]*$"
         decisionSequence:
           type: string
-          pattern: '^[1-9][0-9]*$'
+          pattern: "^[1-9][0-9]*$"

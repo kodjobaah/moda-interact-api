@@ -74,7 +74,7 @@ silently retrying with a newer revision.
 
 - `SUPPRESS`: sets `MERCHANT_OPT_OUT`, including on an unconsented known phone;
   it **never** grants consent.
-- `REENABLE`: can clear *only* `MERCHANT_OPT_OUT` and requires an already
+- `REENABLE`: can clear _only_ `MERCHANT_OPT_OUT` and requires an already
   `GRANTED` `WOO_MODA_CHECKBOX` consent decision on the same current phone.
 - `RECORD_CUSTOMER_STOP`: sets terminal `CUSTOMER_STOP`, even if consent is
   unknown or merchant suppression already exists. No merchant call clears it.

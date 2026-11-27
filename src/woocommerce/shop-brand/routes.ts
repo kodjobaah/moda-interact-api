@@ -13,9 +13,13 @@ export function createWooShopBrandRoute(options: {
   logger: StructuredLogger;
 }) {
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const url = new URL(request.url ?? "/", "http://localhost");
-      if (url.pathname !== WOO_SHOP_BRAND_PATH || request.method !== "POST") return false;
+      if (url.pathname !== WOO_SHOP_BRAND_PATH || request.method !== "POST")
+        return false;
       try {
         const principal = await options.authenticator.authenticate(request);
         if (url.search) throw new WooShopBrandHttpError(400, "invalid_request");
@@ -24,25 +28,31 @@ export function createWooShopBrandRoute(options: {
         // best-effort queue wake or external media-processing operation.
         const result = await options.service.record(principal, snapshot);
         options.logger.info("woocommerce.shop_brand.recorded", {
-          shopId: principal.shopId, eventId: snapshot.eventId, outcome: result.status,
+          shopId: principal.shopId,
+          eventId: snapshot.eventId,
+          outcome: result.status,
         });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) {
           sendNoStoreJson(response, 401, { error: "unauthorized" });
         } else if (error instanceof WooShopBrandHttpError) {
-          options.logger.warn("woocommerce.shop_brand.rejected", { reason: error.code,
+          options.logger.warn("woocommerce.shop_brand.rejected", {
+            reason: error.code,
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
           // Log the original exception so the root cause is visible alongside the 503 classification.
-          options.logger.warn("woocommerce.shop_brand.unavailable", { reason: "database_unavailable",
+          options.logger.warn("woocommerce.shop_brand.unavailable", {
+            reason: "database_unavailable",
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });

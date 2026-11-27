@@ -1,6 +1,11 @@
 /** The first, deliberately narrow subset of the ARCH-030 Woo read catalogue. */
 export type WooProductReadRequest =
-  | { operation: "products.list"; page?: number; perPage?: number; search?: string }
+  | {
+      operation: "products.list";
+      page?: number;
+      perPage?: number;
+      search?: string;
+    }
   | { operation: "products.retrieve"; productId: number };
 
 export type WooProductReadOperation = WooProductReadRequest["operation"];
@@ -22,11 +27,15 @@ export interface PreparedWooProductRequest {
 }
 
 export class WooProductInputError extends Error {
-  constructor() { super("invalid_operation"); }
+  constructor() {
+    super("invalid_operation");
+  }
 }
 
 export class WooProductResponseError extends Error {
-  constructor() { super("invalid_response"); }
+  constructor() {
+    super("invalid_response");
+  }
 }
 
 const FIELDS = "id,name,sku,price,stock_status,stock_quantity";
@@ -35,15 +44,30 @@ const MAX_PER_PAGE = 20;
 const MAX_DETAIL_BYTES = 32768;
 const MAX_LIST_BYTES = 131072;
 
-function positiveInt(value: unknown, maximum = Number.MAX_SAFE_INTEGER): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value >= 1 && value <= maximum;
+function positiveInt(
+  value: unknown,
+  maximum = Number.MAX_SAFE_INTEGER,
+): value is number {
+  return (
+    typeof value === "number" &&
+    Number.isSafeInteger(value) &&
+    value >= 1 &&
+    value <= maximum
+  );
 }
 
 /** Preserve the previous ASCII control policy without a control-character regex. */
-function hasForbiddenControl(value: string, allowTextWhitespace: boolean): boolean {
+function hasForbiddenControl(
+  value: string,
+  allowTextWhitespace: boolean,
+): boolean {
   for (let index = 0; index < value.length; index += 1) {
     const code = value.charCodeAt(index);
-    if (code < 0x20 && (!allowTextWhitespace || (code !== 0x09 && code !== 0x0a && code !== 0x0d))) {
+    if (
+      code < 0x20 &&
+      (!allowTextWhitespace ||
+        (code !== 0x09 && code !== 0x0a && code !== 0x0d))
+    ) {
       return true;
     }
     if (!allowTextWhitespace && code === 0x7f) return true;
@@ -52,59 +76,102 @@ function hasForbiddenControl(value: string, allowTextWhitespace: boolean): boole
 }
 
 /** Reject additional attributes, rather than allowing future callers to smuggle paths or headers. */
-export function prepareWooProductRequest(value: unknown): PreparedWooProductRequest {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new WooProductInputError();
+export function prepareWooProductRequest(
+  value: unknown,
+): PreparedWooProductRequest {
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new WooProductInputError();
   const request = value as Record<string, unknown>;
   if (request.operation === "products.list") {
-    if (Object.keys(request).some((key) => !["operation", "page", "perPage", "search"].includes(key))) {
+    if (
+      Object.keys(request).some(
+        (key) => !["operation", "page", "perPage", "search"].includes(key),
+      )
+    ) {
       throw new WooProductInputError();
     }
     const page = request.page ?? 1;
     const perPage = request.perPage ?? 10;
-    if (!positiveInt(page, MAX_PAGE) || !positiveInt(perPage, MAX_PER_PAGE)) throw new WooProductInputError();
-    if (request.search !== undefined && (
-      typeof request.search !== "string" || request.search.trim() !== request.search ||
-      request.search.length < 1 || request.search.length > 100 || hasForbiddenControl(request.search, false)
-    )) throw new WooProductInputError();
-    const query = new URLSearchParams({ context: "view", page: String(page), per_page: String(perPage), _fields: FIELDS });
+    if (!positiveInt(page, MAX_PAGE) || !positiveInt(perPage, MAX_PER_PAGE))
+      throw new WooProductInputError();
+    if (
+      request.search !== undefined &&
+      (typeof request.search !== "string" ||
+        request.search.trim() !== request.search ||
+        request.search.length < 1 ||
+        request.search.length > 100 ||
+        hasForbiddenControl(request.search, false))
+    )
+      throw new WooProductInputError();
+    const query = new URLSearchParams({
+      context: "view",
+      page: String(page),
+      per_page: String(perPage),
+      _fields: FIELDS,
+    });
     if (typeof request.search === "string") query.set("search", request.search);
     return {
-      operation: "products.list", path: `/wp-json/wc/v3/products?${query.toString()}`,
-      maxItems: perPage, maxBytes: MAX_LIST_BYTES,
+      operation: "products.list",
+      path: `/wp-json/wc/v3/products?${query.toString()}`,
+      maxItems: perPage,
+      maxBytes: MAX_LIST_BYTES,
     };
   }
   if (request.operation === "products.retrieve") {
-    if (Object.keys(request).some((key) => !["operation", "productId"].includes(key)) ||
-      !positiveInt(request.productId)) throw new WooProductInputError();
+    if (
+      Object.keys(request).some(
+        (key) => !["operation", "productId"].includes(key),
+      ) ||
+      !positiveInt(request.productId)
+    )
+      throw new WooProductInputError();
     const query = new URLSearchParams({ context: "view", _fields: FIELDS });
     return {
-      operation: "products.retrieve", path: `/wp-json/wc/v3/products/${request.productId}?${query.toString()}`,
-      maxItems: 1, maxBytes: MAX_DETAIL_BYTES,
+      operation: "products.retrieve",
+      path: `/wp-json/wc/v3/products/${request.productId}?${query.toString()}`,
+      maxItems: 1,
+      maxBytes: MAX_DETAIL_BYTES,
     };
   }
   throw new WooProductInputError();
 }
 
 function boundedString(value: unknown, maxLength: number): value is string {
-  return typeof value === "string" && value.length <= maxLength && !hasForbiddenControl(value, true);
+  return (
+    typeof value === "string" &&
+    value.length <= maxLength &&
+    !hasForbiddenControl(value, true)
+  );
 }
 
 /** Only explicitly approved product fields leave the API, never raw provider objects. */
 function productView(value: unknown): WooProductView {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new WooProductResponseError();
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new WooProductResponseError();
   const row = value as Record<string, unknown>;
-  if (!positiveInt(row.id) || !boundedString(row.name, 1024) ||
-      !boundedString(row.sku, 255) || !boundedString(row.price, 64) ||
-      (row.stock_status !== null && row.stock_status !== "instock" &&
-       row.stock_status !== "outofstock" && row.stock_status !== "onbackorder") ||
-      (row.stock_quantity !== null &&
-       (typeof row.stock_quantity !== "number" || !Number.isSafeInteger(row.stock_quantity) ||
-        Math.abs(row.stock_quantity) > 1_000_000_000))) {
+  if (
+    !positiveInt(row.id) ||
+    !boundedString(row.name, 1024) ||
+    !boundedString(row.sku, 255) ||
+    !boundedString(row.price, 64) ||
+    (row.stock_status !== null &&
+      row.stock_status !== "instock" &&
+      row.stock_status !== "outofstock" &&
+      row.stock_status !== "onbackorder") ||
+    (row.stock_quantity !== null &&
+      (typeof row.stock_quantity !== "number" ||
+        !Number.isSafeInteger(row.stock_quantity) ||
+        Math.abs(row.stock_quantity) > 1_000_000_000))
+  ) {
     throw new WooProductResponseError();
   }
   return {
-    id: row.id, name: row.name, sku: row.sku, price: row.price,
-    stockStatus: row.stock_status, stockQuantity: row.stock_quantity,
+    id: row.id,
+    name: row.name,
+    sku: row.sku,
+    price: row.price,
+    stockStatus: row.stock_status,
+    stockQuantity: row.stock_quantity,
   } as WooProductView;
 }
 
@@ -113,6 +180,7 @@ export function projectWooProducts(
   request: PreparedWooProductRequest,
 ): WooProductView[] | WooProductView {
   if (request.operation === "products.retrieve") return productView(response);
-  if (!Array.isArray(response) || response.length > request.maxItems) throw new WooProductResponseError();
+  if (!Array.isArray(response) || response.length > request.maxItems)
+    throw new WooProductResponseError();
   return response.map(productView);
 }

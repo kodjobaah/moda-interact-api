@@ -2,159 +2,313 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../../auth/woo-installation/principal.js";
 import { WooUnauthenticatedError } from "../../../auth/woo-installation/authenticator.js";
-import { humanPayloadDigest, SendHttpError, type HumanSendInput, type SendResponse } from "./contract.js";
-import { allowedFollowUpChoice, readEligibleFollowUpChoices,
-  type SenderWabaReader } from "./follow-up-catalogue.js";
-import { configuredFollowUpDue, latestVerifiedCustomerInbound,
-  requireRecoveryExecution, windowOpen } from "./eligibility.js";
+import {
+  humanPayloadDigest,
+  SendHttpError,
+  type HumanSendInput,
+  type SendResponse,
+} from "./contract.js";
+import {
+  allowedFollowUpChoice,
+  readEligibleFollowUpChoices,
+  type SenderWabaReader,
+} from "./follow-up-catalogue.js";
+import {
+  configuredFollowUpDue,
+  latestVerifiedCustomerInbound,
+  requireRecoveryExecution,
+  windowOpen,
+} from "./eligibility.js";
 import { readMerchantOutreach } from "../../recoveries/detail/merchant-outreach-read.js";
 
-interface ShopRow { id: string; domain: string; status: string; platform: string;
-  shopifyShopId: string | null; onboardingCompleted: boolean }
-interface InstallationRow { id: string; shopId: string; canonicalSiteUrl: string;
-  credentialVersion: number; status: string; revokedAt: Date | null }
-interface ConversationRow { id: string; shopId: string | null; checkoutRecoveryId: string;
-  controlMode: string; controlRevision: number; type: string; recoveryStatus: string }
+interface ShopRow {
+  id: string;
+  domain: string;
+  status: string;
+  platform: string;
+  shopifyShopId: string | null;
+  onboardingCompleted: boolean;
+}
+interface InstallationRow {
+  id: string;
+  shopId: string;
+  canonicalSiteUrl: string;
+  credentialVersion: number;
+  status: string;
+  revokedAt: Date | null;
+}
+interface ConversationRow {
+  id: string;
+  shopId: string | null;
+  checkoutRecoveryId: string;
+  controlMode: string;
+  controlRevision: number;
+  type: string;
+  recoveryStatus: string;
+}
 
 /** Shared with status GET: always verify Shop -> installation in transaction.
  * For admission Shop FOR UPDATE also fences the absent restriction-row case.
  */
-export async function requireCurrentWooShop(tx: Prisma.TransactionClient, principal: WooInstallationPrincipal,
-  write: boolean): Promise<ShopRow> {
-  const shopRows = write ? await tx.$queryRaw<ShopRow[]>`SELECT "id","domain","status"::text AS "status",
+export async function requireCurrentWooShop(
+  tx: Prisma.TransactionClient,
+  principal: WooInstallationPrincipal,
+  write: boolean,
+): Promise<ShopRow> {
+  const shopRows = write
+    ? await tx.$queryRaw<
+        ShopRow[]
+      >`SELECT "id","domain","status"::text AS "status",
     "platform"::text AS "platform","shopifyShopId","onboardingCompleted"
     FROM "commerce"."Shop" WHERE "id"=${principal.shopId} FOR UPDATE`
-    : await tx.$queryRaw<ShopRow[]>`SELECT "id","domain","status"::text AS "status",
+    : await tx.$queryRaw<
+        ShopRow[]
+      >`SELECT "id","domain","status"::text AS "status",
     "platform"::text AS "platform","shopifyShopId","onboardingCompleted"
     FROM "commerce"."Shop" WHERE "id"=${principal.shopId}`;
   const shop = shopRows[0];
-  if (!shop || shop.domain !== principal.canonicalSiteUrl || shop.platform !== "WOOCOMMERCE" ||
-    shop.shopifyShopId !== null || shop.status !== "ACTIVE") throw new WooUnauthenticatedError();
-  const installations = await tx.$queryRaw<InstallationRow[]>`SELECT "id","shopId","canonicalSiteUrl",
+  if (
+    !shop ||
+    shop.domain !== principal.canonicalSiteUrl ||
+    shop.platform !== "WOOCOMMERCE" ||
+    shop.shopifyShopId !== null ||
+    shop.status !== "ACTIVE"
+  )
+    throw new WooUnauthenticatedError();
+  const installations = await tx.$queryRaw<
+    InstallationRow[]
+  >`SELECT "id","shopId","canonicalSiteUrl",
     "credentialVersion","status"::text AS "status","revokedAt"
     FROM "woocommerce"."WooCommerceInstallation" WHERE "id"=${principal.installationId} FOR SHARE`;
   const installation = installations[0];
-  if (!installation || installation.id !== principal.installationId || installation.shopId !== shop.id ||
+  if (
+    !installation ||
+    installation.id !== principal.installationId ||
+    installation.shopId !== shop.id ||
     installation.canonicalSiteUrl !== principal.canonicalSiteUrl ||
-    installation.credentialVersion !== principal.credentialVersion || installation.status !== "ACTIVE" ||
-    installation.revokedAt !== null) throw new WooUnauthenticatedError();
+    installation.credentialVersion !== principal.credentialVersion ||
+    installation.status !== "ACTIVE" ||
+    installation.revokedAt !== null
+  )
+    throw new WooUnauthenticatedError();
   return shop;
 }
 
-export async function ownedRecoveryConversation(tx: Prisma.TransactionClient,
-  shopId: string, conversationId: string, lock: boolean): Promise<ConversationRow> {
-  const records = lock ? await tx.$queryRaw<ConversationRow[]>`SELECT c."id",c."shopId",c."checkoutRecoveryId",
+export async function ownedRecoveryConversation(
+  tx: Prisma.TransactionClient,
+  shopId: string,
+  conversationId: string,
+  lock: boolean,
+): Promise<ConversationRow> {
+  const records = lock
+    ? await tx.$queryRaw<
+        ConversationRow[]
+      >`SELECT c."id",c."shopId",c."checkoutRecoveryId",
     c."controlMode"::text AS "controlMode",c."controlRevision",c."type"::text AS "type",
     r."status"::text AS "recoveryStatus"
     FROM "whatsapp"."Conversation" c JOIN "commerce"."CheckoutRecovery" r
       ON r."id"=c."checkoutRecoveryId"
     WHERE c."id"=${conversationId} AND r."shopId"=${shopId}
     FOR UPDATE OF c FOR SHARE OF r`
-    : await tx.$queryRaw<ConversationRow[]>`SELECT c."id",c."shopId",c."checkoutRecoveryId",
+    : await tx.$queryRaw<
+        ConversationRow[]
+      >`SELECT c."id",c."shopId",c."checkoutRecoveryId",
       c."controlMode"::text AS "controlMode",c."controlRevision",c."type"::text AS "type",
       r."status"::text AS "recoveryStatus"
       FROM "whatsapp"."Conversation" c JOIN "commerce"."CheckoutRecovery" r
         ON r."id"=c."checkoutRecoveryId"
       WHERE c."id"=${conversationId} AND r."shopId"=${shopId}`;
   const conversation = records[0];
-  if (!conversation || conversation.type !== "RECOVERY" ||
-    (conversation.shopId !== null && conversation.shopId !== shopId)) throw new SendHttpError(404,"not_found");
+  if (
+    !conversation ||
+    conversation.type !== "RECOVERY" ||
+    (conversation.shopId !== null && conversation.shopId !== shopId)
+  )
+    throw new SendHttpError(404, "not_found");
   return conversation;
 }
 
-const commandReply = (record: { id: string; conversationId: string; kind: string;
-  state: string; expectedControlRevision: number }): SendResponse => ({
-  schemaVersion: 1, commandId: record.id, conversationId: record.conversationId,
-  kind: record.kind as SendResponse["kind"], state: record.state as SendResponse["state"],
+const commandReply = (record: {
+  id: string;
+  conversationId: string;
+  kind: string;
+  state: string;
+  expectedControlRevision: number;
+}): SendResponse => ({
+  schemaVersion: 1,
+  commandId: record.id,
+  conversationId: record.conversationId,
+  kind: record.kind as SendResponse["kind"],
+  state: record.state as SendResponse["state"],
   controlRevision: record.expectedControlRevision,
 });
-const goodRecipient = (recipient: string): boolean => /^\+?[1-9]\d{6,14}$/.test(recipient);
+const goodRecipient = (recipient: string): boolean =>
+  /^\+?[1-9]\d{6,14}$/.test(recipient);
 
 /** API only produces durable commands; Background owns Meta, moderation, Redis and credits.
  * Shop -> installation -> conversation -> initial outreach -> sequence-two/command
  * is the same lock order as the DATABASE-001/BG002 provider fence.
  */
 export class MerchantConversationMessageAdmissionService {
-  constructor(private readonly database: Pick<PrismaClient,"$transaction">,
+  constructor(
+    private readonly database: Pick<PrismaClient, "$transaction">,
     private readonly now: () => Date = () => new Date(),
-    private readonly sender?: SenderWabaReader) {}
+    private readonly sender?: SenderWabaReader,
+  ) {}
 
-  async admit(principal: WooInstallationPrincipal, conversationId: string,
-    input: HumanSendInput): Promise<{ code: 200 | 202; response: SendResponse }> {
+  async admit(
+    principal: WooInstallationPrincipal,
+    conversationId: string,
+    input: HumanSendInput,
+  ): Promise<{ code: 200 | 202; response: SendResponse }> {
     // Validate even for direct service calls, before idempotent replay or writes.
     // The route parser performs the same check on HTTP input.
-    if (input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" &&
-        !(Array.isArray(input.templateParameters) && input.templateParameters.length === 0) &&
-        !(input.templateParameters && typeof input.templateParameters === "object" &&
-          !Array.isArray(input.templateParameters) && Object.keys(input.templateParameters).length === 0)) {
+    if (
+      input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" &&
+      !(
+        Array.isArray(input.templateParameters) &&
+        input.templateParameters.length === 0
+      ) &&
+      !(
+        input.templateParameters &&
+        typeof input.templateParameters === "object" &&
+        !Array.isArray(input.templateParameters) &&
+        Object.keys(input.templateParameters).length === 0
+      )
+    ) {
       throw new SendHttpError(400, "invalid_request");
     }
     const digest = humanPayloadDigest(conversationId, input);
     try {
-      return await this.database.$transaction(async (tx) => {
-        const shop = await requireCurrentWooShop(tx, principal, true);
-        const conversation = await ownedRecoveryConversation(tx, principal.shopId, conversationId, true);
-        // Replay lookup precedes window/mode/restriction checks: a retry never
-        // reopens a cancelled/denied command or consumes another sequence-two slot.
-        const prior = await tx.merchantConversationSendCommand.findUnique({
-          where: { shopId_idempotencyKey: { shopId: principal.shopId, idempotencyKey: input.idempotencyKey } },
-        });
-        if (prior) {
-          if (prior.conversationId !== conversationId || prior.payloadSha256 !== digest ||
-            prior.kind !== input.kind || prior.expectedControlRevision !== input.expectedControlRevision)
-            throw new SendHttpError(409,"idempotency_conflict");
-          return { code: 200 as const, response: commandReply(prior) };
-        }
-        if (conversation.controlMode !== "HUMAN") throw new SendHttpError(409,"not_human_controlled");
-        if (conversation.controlRevision !== input.expectedControlRevision)
-          throw new SendHttpError(409,"stale_control_revision");
-        const restriction = await tx.shopHumanMessagingRestriction.findUnique({
-          where: { shopId: principal.shopId }, select: { status: true },
-        });
-        if (restriction?.status === "SUSPENDED") throw new SendHttpError(403,"human_messaging_suspended");
-        if (restriction && restriction.status !== "ACTIVE") throw new SendHttpError(409,"not_human_controlled");
-        if (["COMPLETED","CANCELLED","EXPIRED"].includes(conversation.recoveryStatus))
-          throw new SendHttpError(409,"follow_up_unavailable");
-        await requireRecoveryExecution(tx, shop.id, shop.onboardingCompleted);
+      return await this.database.$transaction(
+        async (tx) => {
+          const shop = await requireCurrentWooShop(tx, principal, true);
+          const conversation = await ownedRecoveryConversation(
+            tx,
+            principal.shopId,
+            conversationId,
+            true,
+          );
+          // Replay lookup precedes window/mode/restriction checks: a retry never
+          // reopens a cancelled/denied command or consumes another sequence-two slot.
+          const prior = await tx.merchantConversationSendCommand.findUnique({
+            where: {
+              shopId_idempotencyKey: {
+                shopId: principal.shopId,
+                idempotencyKey: input.idempotencyKey,
+              },
+            },
+          });
+          if (prior) {
+            if (
+              prior.conversationId !== conversationId ||
+              prior.payloadSha256 !== digest ||
+              prior.kind !== input.kind ||
+              prior.expectedControlRevision !== input.expectedControlRevision
+            )
+              throw new SendHttpError(409, "idempotency_conflict");
+            return { code: 200 as const, response: commandReply(prior) };
+          }
+          if (conversation.controlMode !== "HUMAN")
+            throw new SendHttpError(409, "not_human_controlled");
+          if (conversation.controlRevision !== input.expectedControlRevision)
+            throw new SendHttpError(409, "stale_control_revision");
+          const restriction = await tx.shopHumanMessagingRestriction.findUnique(
+            {
+              where: { shopId: principal.shopId },
+              select: { status: true },
+            },
+          );
+          if (restriction?.status === "SUSPENDED")
+            throw new SendHttpError(403, "human_messaging_suspended");
+          if (restriction && restriction.status !== "ACTIVE")
+            throw new SendHttpError(409, "not_human_controlled");
+          if (
+            ["COMPLETED", "CANCELLED", "EXPIRED"].includes(
+              conversation.recoveryStatus,
+            )
+          )
+            throw new SendHttpError(409, "follow_up_unavailable");
+          await requireRecoveryExecution(tx, shop.id, shop.onboardingCompleted);
 
-        const now = this.now();
-        if (!Number.isFinite(now.getTime())) throw new SendHttpError(500,"internal_error");
-        const evidence = await readMerchantOutreach(tx, { shopId: shop.id,
-          recoveryId: conversation.checkoutRecoveryId, conversationId: conversation.id,
-          platform: "WOOCOMMERCE" }, now, true);
-        const contact = evidence.replyAnchor;
-        if (!contact?.sentAt) throw new SendHttpError(409,"follow_up_unavailable");
-        const recipient = contact.recipient;
-        if (!goodRecipient(recipient)) throw new SendHttpError(409,"recipient_unavailable");
-        const reachability = await tx.whatsAppRecipientReachability.findUnique({
-          where: { shopId_recipient: { shopId: principal.shopId, recipient } },
-          select: { suppressUntil: true },
-        });
-        if (reachability?.suppressUntil && reachability.suppressUntil > now)
-          throw new SendHttpError(409,"recipient_unavailable");
-        const lastInbound = await latestVerifiedCustomerInbound(tx, conversation.id, contact.sentAt, now);
-        let attemptId: string | undefined;
-        let commandId: string | undefined;
-        if (input.kind === "HUMAN_TEXT") {
-          if (!windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
-          commandId = randomUUID();
-        } else {
-          if (windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
-          const initial = evidence.initial;
-          if (!initial || initial.recipient !== recipient || evidence.followUpUsed ||
-              !configuredFollowUpDue(initial.followUpDueAt, now))
-            throw new SendHttpError(409,"follow_up_unavailable");
-          // Only the exact current published Moda assignment and approved,
-          // fresh, drift-free registration is a permitted merchant choice.
-          // No client-selected WABA or unverified positive offer is trusted.
-          const candidates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now,
-            { recoveryId: conversation.checkoutRecoveryId, conversationId: conversation.id, initial });
-          if (!allowedFollowUpChoice(candidates, input.templateName, input.templateLanguage))
-            throw new SendHttpError(409,"template_not_allowed");
-          commandId = randomUUID();
-          // Create only the shared existing sequence=2. Shop/Conversation and
-          // initial attempt remain locked while the claim and command commit.
-          await tx.$executeRaw`INSERT INTO "commerce"."RecoveryOutreachAttempt"
+          const now = this.now();
+          if (!Number.isFinite(now.getTime()))
+            throw new SendHttpError(500, "internal_error");
+          const evidence = await readMerchantOutreach(
+            tx,
+            {
+              shopId: shop.id,
+              recoveryId: conversation.checkoutRecoveryId,
+              conversationId: conversation.id,
+              platform: "WOOCOMMERCE",
+            },
+            now,
+            true,
+          );
+          const contact = evidence.replyAnchor;
+          if (!contact?.sentAt)
+            throw new SendHttpError(409, "follow_up_unavailable");
+          const recipient = contact.recipient;
+          if (!goodRecipient(recipient))
+            throw new SendHttpError(409, "recipient_unavailable");
+          const reachability =
+            await tx.whatsAppRecipientReachability.findUnique({
+              where: {
+                shopId_recipient: { shopId: principal.shopId, recipient },
+              },
+              select: { suppressUntil: true },
+            });
+          if (reachability?.suppressUntil && reachability.suppressUntil > now)
+            throw new SendHttpError(409, "recipient_unavailable");
+          const lastInbound = await latestVerifiedCustomerInbound(
+            tx,
+            conversation.id,
+            contact.sentAt,
+            now,
+          );
+          let attemptId: string | undefined;
+          let commandId: string | undefined;
+          if (input.kind === "HUMAN_TEXT") {
+            if (!windowOpen(lastInbound, now))
+              throw new SendHttpError(409, "service_window_closed");
+            commandId = randomUUID();
+          } else {
+            if (windowOpen(lastInbound, now))
+              throw new SendHttpError(409, "service_window_closed");
+            const initial = evidence.initial;
+            if (
+              !initial ||
+              initial.recipient !== recipient ||
+              evidence.followUpUsed ||
+              !configuredFollowUpDue(initial.followUpDueAt, now)
+            )
+              throw new SendHttpError(409, "follow_up_unavailable");
+            // Only the exact current published Moda assignment and approved,
+            // fresh, drift-free registration is a permitted merchant choice.
+            // No client-selected WABA or unverified positive offer is trusted.
+            const candidates = await readEligibleFollowUpChoices(
+              tx,
+              shop.id,
+              this.sender,
+              now,
+              {
+                recoveryId: conversation.checkoutRecoveryId,
+                conversationId: conversation.id,
+                initial,
+              },
+            );
+            if (
+              !allowedFollowUpChoice(
+                candidates,
+                input.templateName,
+                input.templateLanguage,
+              )
+            )
+              throw new SendHttpError(409, "template_not_allowed");
+            commandId = randomUUID();
+            // Create only the shared existing sequence=2. Shop/Conversation and
+            // initial attempt remain locked while the claim and command commit.
+            await tx.$executeRaw`INSERT INTO "commerce"."RecoveryOutreachAttempt"
             ("id","checkoutRecoveryId","recipient","sequence","trigger","status",
              "configuredOfferMode","fixedShopifyDiscountId","offerSnapshot","createdAt","updatedAt")
             SELECT ${randomUUID()}, a."checkoutRecoveryId", a."recipient",2,
@@ -163,45 +317,91 @@ export class MerchantConversationMessageAdmissionService {
               a."configuredOfferMode",a."fixedShopifyDiscountId",a."offerSnapshot",${now},${now}
             FROM "commerce"."RecoveryOutreachAttempt" a WHERE a."id"=${initial.id}
             ON CONFLICT ("checkoutRecoveryId","sequence") DO NOTHING`;
-          const sequenceTwo = await tx.$queryRaw<Array<{ id: string; status: string;
-            initiationKey: string | null; initiatedBy: string | null; claimedAt: Date | null;
-            sentAt: Date | null; outboundMessageId: string | null }>>`
+            const sequenceTwo = await tx.$queryRaw<
+              Array<{
+                id: string;
+                status: string;
+                initiationKey: string | null;
+                initiatedBy: string | null;
+                claimedAt: Date | null;
+                sentAt: Date | null;
+                outboundMessageId: string | null;
+              }>
+            >`
             SELECT "id","status"::text AS "status","initiationKey","initiatedBy"::text AS "initiatedBy",
               "claimedAt","sentAt","outboundMessageId"
             FROM "commerce"."RecoveryOutreachAttempt"
             WHERE "checkoutRecoveryId"=${conversation.checkoutRecoveryId} AND "sequence"=2 FOR UPDATE`;
-          const candidate = sequenceTwo[0];
-          if (!candidate || candidate.status !== "PENDING" || candidate.initiationKey !== null ||
-            candidate.initiatedBy !== null || candidate.claimedAt !== null || candidate.sentAt !== null ||
-            candidate.outboundMessageId !== null) throw new SendHttpError(409,"follow_up_unavailable");
-          const claimed = await tx.recoveryOutreachAttempt.updateMany({
-            where: { id: candidate.id, status: "PENDING", initiationKey: null, initiatedBy: null,
-              claimedAt: null, sentAt: null, outboundMessageId: null },
-            data: { initiatedBy: "HUMAN", initiationKey: commandId,
-              claimedAt: now, trigger: "POST_WINDOW_FOLLOW_UP" },
+            const candidate = sequenceTwo[0];
+            if (
+              !candidate ||
+              candidate.status !== "PENDING" ||
+              candidate.initiationKey !== null ||
+              candidate.initiatedBy !== null ||
+              candidate.claimedAt !== null ||
+              candidate.sentAt !== null ||
+              candidate.outboundMessageId !== null
+            )
+              throw new SendHttpError(409, "follow_up_unavailable");
+            const claimed = await tx.recoveryOutreachAttempt.updateMany({
+              where: {
+                id: candidate.id,
+                status: "PENDING",
+                initiationKey: null,
+                initiatedBy: null,
+                claimedAt: null,
+                sentAt: null,
+                outboundMessageId: null,
+              },
+              data: {
+                initiatedBy: "HUMAN",
+                initiationKey: commandId,
+                claimedAt: now,
+                trigger: "POST_WINDOW_FOLLOW_UP",
+              },
+            });
+            if (claimed.count !== 1)
+              throw new SendHttpError(409, "follow_up_unavailable");
+            attemptId = candidate.id;
+          }
+          // A template command must never be accepted without its durable
+          // sequence-two claim, even if a future branch changes the claim path.
+          if (input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" && !attemptId)
+            throw new SendHttpError(500, "internal_error");
+          if (!commandId) throw new SendHttpError(500, "internal_error");
+          const command = await tx.merchantConversationSendCommand.create({
+            data: {
+              id: commandId,
+              shopId: principal.shopId,
+              conversationId,
+              idempotencyKey: input.idempotencyKey,
+              followUpClaimKey:
+                input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" ? commandId : null,
+              payloadSha256: digest,
+              expectedControlRevision: input.expectedControlRevision,
+              kind: input.kind,
+              recipientSnapshot: recipient,
+              ...(input.kind === "HUMAN_TEXT"
+                ? { textBody: input.textBody }
+                : {
+                    templateName: input.templateName,
+                    templateLanguageCode: input.templateLanguage,
+                    templateParameters: [],
+                    ...(attemptId
+                      ? { recoveryOutreachAttemptId: attemptId }
+                      : {}),
+                  }),
+            },
           });
-          if (claimed.count !== 1) throw new SendHttpError(409,"follow_up_unavailable");
-          attemptId = candidate.id;
-        }
-        // A template command must never be accepted without its durable
-        // sequence-two claim, even if a future branch changes the claim path.
-        if (input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" && !attemptId)
-          throw new SendHttpError(500, "internal_error");
-        if (!commandId) throw new SendHttpError(500, "internal_error");
-        const command = await tx.merchantConversationSendCommand.create({ data: {
-          id: commandId, shopId: principal.shopId, conversationId, idempotencyKey: input.idempotencyKey,
-          followUpClaimKey: input.kind === "RECOVERY_FOLLOW_UP_TEMPLATE" ? commandId : null,
-          payloadSha256: digest, expectedControlRevision: input.expectedControlRevision,
-          kind: input.kind, recipientSnapshot: recipient,
-          ...(input.kind === "HUMAN_TEXT" ? { textBody: input.textBody }
-            : { templateName: input.templateName, templateLanguageCode: input.templateLanguage,
-                templateParameters: [],
-                ...(attemptId ? { recoveryOutreachAttemptId: attemptId } : {}) }),
-        } });
-        return { code: 202 as const, response: commandReply(command) };
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+          return { code: 202 as const, response: commandReply(command) };
+        },
+        { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted },
+      );
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && ["P2002","P2034"].includes(error.code)) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        ["P2002", "P2034"].includes(error.code)
+      ) {
         // Unique idempotency races, sequence-two contention and serialization
         // conflicts must not be interpreted as successful fresh admissions.
         throw new SendHttpError(409, "idempotency_conflict");

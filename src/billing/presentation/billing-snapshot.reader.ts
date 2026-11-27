@@ -31,7 +31,14 @@ export class BillingSnapshotReader {
   }
 
   async readCore() {
-    const [subscription, counters, selection, recurringOperations, latestPurchase, requestedPurchases] = await Promise.all([
+    const [
+      subscription,
+      counters,
+      selection,
+      recurringOperations,
+      latestPurchase,
+      requestedPurchases,
+    ] = await Promise.all([
       this.transaction.subscription.findUnique({
         where: { shopId: this.shopId },
         select: {
@@ -47,8 +54,22 @@ export class BillingSnapshotReader {
           providerCoverageEndAt: true,
           pendingPlanId: true,
           pendingEffectiveAt: true,
-          plan: { select: { id: true, shopifyPlanHandle: true, kind: true, active: true } },
-          pendingPlan: { select: { id: true, shopifyPlanHandle: true, kind: true, active: true } },
+          plan: {
+            select: {
+              id: true,
+              shopifyPlanHandle: true,
+              kind: true,
+              active: true,
+            },
+          },
+          pendingPlan: {
+            select: {
+              id: true,
+              shopifyPlanHandle: true,
+              kind: true,
+              active: true,
+            },
+          },
           billingPeriod: {
             select: {
               id: true,
@@ -62,7 +83,10 @@ export class BillingSnapshotReader {
               periodEnd: true,
               status: true,
               entitlementCounters: {
-                where: { counter: BillingPeriodEntitlementCounterKind.INCLUDED_RECOVERY_CREDITS },
+                where: {
+                  counter:
+                    BillingPeriodEntitlementCounterKind.INCLUDED_RECOVERY_CREDITS,
+                },
                 select: {
                   shopId: true,
                   billingPeriodId: true,
@@ -81,9 +105,21 @@ export class BillingSnapshotReader {
       this.transaction.shopEntitlementCounter.findMany({
         where: {
           shopId: this.shopId,
-          counter: { in: [EntitlementCounter.LIFETIME_FREE_RECOVERY_CREDITS, EntitlementCounter.PURCHASED_RECOVERY_CREDITS] },
+          counter: {
+            in: [
+              EntitlementCounter.LIFETIME_FREE_RECOVERY_CREDITS,
+              EntitlementCounter.PURCHASED_RECOVERY_CREDITS,
+            ],
+          },
         },
-        select: { shopId: true, counter: true, grantedQuantity: true, committedQuantity: true, reservedQuantity: true, refundingQuantity: true },
+        select: {
+          shopId: true,
+          counter: true,
+          grantedQuantity: true,
+          committedQuantity: true,
+          reservedQuantity: true,
+          refundingQuantity: true,
+        },
       }),
       this.transaction.merchantPromotionSelection.findUnique({
         where: { shopId: this.shopId },
@@ -114,8 +150,20 @@ export class BillingSnapshotReader {
       this.transaction.billingOperation.findMany({
         where: {
           shopId: this.shopId,
-          kind: { in: [BillingOperationKind.SUBSCRIPTION_CREATE, BillingOperationKind.PLAN_SWITCH, BillingOperationKind.CANCEL] },
-          state: { in: [BillingOperationState.INITIATING, BillingOperationState.AWAITING_CONFIRMATION, BillingOperationState.OUTCOME_UNKNOWN] },
+          kind: {
+            in: [
+              BillingOperationKind.SUBSCRIPTION_CREATE,
+              BillingOperationKind.PLAN_SWITCH,
+              BillingOperationKind.CANCEL,
+            ],
+          },
+          state: {
+            in: [
+              BillingOperationState.INITIATING,
+              BillingOperationState.AWAITING_CONFIRMATION,
+              BillingOperationState.OUTCOME_UNKNOWN,
+            ],
+          },
         },
         orderBy: [{ createdAt: "asc" }, { id: "asc" }],
         take: 3,
@@ -139,12 +187,20 @@ export class BillingSnapshotReader {
           shopId: this.shopId,
           status: "REQUESTED",
           OR: [
-            { billingOperation: { is: { state: { in: [
-              BillingOperationState.INITIATING,
-              BillingOperationState.AWAITING_CONFIRMATION,
-              BillingOperationState.OUTCOME_UNKNOWN,
-              BillingOperationState.CONFIRMED,
-            ] } } } },
+            {
+              billingOperation: {
+                is: {
+                  state: {
+                    in: [
+                      BillingOperationState.INITIATING,
+                      BillingOperationState.AWAITING_CONFIRMATION,
+                      BillingOperationState.OUTCOME_UNKNOWN,
+                      BillingOperationState.CONFIRMED,
+                    ],
+                  },
+                },
+              },
+            },
             { billingOperation: { is: null } },
           ],
         },
@@ -153,7 +209,14 @@ export class BillingSnapshotReader {
         select: purchaseSelect,
       }),
     ]);
-    return { subscription, counters, selection, recurringOperations, latestPurchase, requestedPurchases };
+    return {
+      subscription,
+      counters,
+      selection,
+      recurringOperations,
+      latestPurchase,
+      requestedPurchases,
+    };
   }
 
   // Catalogue lookups are conditional: the service performs their existing
@@ -191,14 +254,28 @@ export class BillingSnapshotReader {
   readCataloguePlanById(id: string) {
     return this.transaction.merchantPricingPlan.findUnique({
       where: { id },
-      select: { id: true, shopifyPlanHandle: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
+      select: {
+        id: true,
+        shopifyPlanHandle: true,
+        displayName: true,
+        recurringAmountMinor: true,
+        currency: true,
+        billingPeriod: true,
+      },
     });
   }
 
   readCataloguePlanByHandle(shopifyPlanHandle: string) {
     return this.transaction.merchantPricingPlan.findUnique({
       where: { shopifyPlanHandle },
-      select: { id: true, shopifyPlanHandle: true, displayName: true, recurringAmountMinor: true, currency: true, billingPeriod: true },
+      select: {
+        id: true,
+        shopifyPlanHandle: true,
+        displayName: true,
+        recurringAmountMinor: true,
+        currency: true,
+        billingPeriod: true,
+      },
     });
   }
 
@@ -212,7 +289,13 @@ export class BillingSnapshotReader {
       },
       orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: 2,
-      select: { id: true, shopId: true, kind: true, state: true, providerReference: true },
+      select: {
+        id: true,
+        shopId: true,
+        kind: true,
+        state: true,
+        providerReference: true,
+      },
     });
   }
 }
@@ -235,7 +318,12 @@ const purchaseSelect = {
       recoveryCreditPurchaseId: true,
       merchantPricingUsageEventId: true,
       merchantPricingUsageEvent: {
-        select: { id: true, adminLabel: true, creditsGrantedPerUnit: true, merchantPricingPlanId: true },
+        select: {
+          id: true,
+          adminLabel: true,
+          creditsGrantedPerUnit: true,
+          merchantPricingPlanId: true,
+        },
       },
     },
   },

@@ -1,6 +1,9 @@
 import type { PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
-import { isMerchantBootstrapResponse, type MerchantBootstrapResponse } from "./schema.js";
+import {
+  isMerchantBootstrapResponse,
+  type MerchantBootstrapResponse,
+} from "./schema.js";
 
 export type MerchantBootstrapDatabase = Pick<PrismaClient, "shop">;
 
@@ -14,7 +17,9 @@ export class MerchantBootstrapIntegrityError extends Error {
 export class MerchantBootstrapReadService {
   constructor(private readonly database: MerchantBootstrapDatabase) {}
 
-  async read(principal: WooInstallationPrincipal): Promise<MerchantBootstrapResponse> {
+  async read(
+    principal: WooInstallationPrincipal,
+  ): Promise<MerchantBootstrapResponse> {
     const shop = await this.database.shop.findUnique({
       where: { id: principal.shopId },
       select: {
@@ -33,9 +38,13 @@ export class MerchantBootstrapReadService {
           select: {
             shopId: true,
             activeCategoryId: true,
-            activeCategory: { select: { id: true, slug: true, displayName: true } },
+            activeCategory: {
+              select: { id: true, slug: true, displayName: true },
+            },
             pendingCategoryId: true,
-            pendingCategory: { select: { id: true, slug: true, displayName: true } },
+            pendingCategory: {
+              select: { id: true, slug: true, displayName: true },
+            },
             pendingSelectionGeneration: true,
             pendingSelectedAt: true,
           },
@@ -50,17 +59,23 @@ export class MerchantBootstrapReadService {
       shop.shopifyShopId !== null ||
       shop.status !== "ACTIVE" ||
       shop.domain !== principal.canonicalSiteUrl
-    ) throw new MerchantBootstrapIntegrityError();
+    )
+      throw new MerchantBootstrapIntegrityError();
 
     const profile = shop.commerceShopProfile;
     if (
       profile &&
       (profile.shopId !== shop.id ||
-        (profile.activeCategoryId === null) !== (profile.activeCategory === null) ||
-        (profile.activeCategoryId !== null && profile.activeCategory?.id !== profile.activeCategoryId) ||
-        (profile.pendingCategoryId === null) !== (profile.pendingCategory === null) ||
-        (profile.pendingCategoryId !== null && profile.pendingCategory?.id !== profile.pendingCategoryId))
-    ) throw new MerchantBootstrapIntegrityError();
+        (profile.activeCategoryId === null) !==
+          (profile.activeCategory === null) ||
+        (profile.activeCategoryId !== null &&
+          profile.activeCategory?.id !== profile.activeCategoryId) ||
+        (profile.pendingCategoryId === null) !==
+          (profile.pendingCategory === null) ||
+        (profile.pendingCategoryId !== null &&
+          profile.pendingCategory?.id !== profile.pendingCategoryId))
+    )
+      throw new MerchantBootstrapIntegrityError();
 
     const response: MerchantBootstrapResponse = {
       schemaVersion: 1,
@@ -85,7 +100,8 @@ export class MerchantBootstrapReadService {
       },
     };
 
-    if (!isMerchantBootstrapResponse(response)) throw new MerchantBootstrapIntegrityError();
+    if (!isMerchantBootstrapResponse(response))
+      throw new MerchantBootstrapIntegrityError();
     return response;
   }
 }

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
-export type RecurringOperationKind = "SUBSCRIPTION_CREATE" | "PLAN_SWITCH" | "CANCEL";
+export type RecurringOperationKind =
+  "SUBSCRIPTION_CREATE" | "PLAN_SWITCH" | "CANCEL";
 
 export function recoveryCreditPurchaseFingerprint(input: {
   shopId: string;
@@ -13,20 +14,30 @@ export function recoveryCreditPurchaseFingerprint(input: {
     input.merchantPricingUsageEventId,
     String(input.quotedAmountMinor),
     input.quotedCurrency,
-  ]) assertCanonicalField(value);
-  if (!Number.isSafeInteger(input.quotedAmountMinor) || input.quotedAmountMinor < 1) {
+  ])
+    assertCanonicalField(value);
+  if (
+    !Number.isSafeInteger(input.quotedAmountMinor) ||
+    input.quotedAmountMinor < 1
+  ) {
     throw new TypeError("quotedAmountMinor must be a positive safe integer");
   }
-  return createHash("sha256").update(
-    `arch027-topup-v1\nONE_TIME_CHARGE\n${input.shopId}\n${input.merchantPricingUsageEventId}\n${input.quotedAmountMinor}\n${input.quotedCurrency}\n`,
-    "utf8",
-  ).digest();
+  return createHash("sha256")
+    .update(
+      `arch027-topup-v1\nONE_TIME_CHARGE\n${input.shopId}\n${input.merchantPricingUsageEventId}\n${input.quotedAmountMinor}\n${input.quotedCurrency}\n`,
+      "utf8",
+    )
+    .digest();
 }
 
 export function validateIdempotencyKey(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
-  if (trimmed.length < 1 || trimmed.length > 128 || !/^[A-Za-z0-9._:-]+$/.test(trimmed)) {
+  if (
+    trimmed.length < 1 ||
+    trimmed.length > 128 ||
+    !/^[A-Za-z0-9._:-]+$/.test(trimmed)
+  ) {
     return null;
   }
   return trimmed;
@@ -45,9 +56,12 @@ export function recurringRequestFingerprint(input: {
   const fields = ["arch027-recurring-v1", input.kind, input.shopId];
   if (input.kind !== "CANCEL") {
     if (
-      !input.merchantPricingPlanId || !Number.isSafeInteger(input.quotedAmountMinor) ||
-      !input.quotedCurrency || !input.quotedBillingPeriod
-    ) throw new TypeError("recurring quote fields are required");
+      !input.merchantPricingPlanId ||
+      !Number.isSafeInteger(input.quotedAmountMinor) ||
+      !input.quotedCurrency ||
+      !input.quotedBillingPeriod
+    )
+      throw new TypeError("recurring quote fields are required");
     assertCanonicalField(input.merchantPricingPlanId);
     assertCanonicalField(String(input.quotedAmountMinor));
     assertCanonicalField(input.quotedCurrency);
@@ -60,18 +74,23 @@ export function recurringRequestFingerprint(input: {
     );
   }
   if (input.kind !== "SUBSCRIPTION_CREATE") {
-    if (!input.providerReference) throw new TypeError("provider reference is required");
+    if (!input.providerReference)
+      throw new TypeError("provider reference is required");
     assertCanonicalField(input.providerReference);
     fields.splice(3, 0, input.providerReference);
   }
-  return createHash("sha256").update(`${fields.join("\n")}\n`, "utf8").digest();
+  return createHash("sha256")
+    .update(`${fields.join("\n")}\n`, "utf8")
+    .digest();
 }
 
 function assertCanonicalField(value: string): void {
   for (const character of value) {
     const codePoint = character.codePointAt(0);
     if (codePoint !== undefined && (codePoint <= 31 || codePoint === 127)) {
-      throw new TypeError("recurring fingerprint fields must not contain control characters");
+      throw new TypeError(
+        "recurring fingerprint fields must not contain control characters",
+      );
     }
   }
 }
@@ -85,9 +104,13 @@ export function formatUsdMinorUnits(amountMinor: number): string {
   return `${whole}.${cents}`;
 }
 
-export function createWooReturnUrl(canonicalSiteUrl: string, operationId: string): string {
+export function createWooReturnUrl(
+  canonicalSiteUrl: string,
+  operationId: string,
+): string {
   const site = new URL(canonicalSiteUrl);
-  if (site.protocol !== "https:") throw new TypeError("canonical Woo site must use HTTPS");
+  if (site.protocol !== "https:")
+    throw new TypeError("canonical Woo site must use HTTPS");
   site.search = "";
   site.hash = "";
   if (!site.pathname.endsWith("/")) site.pathname += "/";
@@ -104,7 +127,8 @@ export function createWooReturnUrl(canonicalSiteUrl: string, operationId: string
 export function containsControlCharacters(value: string): boolean {
   for (const character of value) {
     const codePoint = character.codePointAt(0);
-    if (codePoint !== undefined && (codePoint <= 31 || codePoint === 127)) return true;
+    if (codePoint !== undefined && (codePoint <= 31 || codePoint === 127))
+      return true;
   }
   return false;
 }

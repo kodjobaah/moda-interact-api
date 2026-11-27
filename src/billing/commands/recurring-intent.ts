@@ -13,7 +13,10 @@ import {
   type PrismaClient,
 } from "@prisma/client";
 import { timingSafeEqual } from "node:crypto";
-import { requireCurrentWooMutationPrincipal, WooMutationPrincipalConflictError } from "../../auth/woo-installation/current-mutation-principal.js";
+import {
+  requireCurrentWooMutationPrincipal,
+  WooMutationPrincipalConflictError,
+} from "../../auth/woo-installation/current-mutation-principal.js";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import {
   FreePlanConfigurationUnavailableError,
@@ -31,7 +34,10 @@ import {
 // Run the complete shop/subscription-locked intent in one ReadCommitted
 // transaction. Provider calls and operation outcomes stay in the orchestrator.
 type BillingDatabase = Pick<PrismaClient, "$transaction">;
-export type MaterializedPlanResolver = Pick<InitialWooFreeActivationService, "resolvePaidPlan">;
+export type MaterializedPlanResolver = Pick<
+  InitialWooFreeActivationService,
+  "resolvePaidPlan"
+>;
 
 export interface RecurringCommandIntent {
   operation: BillingOperation;
@@ -54,158 +60,315 @@ export class RecurringIntentPersistence {
     materializationRetry = 0,
   ): Promise<RecurringCommandIntent> {
     try {
-      return await this.database.$transaction(async (transaction) => {
-        const currentPrincipal = await requireCurrentWooMutationPrincipal(transaction, principal);
-        const shop = { id: currentPrincipal.shopId, domain: currentPrincipal.shopDomain, onboardingCompleted: currentPrincipal.onboardingCompleted };
-        if (!shop.onboardingCompleted) throw new RecurringBillingCommandError(409, "billing_not_initialized");
+      return await this.database.$transaction(
+        async (transaction) => {
+          const currentPrincipal = await requireCurrentWooMutationPrincipal(
+            transaction,
+            principal,
+          );
+          const shop = {
+            id: currentPrincipal.shopId,
+            domain: currentPrincipal.shopDomain,
+            onboardingCompleted: currentPrincipal.onboardingCompleted,
+          };
+          if (!shop.onboardingCompleted)
+            throw new RecurringBillingCommandError(
+              409,
+              "billing_not_initialized",
+            );
 
-        await transaction.$queryRaw(Prisma.sql`
+          await transaction.$queryRaw(Prisma.sql`
           SELECT "id" FROM "billing"."Subscription" WHERE "shopId" = ${shop.id} FOR UPDATE
         `);
-        const subscription = await transaction.subscription.findUnique({
-          where: { shopId: shop.id },
-          select: {
-            id: true,
-            shopId: true,
-            planId: true,
-            status: true,
-            billingPeriodId: true,
-            cancelAtPeriodEnd: true,
-            providerSubscriptionId: true,
-            plan: { select: { id: true, kind: true, shopifyPlanHandle: true, active: true } },
-          },
-        });
-
-        const existing = await transaction.billingOperation.findUnique({
-          where: { shopId_requestKey: { shopId: shop.id, requestKey } },
-        });
-        if (existing) {
-          const replayCatalogue = kind === "CANCEL" || !merchantPricingPlanId
-            ? null
-            : await transaction.merchantPricingPlan.findUnique({ where: { id: merchantPricingPlanId } });
-          return replayIntent(existing, kind, shop.domain, merchantPricingPlanId, replayCatalogue);
-        }
-
-        const currentProviderReference = nonBlank(subscription?.providerSubscriptionId ?? null);
-        const canCreateAfterTerminalCancellation = kind === "SUBSCRIPTION_CREATE" &&
-          subscription?.status === SubscriptionProjectionStatus.ACTIVE &&
-          subscription?.plan?.kind === BillingPlanKind.FREE &&
-          subscription.providerSubscriptionId === null &&
-          subscription.billingPeriodId === null &&
-          !subscription.cancelAtPeriodEnd;
-        const blocker = await transaction.billingOperation.findFirst({
-          where: {
-            shopId: shop.id,
-            kind: { in: [BillingOperationKind.SUBSCRIPTION_CREATE, BillingOperationKind.PLAN_SWITCH, BillingOperationKind.CANCEL] },
-            OR: [
-              { state: { in: [BillingOperationState.INITIATING, BillingOperationState.AWAITING_CONFIRMATION, BillingOperationState.OUTCOME_UNKNOWN] } },
-              ...(!canCreateAfterTerminalCancellation ? [{
-                kind: BillingOperationKind.CANCEL,
-                state: BillingOperationState.CONFIRMED,
-                ...(subscription?.cancelAtPeriodEnd === true || !currentProviderReference
-                  ? {} : { providerReference: currentProviderReference }),
-              }] : []),
-            ],
-          },
-          select: { id: true },
-        });
-        if (blocker) throw new RecurringBillingCommandError(409, "billing_operation_conflict");
-        if (!subscription?.plan || subscription.planId !== subscription.plan.id) {
-          throw new RecurringBillingCommandError(409, "billing_subscription_invalid");
-        }
-
-        let target: MerchantPricingPlan | null = null;
-        let targetOperationalPlan: BillingPlan | null = null;
-        if (kind !== "CANCEL") {
-          if (!merchantPricingPlanId) throw new RecurringBillingCommandError(400, "invalid_request");
-          target = await transaction.merchantPricingPlan.findUnique({
-            where: { id: merchantPricingPlanId },
+          const subscription = await transaction.subscription.findUnique({
+            where: { shopId: shop.id },
+            select: {
+              id: true,
+              shopId: true,
+              planId: true,
+              status: true,
+              billingPeriodId: true,
+              cancelAtPeriodEnd: true,
+              providerSubscriptionId: true,
+              plan: {
+                select: {
+                  id: true,
+                  kind: true,
+                  shopifyPlanHandle: true,
+                  active: true,
+                },
+              },
+            },
           });
-          if (target?.planKind === MerchantPricingPlanKind.FREE) {
-            throw new RecurringBillingCommandError(409, "free_plan_uses_cancellation");
-          }
-          if (!target || !isSelectablePaidPlan(target)) {
-            throw new RecurringBillingCommandError(409, "billing_plan_unavailable");
-          }
-        }
 
-        const providerReference = nonBlank(subscription.providerSubscriptionId);
-        if (kind === "SUBSCRIPTION_CREATE") {
-          if (
-            subscription.status !== SubscriptionProjectionStatus.ACTIVE || subscription.plan.kind !== BillingPlanKind.FREE ||
-            subscription.providerSubscriptionId !== null || subscription.billingPeriodId !== null
-          ) throw new RecurringBillingCommandError(409, "subscription_create_not_allowed");
-        } else if (kind === "PLAN_SWITCH") {
-          if (
-            (subscription.status !== SubscriptionProjectionStatus.ACTIVE &&
-              subscription.status !== SubscriptionProjectionStatus.TRIALING) ||
-            subscription.plan.kind !== BillingPlanKind.PAID_METERED || !providerReference || subscription.cancelAtPeriodEnd
-          ) throw new RecurringBillingCommandError(409, "subscription_switch_not_allowed");
-          const currentCataloguePlan = await transaction.merchantPricingPlan.findUnique({
-            where: { shopifyPlanHandle: subscription.plan.shopifyPlanHandle },
+          const existing = await transaction.billingOperation.findUnique({
+            where: { shopId_requestKey: { shopId: shop.id, requestKey } },
+          });
+          if (existing) {
+            const replayCatalogue =
+              kind === "CANCEL" || !merchantPricingPlanId
+                ? null
+                : await transaction.merchantPricingPlan.findUnique({
+                    where: { id: merchantPricingPlanId },
+                  });
+            return replayIntent(
+              existing,
+              kind,
+              shop.domain,
+              merchantPricingPlanId,
+              replayCatalogue,
+            );
+          }
+
+          const currentProviderReference = nonBlank(
+            subscription?.providerSubscriptionId ?? null,
+          );
+          const canCreateAfterTerminalCancellation =
+            kind === "SUBSCRIPTION_CREATE" &&
+            subscription?.status === SubscriptionProjectionStatus.ACTIVE &&
+            subscription?.plan?.kind === BillingPlanKind.FREE &&
+            subscription.providerSubscriptionId === null &&
+            subscription.billingPeriodId === null &&
+            !subscription.cancelAtPeriodEnd;
+          const blocker = await transaction.billingOperation.findFirst({
+            where: {
+              shopId: shop.id,
+              kind: {
+                in: [
+                  BillingOperationKind.SUBSCRIPTION_CREATE,
+                  BillingOperationKind.PLAN_SWITCH,
+                  BillingOperationKind.CANCEL,
+                ],
+              },
+              OR: [
+                {
+                  state: {
+                    in: [
+                      BillingOperationState.INITIATING,
+                      BillingOperationState.AWAITING_CONFIRMATION,
+                      BillingOperationState.OUTCOME_UNKNOWN,
+                    ],
+                  },
+                },
+                ...(!canCreateAfterTerminalCancellation
+                  ? [
+                      {
+                        kind: BillingOperationKind.CANCEL,
+                        state: BillingOperationState.CONFIRMED,
+                        ...(subscription?.cancelAtPeriodEnd === true ||
+                        !currentProviderReference
+                          ? {}
+                          : { providerReference: currentProviderReference }),
+                      },
+                    ]
+                  : []),
+              ],
+            },
             select: { id: true },
           });
-          if (!currentCataloguePlan) throw new RecurringBillingCommandError(409, "billing_catalogue_mapping_invalid");
-          if (currentCataloguePlan.id === target!.id) throw new RecurringBillingCommandError(409, "billing_plan_unchanged");
-        } else if (
-          !providerReference || subscription.cancelAtPeriodEnd ||
-          (subscription.status !== SubscriptionProjectionStatus.ACTIVE &&
-            subscription.status !== SubscriptionProjectionStatus.TRIALING &&
-            subscription.status !== SubscriptionProjectionStatus.FROZEN) ||
-          subscription.plan.kind !== BillingPlanKind.PAID_METERED
-        ) throw new RecurringBillingCommandError(409, "no_recurring_subscription");
+          if (blocker)
+            throw new RecurringBillingCommandError(
+              409,
+              "billing_operation_conflict",
+            );
+          if (
+            !subscription?.plan ||
+            subscription.planId !== subscription.plan.id
+          ) {
+            throw new RecurringBillingCommandError(
+              409,
+              "billing_subscription_invalid",
+            );
+          }
 
-        if (target) {
-          targetOperationalPlan = await this.planResolver.resolvePaidPlan(transaction, target as OperationalCataloguePlan);
-        }
-        if (target && (!targetOperationalPlan || targetOperationalPlan.kind !== BillingPlanKind.PAID_METERED)) {
-          throw new RecurringBillingCommandError(409, "billing_plan_materialization_invalid");
-        }
-        const fingerprint = recurringRequestFingerprint({
-          kind,
-          shopId: shop.id,
-          ...(kind === "CANCEL" ? { providerReference: providerReference! } : {
-            ...(kind === "PLAN_SWITCH" ? { providerReference: providerReference! } : {}),
-            merchantPricingPlanId: target!.id,
-            quotedAmountMinor: target!.recurringAmountMinor,
-            quotedCurrency: target!.currency,
-            quotedBillingPeriod: target!.billingPeriod,
-          }),
-        });
-        const operation = await transaction.billingOperation.create({
-          data: {
+          let target: MerchantPricingPlan | null = null;
+          let targetOperationalPlan: BillingPlan | null = null;
+          if (kind !== "CANCEL") {
+            if (!merchantPricingPlanId)
+              throw new RecurringBillingCommandError(400, "invalid_request");
+            target = await transaction.merchantPricingPlan.findUnique({
+              where: { id: merchantPricingPlanId },
+            });
+            if (target?.planKind === MerchantPricingPlanKind.FREE) {
+              throw new RecurringBillingCommandError(
+                409,
+                "free_plan_uses_cancellation",
+              );
+            }
+            if (!target || !isSelectablePaidPlan(target)) {
+              throw new RecurringBillingCommandError(
+                409,
+                "billing_plan_unavailable",
+              );
+            }
+          }
+
+          const providerReference = nonBlank(
+            subscription.providerSubscriptionId,
+          );
+          if (kind === "SUBSCRIPTION_CREATE") {
+            if (
+              subscription.status !== SubscriptionProjectionStatus.ACTIVE ||
+              subscription.plan.kind !== BillingPlanKind.FREE ||
+              subscription.providerSubscriptionId !== null ||
+              subscription.billingPeriodId !== null
+            )
+              throw new RecurringBillingCommandError(
+                409,
+                "subscription_create_not_allowed",
+              );
+          } else if (kind === "PLAN_SWITCH") {
+            if (
+              (subscription.status !== SubscriptionProjectionStatus.ACTIVE &&
+                subscription.status !==
+                  SubscriptionProjectionStatus.TRIALING) ||
+              subscription.plan.kind !== BillingPlanKind.PAID_METERED ||
+              !providerReference ||
+              subscription.cancelAtPeriodEnd
+            )
+              throw new RecurringBillingCommandError(
+                409,
+                "subscription_switch_not_allowed",
+              );
+            const currentCataloguePlan =
+              await transaction.merchantPricingPlan.findUnique({
+                where: {
+                  shopifyPlanHandle: subscription.plan.shopifyPlanHandle,
+                },
+                select: { id: true },
+              });
+            if (!currentCataloguePlan)
+              throw new RecurringBillingCommandError(
+                409,
+                "billing_catalogue_mapping_invalid",
+              );
+            if (currentCataloguePlan.id === target!.id)
+              throw new RecurringBillingCommandError(
+                409,
+                "billing_plan_unchanged",
+              );
+          } else if (
+            !providerReference ||
+            subscription.cancelAtPeriodEnd ||
+            (subscription.status !== SubscriptionProjectionStatus.ACTIVE &&
+              subscription.status !== SubscriptionProjectionStatus.TRIALING &&
+              subscription.status !== SubscriptionProjectionStatus.FROZEN) ||
+            subscription.plan.kind !== BillingPlanKind.PAID_METERED
+          )
+            throw new RecurringBillingCommandError(
+              409,
+              "no_recurring_subscription",
+            );
+
+          if (target) {
+            targetOperationalPlan = await this.planResolver.resolvePaidPlan(
+              transaction,
+              target as OperationalCataloguePlan,
+            );
+          }
+          if (
+            target &&
+            (!targetOperationalPlan ||
+              targetOperationalPlan.kind !== BillingPlanKind.PAID_METERED)
+          ) {
+            throw new RecurringBillingCommandError(
+              409,
+              "billing_plan_materialization_invalid",
+            );
+          }
+          const fingerprint = recurringRequestFingerprint({
+            kind,
             shopId: shop.id,
-            kind: operationKind(kind),
-            state: BillingOperationState.INITIATING,
-            requestKey,
-            requestFingerprint: new Uint8Array(fingerprint),
-            ...(target ? {
-              merchantPricingPlanId: target.id,
-              quotedAmountMinor: target.recurringAmountMinor,
-              quotedCurrency: target.currency,
-              quotedBillingPeriod: target.billingPeriod,
-            } : {}),
-            ...(kind !== "SUBSCRIPTION_CREATE" ? { providerReference: providerReference! } : {}),
-          },
-        });
-        return { operation, canonicalSiteUrl: shop.domain, targetPlan: target, replay: false };
-      }, { isolationLevel: "ReadCommitted" });
+            ...(kind === "CANCEL"
+              ? { providerReference: providerReference! }
+              : {
+                  ...(kind === "PLAN_SWITCH"
+                    ? { providerReference: providerReference! }
+                    : {}),
+                  merchantPricingPlanId: target!.id,
+                  quotedAmountMinor: target!.recurringAmountMinor,
+                  quotedCurrency: target!.currency,
+                  quotedBillingPeriod: target!.billingPeriod,
+                }),
+          });
+          const operation = await transaction.billingOperation.create({
+            data: {
+              shopId: shop.id,
+              kind: operationKind(kind),
+              state: BillingOperationState.INITIATING,
+              requestKey,
+              requestFingerprint: new Uint8Array(fingerprint),
+              ...(target
+                ? {
+                    merchantPricingPlanId: target.id,
+                    quotedAmountMinor: target.recurringAmountMinor,
+                    quotedCurrency: target.currency,
+                    quotedBillingPeriod: target.billingPeriod,
+                  }
+                : {}),
+              ...(kind !== "SUBSCRIPTION_CREATE"
+                ? { providerReference: providerReference! }
+                : {}),
+            },
+          });
+          return {
+            operation,
+            canonicalSiteUrl: shop.domain,
+            targetPlan: target,
+            replay: false,
+          };
+        },
+        { isolationLevel: "ReadCommitted" },
+      );
     } catch (error) {
       if (error instanceof WooMutationPrincipalConflictError) {
-        throw new RecurringBillingCommandError(409, "billing_shop_invalid", undefined, undefined, { cause: error });
+        throw new RecurringBillingCommandError(
+          409,
+          "billing_shop_invalid",
+          undefined,
+          undefined,
+          { cause: error },
+        );
       }
       if (error instanceof RecurringBillingCommandError) throw error;
       if (error instanceof FreePlanConfigurationUnavailableError) {
-        throw new RecurringBillingCommandError(409, "billing_plan_materialization_invalid", undefined, undefined, { cause: error });
+        throw new RecurringBillingCommandError(
+          409,
+          "billing_plan_materialization_invalid",
+          undefined,
+          undefined,
+          { cause: error },
+        );
       }
       if (error instanceof RetryFreeActivationTransactionError) {
         if (materializationRetry === 0) {
-          return this.persistIntent(principal, kind, requestKey, merchantPricingPlanId, 1);
+          return this.persistIntent(
+            principal,
+            kind,
+            requestKey,
+            merchantPricingPlanId,
+            1,
+          );
         }
-        throw new RecurringBillingCommandError(409, "billing_plan_materialization_conflict", undefined, undefined, { cause: error });
+        throw new RecurringBillingCommandError(
+          409,
+          "billing_plan_materialization_conflict",
+          undefined,
+          undefined,
+          { cause: error },
+        );
       }
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-        throw new RecurringBillingCommandError(409, "billing_operation_conflict", undefined, undefined, { cause: error });
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2002"
+      ) {
+        throw new RecurringBillingCommandError(
+          409,
+          "billing_operation_conflict",
+          undefined,
+          undefined,
+          { cause: error },
+        );
       }
       throw error;
     }
@@ -221,28 +384,60 @@ function replayIntent(
 ): RecurringCommandIntent {
   if (
     operation.kind !== operationKind(kind) ||
-    (kind !== "CANCEL" && operation.merchantPricingPlanId !== merchantPricingPlanId)
-  ) throw new RecurringBillingCommandError(409, "idempotency_conflict", operation.id);
-  if (kind !== "CANCEL" && (!catalogue || catalogue.id !== merchantPricingPlanId)) {
-    throw new RecurringBillingCommandError(409, "idempotency_conflict", operation.id);
+    (kind !== "CANCEL" &&
+      operation.merchantPricingPlanId !== merchantPricingPlanId)
+  )
+    throw new RecurringBillingCommandError(
+      409,
+      "idempotency_conflict",
+      operation.id,
+    );
+  if (
+    kind !== "CANCEL" &&
+    (!catalogue || catalogue.id !== merchantPricingPlanId)
+  ) {
+    throw new RecurringBillingCommandError(
+      409,
+      "idempotency_conflict",
+      operation.id,
+    );
   }
   if (kind === "CANCEL" && !operation.providerReference) {
-    throw new RecurringBillingCommandError(409, "idempotency_conflict", operation.id);
+    throw new RecurringBillingCommandError(
+      409,
+      "idempotency_conflict",
+      operation.id,
+    );
   }
-  const fingerprint = recurringRequestFingerprint(kind === "CANCEL"
-    ? { kind, shopId: operation.shopId, providerReference: operation.providerReference! }
-    : {
-        kind,
-        shopId: operation.shopId,
-        ...(kind === "PLAN_SWITCH" && operation.providerReference ? { providerReference: operation.providerReference } : {}),
-        merchantPricingPlanId: catalogue!.id,
-        quotedAmountMinor: catalogue!.recurringAmountMinor,
-        quotedCurrency: catalogue!.currency,
-        quotedBillingPeriod: catalogue!.billingPeriod,
-      });
+  const fingerprint = recurringRequestFingerprint(
+    kind === "CANCEL"
+      ? {
+          kind,
+          shopId: operation.shopId,
+          providerReference: operation.providerReference!,
+        }
+      : {
+          kind,
+          shopId: operation.shopId,
+          ...(kind === "PLAN_SWITCH" && operation.providerReference
+            ? { providerReference: operation.providerReference }
+            : {}),
+          merchantPricingPlanId: catalogue!.id,
+          quotedAmountMinor: catalogue!.recurringAmountMinor,
+          quotedCurrency: catalogue!.currency,
+          quotedBillingPeriod: catalogue!.billingPeriod,
+        },
+  );
   const stored = Buffer.from(operation.requestFingerprint);
-  if (stored.length !== fingerprint.length || !timingSafeEqual(stored, fingerprint)) {
-    throw new RecurringBillingCommandError(409, "idempotency_conflict", operation.id);
+  if (
+    stored.length !== fingerprint.length ||
+    !timingSafeEqual(stored, fingerprint)
+  ) {
+    throw new RecurringBillingCommandError(
+      409,
+      "idempotency_conflict",
+      operation.id,
+    );
   }
   return { operation, canonicalSiteUrl, targetPlan: null, replay: true };
 }
@@ -252,13 +447,23 @@ function operationKind(kind: RecurringOperationKind): BillingOperationKind {
 }
 
 function isSelectablePaidPlan(plan: MerchantPricingPlan): boolean {
-  return plan.isActive && plan.planKind === MerchantPricingPlanKind.PAID_METERED &&
+  return (
+    plan.isActive &&
+    plan.planKind === MerchantPricingPlanKind.PAID_METERED &&
     plan.allowancePeriod === MerchantPricingAllowancePeriod.EVERY_30_DAYS &&
     plan.billingPeriod === MerchantPricingBillingPeriod.EVERY_30_DAYS &&
-    Number.isSafeInteger(plan.recurringAmountMinor) && plan.recurringAmountMinor > 0 &&
-    plan.currency === "USD" && Number.isSafeInteger(plan.includedRecoveryCredits) && plan.includedRecoveryCredits >= 0;
+    Number.isSafeInteger(plan.recurringAmountMinor) &&
+    plan.recurringAmountMinor > 0 &&
+    plan.currency === "USD" &&
+    Number.isSafeInteger(plan.includedRecoveryCredits) &&
+    plan.includedRecoveryCredits >= 0
+  );
 }
 
 function nonBlank(value: string | null): string | null {
-  return typeof value === "string" && value.trim().length > 0 && !containsControlCharacters(value) ? value : null;
+  return typeof value === "string" &&
+    value.trim().length > 0 &&
+    !containsControlCharacters(value)
+    ? value
+    : null;
 }

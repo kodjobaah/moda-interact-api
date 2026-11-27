@@ -46,7 +46,17 @@ paths:
           in: query
           schema:
             type: string
-            enum: [all, ongoing, DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED]
+            enum:
+              [
+                all,
+                ongoing,
+                DETECTED,
+                MESSAGE_SENT,
+                ENGAGED,
+                COMPLETED,
+                EXPIRED,
+                CANCELLED,
+              ]
             default: all
         - name: page
           in: query
@@ -62,7 +72,7 @@ paths:
             enum: [10, 20, 25, 50]
             default: 25
       responses:
-        '200':
+        "200":
           description: Recovery list (including zero results or a clamped last page)
           headers:
             Cache-Control:
@@ -72,14 +82,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RecoveryListResponse'
-        '400':
+                $ref: "#/components/schemas/RecoveryListResponse"
+        "400":
           description: Unknown/duplicated filter, invalid date range, unsupported page size or request body
-        '401':
+        "401":
           description: Invalid, revoked or missing Woo installation credential
-        '409':
+        "409":
           description: Shop/installation/row integrity conflict (no cross-shop data returned)
-        '500':
+        "500":
           description: Unexpected internal error
 components:
   securitySchemes:
@@ -90,7 +100,22 @@ components:
     RecoveryListResponse:
       type: object
       additionalProperties: false
-      required: [schemaVersion, timeZone, from, to, q, status, page, pageSize, total, totalPages, hasPrevious, hasNext, items]
+      required:
+        [
+          schemaVersion,
+          timeZone,
+          from,
+          to,
+          q,
+          status,
+          page,
+          pageSize,
+          total,
+          totalPages,
+          hasPrevious,
+          hasNext,
+          items,
+        ]
       properties:
         schemaVersion:
           type: integer
@@ -110,7 +135,17 @@ components:
           maxLength: 100
         status:
           type: string
-          enum: [all, ongoing, DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED]
+          enum:
+            [
+              all,
+              ongoing,
+              DETECTED,
+              MESSAGE_SENT,
+              ENGAGED,
+              COMPLETED,
+              EXPIRED,
+              CANCELLED,
+            ]
         page:
           type: integer
           minimum: 1
@@ -131,16 +166,17 @@ components:
           type: array
           maxItems: 50
           items:
-            $ref: '#/components/schemas/RecoveryListItem'
+            $ref: "#/components/schemas/RecoveryListItem"
     RecoveryListItem:
       type: object
       additionalProperties: false
-      required: [id, status, detectedAt, lastActivityAt, totalPrice, currency, customer]
+      required:
+        [id, status, detectedAt, lastActivityAt, totalPrice, currency, customer]
       properties:
         id:
           type: string
           maxLength: 191
-          pattern: '^[A-Za-z0-9_-]+$'
+          pattern: "^[A-Za-z0-9_-]+$"
         status:
           type: string
           enum: [DETECTED, MESSAGE_SENT, ENGAGED, COMPLETED, EXPIRED, CANCELLED]
@@ -155,17 +191,17 @@ components:
             - type: string
               maxLength: 72
               pattern: '^-?[0-9]+(\.[0-9]+)?$'
-            - type: 'null'
+            - type: "null"
           description: Exact Decimal string, never converted into a JavaScript number
         currency:
           anyOf:
             - type: string
-              pattern: '^[A-Z]{3}$'
-            - type: 'null'
+              pattern: "^[A-Z]{3}$"
+            - type: "null"
         customer:
           anyOf:
-            - $ref: '#/components/schemas/RecoveryCustomer'
-            - type: 'null'
+            - $ref: "#/components/schemas/RecoveryCustomer"
+            - type: "null"
     RecoveryCustomer:
       type: object
       additionalProperties: false
@@ -175,9 +211,9 @@ components:
           anyOf:
             - type: string
               maxLength: 160
-            - type: 'null'
+            - type: "null"
         email:
           anyOf:
             - type: string
               maxLength: 320
-            - type: 'null'
+            - type: "null"

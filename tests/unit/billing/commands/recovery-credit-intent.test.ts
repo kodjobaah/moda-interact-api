@@ -19,7 +19,9 @@ import {
 import { RecoveryCreditIntentPersistence } from "../../../../src/billing/commands/recovery-credit-intent.js";
 import { recoveryCreditPurchaseFingerprint } from "../../../../src/billing/commands/recurring-command-primitives.js";
 
-type IntentDatabase = ConstructorParameters<typeof RecoveryCreditIntentPersistence>[0];
+type IntentDatabase = ConstructorParameters<
+  typeof RecoveryCreditIntentPersistence
+>[0];
 type FixtureOperation = BillingOperation;
 type FakeSubscription = {
   id: string;
@@ -29,36 +31,76 @@ type FakeSubscription = {
   providerSubscriptionId: string | null;
   billingPeriodId: string | null;
   cancelAtPeriodEnd: boolean;
-  plan: { id: string; kind: BillingPlanKind; shopifyPlanHandle: string; active: boolean };
+  plan: {
+    id: string;
+    kind: BillingPlanKind;
+    shopifyPlanHandle: string;
+    active: boolean;
+  };
   billingPeriod: {
-    id: string; shopId: string; subscriptionId: string; planId: string; status: string;
+    id: string;
+    shopId: string;
+    subscriptionId: string;
+    planId: string;
+    status: string;
   } | null;
 };
 
 function fixture() {
   const principal: WooInstallationPrincipal = {
-    installationId: "install-a", shopId: "shop-a", credentialVersion: 1,
+    installationId: "install-a",
+    shopId: "shop-a",
+    credentialVersion: 1,
     canonicalSiteUrl: "https://a.example.test",
   };
   const state = {
-    installation: { id: principal.installationId, shopId: principal.shopId, canonicalSiteUrl: principal.canonicalSiteUrl, credentialVersion: principal.credentialVersion, status: "ACTIVE", revokedAt: null as Date | null },
+    installation: {
+      id: principal.installationId,
+      shopId: principal.shopId,
+      canonicalSiteUrl: principal.canonicalSiteUrl,
+      credentialVersion: principal.credentialVersion,
+      status: "ACTIVE",
+      revokedAt: null as Date | null,
+    },
     shop: {
-      id: principal.shopId, domain: principal.canonicalSiteUrl,
-      platform: "WOOCOMMERCE", shopifyShopId: null as string | null,
-      status: "ACTIVE", onboardingCompleted: true,
+      id: principal.shopId,
+      domain: principal.canonicalSiteUrl,
+      platform: "WOOCOMMERCE",
+      shopifyShopId: null as string | null,
+      status: "ACTIVE",
+      onboardingCompleted: true,
     },
     subscription: {
-      id: "subscription-a", shopId: principal.shopId, planId: "plan-a",
+      id: "subscription-a",
+      shopId: principal.shopId,
+      planId: "plan-a",
       status: SubscriptionProjectionStatus.ACTIVE,
-      billingPeriodId: null, providerSubscriptionId: null, cancelAtPeriodEnd: false,
-      plan: { id: "plan-a", kind: BillingPlanKind.FREE, shopifyPlanHandle: "free-handle", active: true },
+      billingPeriodId: null,
+      providerSubscriptionId: null,
+      cancelAtPeriodEnd: false,
+      plan: {
+        id: "plan-a",
+        kind: BillingPlanKind.FREE,
+        shopifyPlanHandle: "free-handle",
+        active: true,
+      },
       billingPeriod: null,
     } as FakeSubscription,
-    catalogue: { id: "catalogue-a", planKind: MerchantPricingPlanKind.FREE as MerchantPricingPlanKind, isActive: true, currency: "USD" },
+    catalogue: {
+      id: "catalogue-a",
+      planKind: MerchantPricingPlanKind.FREE as MerchantPricingPlanKind,
+      isActive: true,
+      currency: "USD",
+    },
     bundle: {
-      id: "bundle-a", merchantPricingPlanId: "catalogue-a", adminLabel: " Bronze ",
-      creditsGrantedPerUnit: 25, pricingMode: MerchantPricingUsagePricingMode.FIXED as MerchantPricingUsagePricingMode,
-      fixedUnitAmountMinor: 1999, currency: "USD",
+      id: "bundle-a",
+      merchantPricingPlanId: "catalogue-a",
+      adminLabel: " Bronze ",
+      creditsGrantedPerUnit: 25,
+      pricingMode:
+        MerchantPricingUsagePricingMode.FIXED as MerchantPricingUsagePricingMode,
+      fixedUnitAmountMinor: 1999,
+      currency: "USD",
     },
     pending: false,
     existing: null as FixtureOperation | null,
@@ -73,35 +115,60 @@ function fixture() {
     $queryRaw: async (statement: Prisma.Sql) => {
       const sql = statement.strings.join("");
       if (sql.includes('"commerce"."Shop"')) events.push("lock.shop");
-      else if (sql.includes('"billing"."Subscription"')) events.push("lock.subscription");
+      else if (sql.includes('"billing"."Subscription"'))
+        events.push("lock.subscription");
       else events.push("lock.provider-reference");
       return [{ id: principal.shopId }];
     },
     wooCommerceInstallation: { findUnique: async () => state.installation },
-    shop: { findUnique: async (query: { where: { id: string } }) => {
-      events.push("read.shop");
-      return query.where.id === state.shop.id ? state.shop : null;
-    } },
-    subscription: { findUnique: async (query: { where: { shopId: string } }) => {
-      events.push("read.subscription");
-      return query.where.shopId === state.subscription.shopId ? state.subscription : null;
-    } },
-    merchantPricingPlan: { findUnique: async (query: { where: { shopifyPlanHandle: string } }) => {
-      events.push("read.catalogue");
-      return query.where.shopifyPlanHandle === state.subscription.plan.shopifyPlanHandle ? state.catalogue : null;
-    } },
-    merchantPricingUsageEvent: { findUnique: async (query: { where: { id: string } }) => {
-      events.push("read.bundle");
-      return query.where.id === state.bundle.id ? state.bundle : null;
-    } },
+    shop: {
+      findUnique: async (query: { where: { id: string } }) => {
+        events.push("read.shop");
+        return query.where.id === state.shop.id ? state.shop : null;
+      },
+    },
+    subscription: {
+      findUnique: async (query: { where: { shopId: string } }) => {
+        events.push("read.subscription");
+        return query.where.shopId === state.subscription.shopId
+          ? state.subscription
+          : null;
+      },
+    },
+    merchantPricingPlan: {
+      findUnique: async (query: { where: { shopifyPlanHandle: string } }) => {
+        events.push("read.catalogue");
+        return query.where.shopifyPlanHandle ===
+          state.subscription.plan.shopifyPlanHandle
+          ? state.catalogue
+          : null;
+      },
+    },
+    merchantPricingUsageEvent: {
+      findUnique: async (query: { where: { id: string } }) => {
+        events.push("read.bundle");
+        return query.where.id === state.bundle.id ? state.bundle : null;
+      },
+    },
     billingOperation: {
-      findUnique: async (query: { where: { id?: string; shopId_requestKey?: { shopId: string; requestKey: string } } }) => {
+      findUnique: async (query: {
+        where: {
+          id?: string;
+          shopId_requestKey?: { shopId: string; requestKey: string };
+        };
+      }) => {
         events.push("read.operation");
-        if (query.where.id) return state.operations.find((row) => row.id === query.where.id) ?? null;
-        if (query.where.shopId_requestKey?.shopId !== state.shop.id) return null;
+        if (query.where.id)
+          return (
+            state.operations.find((row) => row.id === query.where.id) ?? null
+          );
+        if (query.where.shopId_requestKey?.shopId !== state.shop.id)
+          return null;
         return state.existing;
       },
-      findFirst: async (query: { where: { providerReference?: string; shopId?: unknown } }) => {
+      findFirst: async (query: {
+        where: { providerReference?: string; shopId?: unknown };
+      }) => {
         events.push("read.pending");
         if (query.where.providerReference) return null;
         return state.pending ? { id: "pending-operation" } : null;
@@ -117,9 +184,14 @@ function fixture() {
         state.operations.push(operation);
         return operation;
       },
-      updateManyAndReturn: async (query: { where: { id: string }; data: Record<string, unknown> }) => {
+      updateManyAndReturn: async (query: {
+        where: { id: string };
+        data: Record<string, unknown>;
+      }) => {
         events.push("update.operation");
-        const row = state.operations.find((operation) => operation.id === query.where.id);
+        const row = state.operations.find(
+          (operation) => operation.id === query.where.id,
+        );
         if (!row || row.state !== BillingOperationState.INITIATING) return [];
         Object.assign(row, query.data);
         return [row];
@@ -134,12 +206,19 @@ function fixture() {
     },
   };
   const database = {
-    $transaction: async (callback: (tx: typeof transaction) => Promise<unknown>, options?: { isolationLevel: string }) => {
+    $transaction: async (
+      callback: (tx: typeof transaction) => Promise<unknown>,
+      options?: { isolationLevel: string },
+    ) => {
       events.push(`transaction.start:${options?.isolationLevel ?? "default"}`);
       state.transactionCount += 1;
       state.inTransaction = true;
-      try { return await callback(transaction); }
-      finally { state.inTransaction = false; events.push("transaction.end"); }
+      try {
+        return await callback(transaction);
+      } finally {
+        state.inTransaction = false;
+        events.push("transaction.end");
+      }
     },
   } as unknown as IntentDatabase;
   const persistence = new RecoveryCreditIntentPersistence(database);
@@ -153,35 +232,58 @@ function paid(h: ReturnType<typeof fixture>) {
   h.state.subscription.providerSubscriptionId = "provider-contract";
   h.state.subscription.billingPeriodId = "period-a";
   h.state.subscription.billingPeriod = {
-    id: "period-a", shopId: h.principal.shopId, subscriptionId: "subscription-a",
-    planId: "plan-a", status: "OPEN",
+    id: "period-a",
+    shopId: h.principal.shopId,
+    subscriptionId: "subscription-a",
+    planId: "plan-a",
+    status: "OPEN",
   };
 }
 
-function replayRow(h: ReturnType<typeof fixture>, amount = h.state.bundle.fixedUnitAmountMinor) {
+function replayRow(
+  h: ReturnType<typeof fixture>,
+  amount = h.state.bundle.fixedUnitAmountMinor,
+) {
   return {
-    id: "original-operation", shopId: h.principal.shopId,
+    id: "original-operation",
+    shopId: h.principal.shopId,
     kind: BillingOperationKind.ONE_TIME_CHARGE,
     state: BillingOperationState.AWAITING_CONFIRMATION,
     merchantPricingUsageEventId: h.state.bundle.id,
     recoveryCreditPurchaseId: "original-purchase",
-    requestFingerprint: new Uint8Array(recoveryCreditPurchaseFingerprint({
-      shopId: h.principal.shopId, merchantPricingUsageEventId: h.state.bundle.id,
-      quotedAmountMinor: amount, quotedCurrency: h.state.bundle.currency,
-    })),
-    quotedAmountMinor: amount, quotedCurrency: "USD",
+    requestFingerprint: new Uint8Array(
+      recoveryCreditPurchaseFingerprint({
+        shopId: h.principal.shopId,
+        merchantPricingUsageEventId: h.state.bundle.id,
+        quotedAmountMinor: amount,
+        quotedCurrency: h.state.bundle.currency,
+      }),
+    ),
+    quotedAmountMinor: amount,
+    quotedCurrency: "USD",
     confirmationUrl: "https://woocommerce.com/checkout/original",
   } as FixtureOperation;
 }
 
-async function errorCode(promise: Promise<unknown>, code: string, status = 409) {
-  await assert.rejects(promise, (error: unknown) =>
-    error instanceof RecoveryCreditPurchaseCommandError && error.code === code && error.statusCode === status,
+async function errorCode(
+  promise: Promise<unknown>,
+  code: string,
+  status = 409,
+) {
+  await assert.rejects(
+    promise,
+    (error: unknown) =>
+      error instanceof RecoveryCreditPurchaseCommandError &&
+      error.code === code &&
+      error.statusCode === status,
   );
 }
 
-const createIntent = (h: ReturnType<typeof fixture>, requestKey = "key-a", bundleId = "bundle-a") =>
-  h.persistence.persistIntent(h.principal, requestKey, bundleId);
+const createIntent = (
+  h: ReturnType<typeof fixture>,
+  requestKey = "key-a",
+  bundleId = "bundle-a",
+) => h.persistence.persistIntent(h.principal, requestKey, bundleId);
 
 test("Free intent locks Shop then Subscription, atomically persists exact charge quote and purchase snapshot", async () => {
   const h = fixture();
@@ -190,9 +292,18 @@ test("Free intent locks Shop then Subscription, atomically persists exact charge
   assert.equal(intent.canonicalSiteUrl, h.principal.canonicalSiteUrl);
   assert.equal(intent.bundleLabel, "Bronze");
   assert.deepEqual(h.events.slice(0, 6), [
-    "transaction.start:ReadCommitted", "lock.shop", "lock.provider-reference", "read.shop", "lock.subscription", "read.subscription",
+    "transaction.start:ReadCommitted",
+    "lock.shop",
+    "lock.provider-reference",
+    "read.shop",
+    "lock.subscription",
+    "read.subscription",
   ]);
-  assert.deepEqual(h.events.slice(-3), ["create.purchase", "create.operation", "transaction.end"]);
+  assert.deepEqual(h.events.slice(-3), [
+    "create.purchase",
+    "create.operation",
+    "transaction.end",
+  ]);
   assert.equal(h.state.transactionCount, 1);
   assert.equal(h.state.inTransaction, false);
   const purchase = h.state.purchases[0]!;
@@ -212,31 +323,57 @@ test("Free intent locks Shop then Subscription, atomically persists exact charge
   assert.equal(intent.operation.recoveryCreditPurchaseId, purchase.id);
   assert.equal(intent.operation.quotedAmountMinor, 1999);
   assert.equal(intent.operation.quotedCurrency, "USD");
-  assert.deepEqual(Buffer.from(intent.operation.requestFingerprint), recoveryCreditPurchaseFingerprint({
-    shopId: h.principal.shopId, merchantPricingUsageEventId: h.state.bundle.id,
-    quotedAmountMinor: 1999, quotedCurrency: "USD",
-  }));
+  assert.deepEqual(
+    Buffer.from(intent.operation.requestFingerprint),
+    recoveryCreditPurchaseFingerprint({
+      shopId: h.principal.shopId,
+      merchantPricingUsageEventId: h.state.bundle.id,
+      quotedAmountMinor: 1999,
+      quotedCurrency: "USD",
+    }),
+  );
 });
 
 test("paid plan snapshots the open period and provider reference, including scheduled cancellation", async () => {
-  const h = fixture(); paid(h);
+  const h = fixture();
+  paid(h);
   h.state.subscription.cancelAtPeriodEnd = true;
   const intent = await createIntent(h);
   assert.equal(intent.replay, false);
   assert.equal(h.state.purchases[0]?.billingPeriodId, "period-a");
-  assert.equal(h.state.purchases[0]?.providerSubscriptionIdSnapshot, "provider-contract");
+  assert.equal(
+    h.state.purchases[0]?.providerSubscriptionIdSnapshot,
+    "provider-contract",
+  );
   h.state.subscription.billingPeriod!.status = "CLOSED";
   await errorCode(createIntent(h, "next-key"), "top_up_purchase_unavailable");
   h.state.subscription.billingPeriod!.status = "OPEN";
   h.state.subscription.billingPeriod!.shopId = "other-shop";
-  await errorCode(createIntent(h, "another-key"), "top_up_purchase_unavailable");
+  await errorCode(
+    createIntent(h, "another-key"),
+    "top_up_purchase_unavailable",
+  );
   assert.equal(h.state.operations.length, 1);
 });
 
 test("wrong tenant, wrong domain, inactive shop or incomplete onboarding fail before purchase", async () => {
   const a = fixture();
-  await errorCode(a.persistence.persistIntent({ ...a.principal, shopId: "other-shop" }, "key", "bundle-a"), "billing_shop_invalid");
-  await errorCode(a.persistence.persistIntent({ ...a.principal, canonicalSiteUrl: "https://impostor.invalid" }, "key", "bundle-a"), "billing_shop_invalid");
+  await errorCode(
+    a.persistence.persistIntent(
+      { ...a.principal, shopId: "other-shop" },
+      "key",
+      "bundle-a",
+    ),
+    "billing_shop_invalid",
+  );
+  await errorCode(
+    a.persistence.persistIntent(
+      { ...a.principal, canonicalSiteUrl: "https://impostor.invalid" },
+      "key",
+      "bundle-a",
+    ),
+    "billing_shop_invalid",
+  );
   a.state.shop.status = "DISCONNECTED";
   await errorCode(createIntent(a), "billing_shop_invalid");
   a.state.shop.status = "ACTIVE";
@@ -263,7 +400,11 @@ test("inactive and mismatched plans or subscriptions reject the charge", async (
 
 test("stale or foreign catalogue bundle is hidden, malformed offers remain unavailable", async () => {
   const h = fixture();
-  await errorCode(createIntent(h, "key", "foreign-bundle"), "top_up_bundle_not_found", 404);
+  await errorCode(
+    createIntent(h, "key", "foreign-bundle"),
+    "top_up_bundle_not_found",
+    404,
+  );
   h.state.bundle.merchantPricingPlanId = "other-catalogue";
   await errorCode(createIntent(h), "top_up_bundle_not_found", 404);
   h.state.bundle.merchantPricingPlanId = "catalogue-a";
@@ -282,7 +423,8 @@ test("stale or foreign catalogue bundle is hidden, malformed offers remain unava
 });
 
 test("existing pending purchase on the selected bundle prevents a new charge", async () => {
-  const h = fixture(); h.state.pending = true;
+  const h = fixture();
+  h.state.pending = true;
   await errorCode(createIntent(h), "top_up_purchase_pending");
   assert.equal(h.state.operations.length, 0);
   h.state.pending = false;
@@ -305,8 +447,12 @@ test("existing exact replay bypasses new-purchase eligibility and never inserts 
 });
 
 test("changed quote, event or kind under the same key returns idempotency conflict", async () => {
-  const h = fixture(); h.state.existing = replayRow(h);
-  await errorCode(createIntent(h, "key", "other-bundle"), "idempotency_conflict");
+  const h = fixture();
+  h.state.existing = replayRow(h);
+  await errorCode(
+    createIntent(h, "key", "other-bundle"),
+    "idempotency_conflict",
+  );
   h.state.bundle.fixedUnitAmountMinor = 2000;
   await errorCode(createIntent(h), "idempotency_conflict");
   h.state.bundle.fixedUnitAmountMinor = 1999;
@@ -316,28 +462,43 @@ test("changed quote, event or kind under the same key returns idempotency confli
 
 test("duplicate operation uniqueness maps to billing_operation_conflict", async () => {
   const h = fixture();
-  h.state.forceCreateError = new Prisma.PrismaClientKnownRequestError("collision", {
-    code: "P2002", clientVersion: "6.19.3",
-  });
+  h.state.forceCreateError = new Prisma.PrismaClientKnownRequestError(
+    "collision",
+    {
+      code: "P2002",
+      clientVersion: "6.19.3",
+    },
+  );
   await errorCode(createIntent(h), "billing_operation_conflict");
 });
 
 test("provider sees committed intent, and replay never invokes charge a second time", async () => {
   const h = fixture();
   let calls = 0;
-  const provider = { createCharge: async () => {
-    h.events.push("provider.call");
-    calls += 1;
-    assert.equal(h.state.inTransaction, false);
-    assert.equal(h.state.operations.length, 1);
-    assert.equal(h.state.purchases.length, 1);
-    return { id: randomUUID(), confirmation_url: "https://woocommerce.com/checkout/one" };
-  } };
-  const service = new RecoveryCreditPurchaseCommandService(h.database, provider, "production");
+  const provider = {
+    createCharge: async () => {
+      h.events.push("provider.call");
+      calls += 1;
+      assert.equal(h.state.inTransaction, false);
+      assert.equal(h.state.operations.length, 1);
+      assert.equal(h.state.purchases.length, 1);
+      return {
+        id: randomUUID(),
+        confirmation_url: "https://woocommerce.com/checkout/one",
+      };
+    },
+  };
+  const service = new RecoveryCreditPurchaseCommandService(
+    h.database,
+    provider,
+    "production",
+  );
   const first = await service.initiate(h.principal, "key-a", "bundle-a");
   assert.equal(first.state, "AWAITING_CONFIRMATION");
   assert.equal(calls, 1);
-  assert.ok(h.events.indexOf("transaction.end") < h.events.indexOf("provider.call"));
+  assert.ok(
+    h.events.indexOf("transaction.end") < h.events.indexOf("provider.call"),
+  );
   h.state.existing = h.state.operations[0]!;
   const replay = await service.initiate(h.principal, "key-a", "bundle-a");
   assert.deepEqual(replay, first);

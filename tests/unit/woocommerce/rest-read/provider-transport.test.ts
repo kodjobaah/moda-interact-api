@@ -3,19 +3,36 @@ import { createServer, type Server } from "node:http";
 import test from "node:test";
 import { once } from "node:events";
 import { canonicalizeWooSiteUrl } from "../../../../src/woocommerce/installation/site-url.js";
-import { WooReadCredentialVerifier, WooReadVerificationError } from "../../../../src/woocommerce/rest-read/credential-verifier.js";
+import {
+  WooReadCredentialVerifier,
+  WooReadVerificationError,
+} from "../../../../src/woocommerce/rest-read/credential-verifier.js";
 import { prepareWooProductRequest } from "../../../../src/woocommerce/rest-read/product-operation.js";
 
 const credential = { consumerKey: "ck_example", consumerSecret: "cs_example" };
 
-async function startFixture(status: number, payload: unknown, encoding?: string) {
-  const requests: Array<{ method: string | undefined; url: string | undefined; authorization: string | undefined }> = [];
+async function startFixture(
+  status: number,
+  payload: unknown,
+  encoding?: string,
+) {
+  const requests: Array<{
+    method: string | undefined;
+    url: string | undefined;
+    authorization: string | undefined;
+  }> = [];
   const server: Server = createServer((request, response) => {
-    requests.push({ method: request.method, url: request.url, authorization: request.headers.authorization });
+    requests.push({
+      method: request.method,
+      url: request.url,
+      authorization: request.headers.authorization,
+    });
     response.writeHead(status, {
       "content-type": "application/json; charset=UTF-8",
       ...(encoding ? { "content-encoding": encoding } : {}),
-      ...(status >= 300 && status < 400 ? { location: "http://127.0.0.1:9/steal" } : {}),
+      ...(status >= 300 && status < 400
+        ? { location: "http://127.0.0.1:9/steal" }
+        : {}),
     });
     response.end(JSON.stringify(payload));
   });
@@ -24,27 +41,60 @@ async function startFixture(status: number, payload: unknown, encoding?: string)
   const address = server.address();
   assert.ok(address && typeof address === "object");
   return {
-    server, requests,
-    site: canonicalizeWooSiteUrl(`http://localhost:${address.port}`, "local-development"),
-    close: async () => { await new Promise<void>((resolve) => server.close(() => resolve())); },
+    server,
+    requests,
+    site: canonicalizeWooSiteUrl(
+      `http://localhost:${address.port}`,
+      "local-development",
+    ),
+    close: async () => {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    },
   };
 }
 
 function transport(mode: "public" | "local-development" = "local-development") {
-  return new WooReadCredentialVerifier({ mode, timeoutMs: 3000, resolve: async () => [{ address: "127.0.0.1", family: 4 }] });
+  return new WooReadCredentialVerifier({
+    mode,
+    timeoutMs: 3000,
+    resolve: async () => [{ address: "127.0.0.1", family: 4 }],
+  });
 }
 
 test("approved local product GET is DNS-pinned and OAuth signed without exposing consumer secret", async () => {
-  const fixture = await startFixture(200, [{ id: 4, name: "Cap", sku: "CAP", price: "7", stock_status: "instock", stock_quantity: 2 }]);
+  const fixture = await startFixture(200, [
+    {
+      id: 4,
+      name: "Cap",
+      sku: "CAP",
+      price: "7",
+      stock_status: "instock",
+      stock_quantity: 2,
+    },
+  ]);
   try {
-    const request = { operation: "products.list" as const, perPage: 1, search: "帽子" };
-    const result = await transport().fetchProductOperation(fixture.site, credential, request);
+    const request = {
+      operation: "products.list" as const,
+      perPage: 1,
+      search: "帽子",
+    };
+    const result = await transport().fetchProductOperation(
+      fixture.site,
+      credential,
+      request,
+    );
     assert.ok(Array.isArray(result));
     assert.equal(fixture.requests.length, 1);
     assert.equal(fixture.requests[0]?.method, "GET");
     const path = fixture.requests[0]?.url ?? "";
-    assert.equal(new URL(path, "http://localhost").pathname, "/wp-json/wc/v3/products");
-    assert.equal(new URL(path, "http://localhost").searchParams.get("context"), "view");
+    assert.equal(
+      new URL(path, "http://localhost").pathname,
+      "/wp-json/wc/v3/products",
+    );
+    assert.equal(
+      new URL(path, "http://localhost").searchParams.get("context"),
+      "view",
+    );
     const url = new URL(path, "http://localhost");
     assert.equal(url.searchParams.get("oauth_consumer_key"), "ck_example");
     assert.equal(url.searchParams.get("oauth_signature_method"), "HMAC-SHA256");
@@ -52,17 +102,28 @@ test("approved local product GET is DNS-pinned and OAuth signed without exposing
     assert.ok(url.searchParams.get("oauth_signature"));
     assert.equal(path.includes("cs_example"), false);
     assert.equal(fixture.requests[0]?.authorization, undefined);
-  } finally { await fixture.close(); }
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("redirect is rejected rather than following the credential header", async () => {
   const fixture = await startFixture(302, { error: "redirect" });
   try {
-    await assert.rejects(() => transport().fetchProductOperation(fixture.site, credential,
-      { operation: "products.retrieve", productId: 123 }),
-    (error: unknown) => error instanceof WooReadVerificationError && error.reason === "invalid_response");
+    await assert.rejects(
+      () =>
+        transport().fetchProductOperation(fixture.site, credential, {
+          operation: "products.retrieve",
+          productId: 123,
+        }),
+      (error: unknown) =>
+        error instanceof WooReadVerificationError &&
+        error.reason === "invalid_response",
+    );
     assert.equal(fixture.requests.length, 1);
-  } finally { await fixture.close(); }
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("authorization failure, provider unavailability and oversized content fail closed", async () => {
@@ -74,29 +135,54 @@ test("authorization failure, provider unavailability and oversized content fail 
   ] as const) {
     const fixture = await startFixture(status, payload);
     try {
-      await assert.rejects(() => transport().fetchProductOperation(fixture.site, credential,
-        { operation: "products.list" }),
-      (error: unknown) => error instanceof WooReadVerificationError && error.reason === expected);
-    } finally { await fixture.close(); }
+      await assert.rejects(
+        () =>
+          transport().fetchProductOperation(fixture.site, credential, {
+            operation: "products.list",
+          }),
+        (error: unknown) =>
+          error instanceof WooReadVerificationError &&
+          error.reason === expected,
+      );
+    } finally {
+      await fixture.close();
+    }
   }
 });
 
 test("public network mode refuses a local/private DNS answer", async () => {
   const fixture = await startFixture(200, []);
   try {
-    await assert.rejects(() => transport("public").fetchProductOperation(fixture.site, credential,
-      { operation: "products.list" }),
-    (error: unknown) => error instanceof WooReadVerificationError && error.reason === "unsafe_target");
+    await assert.rejects(
+      () =>
+        transport("public").fetchProductOperation(fixture.site, credential, {
+          operation: "products.list",
+        }),
+      (error: unknown) =>
+        error instanceof WooReadVerificationError &&
+        error.reason === "unsafe_target",
+    );
     assert.equal(fixture.requests.length, 0);
-  } finally { await fixture.close(); }
+  } finally {
+    await fixture.close();
+  }
 });
 
 test("transport compiles operation itself and rejects forged generic paths", async () => {
   const fixture = await startFixture(200, []);
   try {
-    assert.equal(prepareWooProductRequest({ operation: "products.list" }).operation, "products.list");
-    await assert.rejects(() => transport().fetchProductOperation(fixture.site, credential,
-      { operation: "products.list", headers: { authorization: "injected" } } as never));
+    assert.equal(
+      prepareWooProductRequest({ operation: "products.list" }).operation,
+      "products.list",
+    );
+    await assert.rejects(() =>
+      transport().fetchProductOperation(fixture.site, credential, {
+        operation: "products.list",
+        headers: { authorization: "injected" },
+      } as never),
+    );
     assert.equal(fixture.requests.length, 0);
-  } finally { await fixture.close(); }
+  } finally {
+    await fixture.close();
+  }
 });

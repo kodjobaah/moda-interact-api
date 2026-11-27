@@ -1,6 +1,4 @@
-import {
-  type PrismaClient,
-} from "@prisma/client";
+import { type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
 import {
   WooBillingClient,
@@ -40,7 +38,10 @@ export class RecoveryCreditPurchaseCommandService {
     providerEnvironment: WooBillingConfig["environment"],
   ) {
     this.intentPersistence = new RecoveryCreditIntentPersistence(database);
-    this.outcomePersistence = new RecoveryCreditOutcomePersistence(database, providerEnvironment);
+    this.outcomePersistence = new RecoveryCreditOutcomePersistence(
+      database,
+      providerEnvironment,
+    );
   }
 
   private readonly intentPersistence: RecoveryCreditIntentPersistence;
@@ -53,12 +54,26 @@ export class RecoveryCreditPurchaseCommandService {
   ): Promise<RecoveryCreditPurchaseCommandResponse> {
     let provider: ProviderClient;
     try {
-      provider = typeof this.provider === "function" ? await this.provider() : this.provider;
+      provider =
+        typeof this.provider === "function"
+          ? await this.provider()
+          : this.provider;
     } catch (cause) {
       // No purchase or provider-operation row may be created without credentials.
-      throw new RecoveryCreditPurchaseCommandError(503, "billing_provider_unavailable", undefined, undefined, undefined, { cause });
+      throw new RecoveryCreditPurchaseCommandError(
+        503,
+        "billing_provider_unavailable",
+        undefined,
+        undefined,
+        undefined,
+        { cause },
+      );
     }
-    const intent = await this.intentPersistence.persistIntent(principal, requestKey, merchantPricingUsageEventId);
+    const intent = await this.intentPersistence.persistIntent(
+      principal,
+      requestKey,
+      merchantPricingUsageEventId,
+    );
     if (intent.replay) return replayOperation(intent.operation);
 
     const operation = intent.operation;
@@ -73,10 +88,18 @@ export class RecoveryCreditPurchaseCommandService {
         await provider.createCharge(body),
       );
     } catch (error) {
-      const outcome = await this.outcomePersistence.failProviderOperation(operation, error);
+      const outcome = await this.outcomePersistence.failProviderOperation(
+        operation,
+        error,
+      );
       return operationResponse(outcome);
     }
 
-    return operationResponse(await this.outcomePersistence.confirmProviderOperation(operation, evidence));
+    return operationResponse(
+      await this.outcomePersistence.confirmProviderOperation(
+        operation,
+        evidence,
+      ),
+    );
   }
 }

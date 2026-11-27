@@ -1,8 +1,19 @@
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
-import { WOO_CHECKOUT_QUEUE, WOO_ORDER_QUEUE, type WooCheckoutJob, type WooOrderJob } from "./contract.js";
-import { WooCheckoutQueueProducer, type WooCheckoutPublisher } from "./producer.js";
-import { WooOrderQueueProducer, type WooOrderPublisher } from "./order-producer.js";
+import {
+  WOO_CHECKOUT_QUEUE,
+  WOO_ORDER_QUEUE,
+  type WooCheckoutJob,
+  type WooOrderJob,
+} from "./contract.js";
+import {
+  WooCheckoutQueueProducer,
+  type WooCheckoutPublisher,
+} from "./producer.js";
+import {
+  WooOrderQueueProducer,
+  type WooOrderPublisher,
+} from "./order-producer.js";
 
 /** One lazy Redis connection with independent, Woo-only checkout and order queues. */
 export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
@@ -30,7 +41,9 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
       maxRetriesPerRequest: 1,
       retryStrategy: (attempt: number) => Math.min(attempt * 250, 2_000),
     });
-    redis.on("error", (error) => { lastRedisError = error; });
+    redis.on("error", (error) => {
+      lastRedisError = error;
+    });
     return redis;
   }
   /** BullMQ may wait indefinitely for its first Redis ready event. Check
@@ -41,9 +54,10 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
     const client = connection();
     if (client.status === "ready") return;
     await new Promise<void>((resolve, reject) => {
-      const unavailable = () => new Error("woo_activity_redis_unavailable", {
-        cause: lastRedisError,
-      });
+      const unavailable = () =>
+        new Error("woo_activity_redis_unavailable", {
+          cause: lastRedisError,
+        });
       const done = (error?: Error) => {
         clearTimeout(timeout);
         client.off("ready", onReady);
@@ -61,25 +75,37 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
       client.once("end", onEnd);
       if (client.status === "wait" || client.status === "end") {
         // A failed connection may be retried by the next HTTP request.
-        void client.connect().catch(() => { /* failure surfaces via end/timeout */ });
+        void client.connect().catch(() => {
+          /* failure surfaces via end/timeout */
+        });
       } else if (client.status === "ready") onReady();
     });
   }
   function getCheckoutQueue(): Queue<WooCheckoutJob> {
-    return checkoutQueue ??= new Queue<WooCheckoutJob>(WOO_CHECKOUT_QUEUE, { connection: connection() });
+    return (checkoutQueue ??= new Queue<WooCheckoutJob>(WOO_CHECKOUT_QUEUE, {
+      connection: connection(),
+    }));
   }
   function getOrderQueue(): Queue<WooOrderJob> {
-    return orderQueue ??= new Queue<WooOrderJob>(WOO_ORDER_QUEUE, { connection: connection() });
+    return (orderQueue ??= new Queue<WooOrderJob>(WOO_ORDER_QUEUE, {
+      connection: connection(),
+    }));
   }
   const publisher = new WooCheckoutQueueProducer({
-    getJob: async (id) => { await requireReady(); return getCheckoutQueue().getJob(id); },
+    getJob: async (id) => {
+      await requireReady();
+      return getCheckoutQueue().getJob(id);
+    },
     add: async (name, payload, options) => {
       await requireReady();
       return getCheckoutQueue().add(name, payload, options);
     },
   });
   const orderPublisher = new WooOrderQueueProducer({
-    getJob: async (id) => { await requireReady(); return getOrderQueue().getJob(id); },
+    getJob: async (id) => {
+      await requireReady();
+      return getOrderQueue().getJob(id);
+    },
     add: async (name, payload, options) => {
       await requireReady();
       return getOrderQueue().add(name, payload, options);
@@ -94,7 +120,9 @@ export function createWooCheckoutRedisProducer(redisUrl: string | undefined): {
       if (redis && redis.status !== "ready") redis.disconnect();
       try {
         await Promise.all([checkoutQueue?.close(), orderQueue?.close()]);
-      } finally { redis?.disconnect(); }
+      } finally {
+        redis?.disconnect();
+      }
     },
   };
 }

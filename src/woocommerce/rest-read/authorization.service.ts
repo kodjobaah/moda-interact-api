@@ -1,16 +1,31 @@
 import { randomBytes } from "node:crypto";
 import { Prisma, type PrismaClient } from "@prisma/client";
-import { resolveModaConfigurationLocale, type ModaSupportedLanguageTag } from "@modainteract/moda-interact-shared/internationalization";
-import { canonicalizeWooSiteUrl, type WooConnectionMode } from "../installation/site-url.js";
+import {
+  resolveModaConfigurationLocale,
+  type ModaSupportedLanguageTag,
+} from "@modainteract/moda-interact-shared/internationalization";
+import {
+  canonicalizeWooSiteUrl,
+  type WooConnectionMode,
+} from "../installation/site-url.js";
 import { digestSecret } from "../../auth/woo-installation/credential.js";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
-import { requireCurrentWooMutationPrincipal, WooMutationPrincipalConflictError } from
-  "../../auth/woo-installation/current-mutation-principal.js";
+import {
+  requireCurrentWooMutationPrincipal,
+  WooMutationPrincipalConflictError,
+} from "../../auth/woo-installation/current-mutation-principal.js";
 import type { WooRestReadAuthorizationConfig } from "./config.js";
 import type { CommerceConnectionSecurity } from "../../platform-configuration/service.js";
 import { sealWooReadCredentials } from "./envelope.js";
-import { WooReadCredentialVerifier, WooReadVerificationError } from "./credential-verifier.js";
-import { preferredWooAdminLocale, signWooReturnLocale, verifyWooReturnLocale } from "./return-locale-proof.js";
+import {
+  WooReadCredentialVerifier,
+  WooReadVerificationError,
+} from "./credential-verifier.js";
+import {
+  preferredWooAdminLocale,
+  signWooReturnLocale,
+  verifyWooReturnLocale,
+} from "./return-locale-proof.js";
 
 const ATTEMPT_LIFETIME_MS = 10 * 60 * 1000;
 const TRANSACTION_TIMEOUT_MS = 6000;
@@ -26,16 +41,24 @@ export interface WooCallbackPayload {
   key_permissions: "read";
 }
 
-export type WooGrantStatus = "CONNECTED" | "PENDING" | "NOT_CONNECTED" | "REAUTHORIZATION_REQUIRED";
-export type WooReadAuthorizationDatabase = Pick<PrismaClient,
+export type WooGrantStatus =
+  "CONNECTED" | "PENDING" | "NOT_CONNECTED" | "REAUTHORIZATION_REQUIRED";
+export type WooReadAuthorizationDatabase = Pick<
+  PrismaClient,
   "wooCommerceRestReadAttempt" | "wooCommerceRestReadGrant" | "$transaction"
 >;
 
 export class WooReadAuthorizationError extends Error {
   constructor(
     readonly status: number,
-    readonly code: "invalid_attempt" | "attempt_expired" | "invalid_credentials" | "provider_unavailable" |
-      "shop_unavailable" | "authorization_conflict" | "internal_error",
+    readonly code:
+      | "invalid_attempt"
+      | "attempt_expired"
+      | "invalid_credentials"
+      | "provider_unavailable"
+      | "shop_unavailable"
+      | "authorization_conflict"
+      | "internal_error",
     options?: ErrorOptions,
   ) {
     super(code, options);
@@ -46,9 +69,12 @@ export class WooReadAuthorizationError extends Error {
 export class WooReadAuthorizationService {
   constructor(
     private readonly database: WooReadAuthorizationDatabase,
-    private readonly config: WooRestReadAuthorizationConfig | {
-      publicOrigin: string; resolveSecurity: () => Promise<CommerceConnectionSecurity>;
-    },
+    private readonly config:
+      | WooRestReadAuthorizationConfig
+      | {
+          publicOrigin: string;
+          resolveSecurity: () => Promise<CommerceConnectionSecurity>;
+        },
     private readonly mode: WooConnectionMode,
     private readonly verifier: Pick<WooReadCredentialVerifier, "verify">,
     private readonly now: () => Date = () => new Date(),
@@ -61,7 +87,10 @@ export class WooReadAuthorizationService {
     return { publicOrigin: this.config.publicOrigin, keyring, activeKeyId };
   }
 
-  async start(principal: WooInstallationPrincipal, adminLocale?: string): Promise<{
+  async start(
+    principal: WooInstallationPrincipal,
+    adminLocale?: string,
+  ): Promise<{
     schemaVersion: 1;
     authorizationUrl: string;
     expiresAt: string;
@@ -69,28 +98,45 @@ export class WooReadAuthorizationService {
     const config = await this.operationConfig();
     const site = canonicalizeWooSiteUrl(principal.canonicalSiteUrl, this.mode);
     const token = this.tokenFactory();
-    if (token.length !== 32) throw new WooReadAuthorizationError(500, "internal_error");
+    if (token.length !== 32)
+      throw new WooReadAuthorizationError(500, "internal_error");
     const tokenDigest = digestSecret(token);
     const now = this.now();
-    const attempt = await serializableRetry(async () => this.database.$transaction(async (transaction) => {
-      await requireCurrentPrincipal(transaction, principal);
-      return transaction.wooCommerceRestReadAttempt.create({
-        data: {
-          installationId: principal.installationId,
-          shopId: principal.shopId,
-          credentialVersionSnapshot: principal.credentialVersion,
-          tokenDigest: Uint8Array.from(tokenDigest),
-          expiresAt: new Date(now.getTime() + ATTEMPT_LIFETIME_MS),
+    const attempt = await serializableRetry(async () =>
+      this.database.$transaction(
+        async (transaction) => {
+          await requireCurrentPrincipal(transaction, principal);
+          return transaction.wooCommerceRestReadAttempt.create({
+            data: {
+              installationId: principal.installationId,
+              shopId: principal.shopId,
+              credentialVersionSnapshot: principal.credentialVersion,
+              tokenDigest: Uint8Array.from(tokenDigest),
+              expiresAt: new Date(now.getTime() + ATTEMPT_LIFETIME_MS),
+            },
+            select: { id: true, expiresAt: true },
+          });
         },
-        select: { id: true, expiresAt: true },
-      });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TRANSACTION_TIMEOUT_MS }));
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          timeout: TRANSACTION_TIMEOUT_MS,
+        },
+      ),
+    );
 
     const returnUrl = new URL(`${config.publicOrigin}${RETURN_PATH}`);
     const requestedLocale = preferredWooAdminLocale(adminLocale);
     if (requestedLocale) {
       returnUrl.searchParams.set("display_locale", requestedLocale);
-      returnUrl.searchParams.set("display_proof", signWooReturnLocale(config, attempt.id, principal.shopId, requestedLocale));
+      returnUrl.searchParams.set(
+        "display_proof",
+        signWooReturnLocale(
+          config,
+          attempt.id,
+          principal.shopId,
+          requestedLocale,
+        ),
+      );
     }
     const url = new URL(site.canonicalSiteUrl);
     url.pathname = `${site.basePath}/wc-auth/v1/authorize`;
@@ -101,12 +147,18 @@ export class WooReadAuthorizationService {
       return_url: returnUrl.toString(),
       callback_url: `${config.publicOrigin}${CALLBACK_PATH}/${token.toString("base64url")}`,
     }).toString();
-    return { schemaVersion: 1, authorizationUrl: url.toString(), expiresAt: attempt.expiresAt.toISOString() };
+    return {
+      schemaVersion: 1,
+      authorizationUrl: url.toString(),
+      expiresAt: attempt.expiresAt.toISOString(),
+    };
   }
 
   /** Prefer the signed administrator locale; otherwise use the attempt's persisted shop language. */
   async returnLocale(
-    attemptId: string | null, requestedLocale: string | null = null, proof: string | null = null,
+    attemptId: string | null,
+    requestedLocale: string | null = null,
+    proof: string | null = null,
   ): Promise<ModaSupportedLanguageTag> {
     if (!attemptId || !/^[A-Za-z0-9_-]{1,128}$/.test(attemptId)) return "en";
     const attempt = await this.database.wooCommerceRestReadAttempt.findUnique({
@@ -122,16 +174,27 @@ export class WooReadAuthorizationService {
       },
     });
     if (!attempt || attempt.shopId !== attempt.installation.shopId) return "en";
-    const preferred = requestedLocale && proof
-      ? verifyWooReturnLocale(await this.operationConfig(), attemptId, attempt.shopId, requestedLocale, proof)
-      : null;
+    const preferred =
+      requestedLocale && proof
+        ? verifyWooReturnLocale(
+            await this.operationConfig(),
+            attemptId,
+            attempt.shopId,
+            requestedLocale,
+            proof,
+          )
+        : null;
     if (preferred) return preferred;
     const { storeLocale, defaultLanguageTag } = attempt.installation.shop;
-    return resolveModaConfigurationLocale((storeLocale ?? defaultLanguageTag)?.replaceAll("_", "-"));
+    return resolveModaConfigurationLocale(
+      (storeLocale ?? defaultLanguageTag)?.replaceAll("_", "-"),
+    );
   }
 
   async status(principal: WooInstallationPrincipal): Promise<{
-    schemaVersion: 1; status: WooGrantStatus; providerRevocationRequired: boolean;
+    schemaVersion: 1;
+    status: WooGrantStatus;
+    providerRevocationRequired: boolean;
   }> {
     const grant = await this.database.wooCommerceRestReadGrant.findUnique({
       where: { installationId: principal.installationId },
@@ -140,54 +203,96 @@ export class WooReadAuthorizationService {
     if (grant?.shopId !== undefined && grant.shopId !== principal.shopId) {
       throw new WooReadAuthorizationError(403, "shop_unavailable");
     }
-    if (grant?.status === "ACTIVE" && grant.credentialVersionSnapshot === principal.credentialVersion) {
-      return { schemaVersion: 1, status: "CONNECTED", providerRevocationRequired: false };
+    if (
+      grant?.status === "ACTIVE" &&
+      grant.credentialVersionSnapshot === principal.credentialVersion
+    ) {
+      return {
+        schemaVersion: 1,
+        status: "CONNECTED",
+        providerRevocationRequired: false,
+      };
     }
     const attempt = await this.database.wooCommerceRestReadAttempt.findFirst({
-      where: { installationId: principal.installationId, shopId: principal.shopId },
-      select: { status: true, expiresAt: true, credentialVersionSnapshot: true },
+      where: {
+        installationId: principal.installationId,
+        shopId: principal.shopId,
+      },
+      select: {
+        status: true,
+        expiresAt: true,
+        credentialVersionSnapshot: true,
+      },
       orderBy: { attemptSequence: "desc" },
     });
-    const pending = attempt?.status === "PENDING" && attempt.expiresAt > this.now() &&
+    const pending =
+      attempt?.status === "PENDING" &&
+      attempt.expiresAt > this.now() &&
       attempt.credentialVersionSnapshot === principal.credentialVersion;
     return {
       schemaVersion: 1,
-      status: pending ? "PENDING" : grant ? "REAUTHORIZATION_REQUIRED" : "NOT_CONNECTED",
+      status: pending
+        ? "PENDING"
+        : grant
+          ? "REAUTHORIZATION_REQUIRED"
+          : "NOT_CONNECTED",
       providerRevocationRequired: grant?.status === "REVOKED",
     };
   }
 
   async revoke(principal: WooInstallationPrincipal): Promise<{
-    schemaVersion: 1; status: "REVOKED"; providerRevocationRequired: true;
+    schemaVersion: 1;
+    status: "REVOKED";
+    providerRevocationRequired: true;
   }> {
-    await serializableRetry(async () => this.database.$transaction(async (transaction) => {
-      await requireCurrentPrincipal(transaction, principal);
-      const now = this.now();
-      // A callback prepared before revoke must not restore the grant afterwards.
-      await transaction.wooCommerceRestReadAttempt.updateMany({
-        where: {
-          installationId: principal.installationId,
-          shopId: principal.shopId,
-          credentialVersionSnapshot: principal.credentialVersion,
-          status: "PENDING",
+    await serializableRetry(async () =>
+      this.database.$transaction(
+        async (transaction) => {
+          await requireCurrentPrincipal(transaction, principal);
+          const now = this.now();
+          // A callback prepared before revoke must not restore the grant afterwards.
+          await transaction.wooCommerceRestReadAttempt.updateMany({
+            where: {
+              installationId: principal.installationId,
+              shopId: principal.shopId,
+              credentialVersionSnapshot: principal.credentialVersion,
+              status: "PENDING",
+            },
+            data: {
+              status: "FAILED",
+              consumedAt: now,
+              failureCode: "locally_revoked",
+            },
+          });
+          await transaction.wooCommerceRestReadGrant.updateMany({
+            where: {
+              installationId: principal.installationId,
+              shopId: principal.shopId,
+              credentialVersionSnapshot: principal.credentialVersion,
+              status: "ACTIVE",
+            },
+            data: { status: "REVOKED", revokedAt: now },
+          });
         },
-        data: { status: "FAILED", consumedAt: now, failureCode: "locally_revoked" },
-      });
-      await transaction.wooCommerceRestReadGrant.updateMany({
-        where: {
-          installationId: principal.installationId,
-          shopId: principal.shopId,
-          credentialVersionSnapshot: principal.credentialVersion,
-          status: "ACTIVE",
+        {
+          isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+          timeout: TRANSACTION_TIMEOUT_MS,
         },
-        data: { status: "REVOKED", revokedAt: now },
-      });
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TRANSACTION_TIMEOUT_MS }));
-    return { schemaVersion: 1, status: "REVOKED", providerRevocationRequired: true };
+      ),
+    );
+    return {
+      schemaVersion: 1,
+      status: "REVOKED",
+      providerRevocationRequired: true,
+    };
   }
 
-  async callback(encodedToken: string, payload: WooCallbackPayload): Promise<void> {
-    if (!/^[A-Za-z0-9_-]{43}$/.test(encodedToken)) throw new WooReadAuthorizationError(404, "invalid_attempt");
+  async callback(
+    encodedToken: string,
+    payload: WooCallbackPayload,
+  ): Promise<void> {
+    if (!/^[A-Za-z0-9_-]{43}$/.test(encodedToken))
+      throw new WooReadAuthorizationError(404, "invalid_attempt");
     const token = Buffer.from(encodedToken, "base64url");
     if (token.length !== 32 || token.toString("base64url") !== encodedToken) {
       throw new WooReadAuthorizationError(404, "invalid_attempt");
@@ -195,17 +300,29 @@ export class WooReadAuthorizationService {
     const attempt = await this.database.wooCommerceRestReadAttempt.findUnique({
       where: { tokenDigest: Uint8Array.from(digestSecret(token)) },
       select: {
-        id: true, shopId: true, installationId: true, status: true, attemptSequence: true,
-        expiresAt: true, credentialVersionSnapshot: true,
+        id: true,
+        shopId: true,
+        installationId: true,
+        status: true,
+        attemptSequence: true,
+        expiresAt: true,
+        credentialVersionSnapshot: true,
         installation: {
           select: {
-            shopId: true, canonicalSiteUrl: true, status: true, revokedAt: true, credentialVersion: true,
-            shop: { select: { status: true, platform: true, shopifyShopId: true } },
+            shopId: true,
+            canonicalSiteUrl: true,
+            status: true,
+            revokedAt: true,
+            credentialVersion: true,
+            shop: {
+              select: { status: true, platform: true, shopifyShopId: true },
+            },
           },
         },
       },
     });
-    if (!attempt || payload.user_id !== attempt.id) throw new WooReadAuthorizationError(404, "invalid_attempt");
+    if (!attempt || payload.user_id !== attempt.id)
+      throw new WooReadAuthorizationError(404, "invalid_attempt");
     // Provider retries after a successful commit are idempotent, but cannot rotate a grant.
     if (attempt.status === "SUCCEEDED") {
       if (await this.acknowledgeCompleted(attempt)) return;
@@ -216,25 +333,42 @@ export class WooReadAuthorizationService {
     }
     const installation = attempt.installation;
     if (
-      installation.shopId !== attempt.shopId || installation.status !== "ACTIVE" ||
-      installation.revokedAt !== null || installation.credentialVersion !== attempt.credentialVersionSnapshot ||
-      installation.shop.status !== "ACTIVE" || installation.shop.platform !== "WOOCOMMERCE" ||
+      installation.shopId !== attempt.shopId ||
+      installation.status !== "ACTIVE" ||
+      installation.revokedAt !== null ||
+      installation.credentialVersion !== attempt.credentialVersionSnapshot ||
+      installation.shop.status !== "ACTIVE" ||
+      installation.shop.platform !== "WOOCOMMERCE" ||
       installation.shop.shopifyShopId !== null
     ) {
       throw new WooReadAuthorizationError(409, "shop_unavailable");
     }
-    const site = canonicalizeWooSiteUrl(installation.canonicalSiteUrl, this.mode);
+    const site = canonicalizeWooSiteUrl(
+      installation.canonicalSiteUrl,
+      this.mode,
+    );
     try {
-      await this.verifier.verify(site, { consumerKey: payload.consumer_key, consumerSecret: payload.consumer_secret });
+      await this.verifier.verify(site, {
+        consumerKey: payload.consumer_key,
+        consumerSecret: payload.consumer_secret,
+      });
     } catch (error) {
       if (error instanceof WooReadVerificationError) {
         throw new WooReadAuthorizationError(
-          error.reason === "rejected_credentials" || error.reason === "invalid_response" ? 422 : 503,
-          error.reason === "rejected_credentials" || error.reason === "invalid_response" ? "invalid_credentials" : "provider_unavailable",
+          error.reason === "rejected_credentials" ||
+            error.reason === "invalid_response"
+            ? 422
+            : 503,
+          error.reason === "rejected_credentials" ||
+            error.reason === "invalid_response"
+            ? "invalid_credentials"
+            : "provider_unavailable",
           { cause: error },
         );
       }
-      throw new WooReadAuthorizationError(503, "provider_unavailable", { cause: error });
+      throw new WooReadAuthorizationError(503, "provider_unavailable", {
+        cause: error,
+      });
     }
     const context = {
       shopId: attempt.shopId,
@@ -244,61 +378,110 @@ export class WooReadAuthorizationService {
     };
     const config = await this.operationConfig();
     const envelope = sealWooReadCredentials(
-      { consumerKey: payload.consumer_key, consumerSecret: payload.consumer_secret }, context, config,
+      {
+        consumerKey: payload.consumer_key,
+        consumerSecret: payload.consumer_secret,
+      },
+      context,
+      config,
     );
     try {
-      await serializableRetry(async () => this.database.$transaction(async (transaction) => {
-        const callbackPrincipal: WooInstallationPrincipal = {
-          installationId: attempt.installationId,
-          shopId: attempt.shopId,
-          canonicalSiteUrl: installation.canonicalSiteUrl,
-          credentialVersion: attempt.credentialVersionSnapshot,
-        };
-        await requireCurrentPrincipal(transaction, callbackPrincipal);
-        // Enforce exactly one usage of this bearer and the same installed generation.
-        const changed = await transaction.wooCommerceRestReadAttempt.updateMany({
-          where: { id: attempt.id, installationId: attempt.installationId,
-            shopId: attempt.shopId, status: "PENDING", expiresAt: { gt: this.now() },
-            credentialVersionSnapshot: attempt.credentialVersionSnapshot },
-          data: { status: "SUCCEEDED", consumedAt: this.now() },
-        });
-        if (changed.count !== 1) throw new WooReadAuthorizationError(409, "authorization_conflict");
-        const existing = await transaction.wooCommerceRestReadGrant.findUnique({
-          where: { installationId: attempt.installationId },
-          select: { authorizationAttemptSequence: true, rotationVersion: true },
-        });
-        if (existing && existing.authorizationAttemptSequence >= attempt.attemptSequence) {
-          throw new WooReadAuthorizationError(409, "authorization_conflict");
-        }
-        const grant = {
-          shopId: attempt.shopId,
-          authorizationAttemptId: attempt.id,
-          authorizationAttemptSequence: attempt.attemptSequence,
-          credentialVersionSnapshot: attempt.credentialVersionSnapshot,
-          credentialCiphertext: Uint8Array.from(envelope.credentialCiphertext),
-          credentialNonce: Uint8Array.from(envelope.credentialNonce),
-          credentialAuthTag: Uint8Array.from(envelope.credentialAuthTag),
-          encryptionKeyId: envelope.encryptionKeyId,
-          providerKeyId: String(payload.key_id),
-          authorizedScope: "read",
-          verifiedAt: this.now(),
-          grantedAt: this.now(),
-        };
-        if (existing) {
-          await transaction.wooCommerceRestReadGrant.update({
-            where: { installationId: attempt.installationId },
-            data: { ...grant, status: "ACTIVE", rotationVersion: existing.rotationVersion + 1,
-              revokedAt: null, invalidatedAt: null },
-          });
-        } else {
-          await transaction.wooCommerceRestReadGrant.create({
-            data: { ...grant, installationId: attempt.installationId, status: "ACTIVE", rotationVersion: 1 },
-          });
-        }
-      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, timeout: TRANSACTION_TIMEOUT_MS }));
+      await serializableRetry(async () =>
+        this.database.$transaction(
+          async (transaction) => {
+            const callbackPrincipal: WooInstallationPrincipal = {
+              installationId: attempt.installationId,
+              shopId: attempt.shopId,
+              canonicalSiteUrl: installation.canonicalSiteUrl,
+              credentialVersion: attempt.credentialVersionSnapshot,
+            };
+            await requireCurrentPrincipal(transaction, callbackPrincipal);
+            // Enforce exactly one usage of this bearer and the same installed generation.
+            const changed =
+              await transaction.wooCommerceRestReadAttempt.updateMany({
+                where: {
+                  id: attempt.id,
+                  installationId: attempt.installationId,
+                  shopId: attempt.shopId,
+                  status: "PENDING",
+                  expiresAt: { gt: this.now() },
+                  credentialVersionSnapshot: attempt.credentialVersionSnapshot,
+                },
+                data: { status: "SUCCEEDED", consumedAt: this.now() },
+              });
+            if (changed.count !== 1)
+              throw new WooReadAuthorizationError(
+                409,
+                "authorization_conflict",
+              );
+            const existing =
+              await transaction.wooCommerceRestReadGrant.findUnique({
+                where: { installationId: attempt.installationId },
+                select: {
+                  authorizationAttemptSequence: true,
+                  rotationVersion: true,
+                },
+              });
+            if (
+              existing &&
+              existing.authorizationAttemptSequence >= attempt.attemptSequence
+            ) {
+              throw new WooReadAuthorizationError(
+                409,
+                "authorization_conflict",
+              );
+            }
+            const grant = {
+              shopId: attempt.shopId,
+              authorizationAttemptId: attempt.id,
+              authorizationAttemptSequence: attempt.attemptSequence,
+              credentialVersionSnapshot: attempt.credentialVersionSnapshot,
+              credentialCiphertext: Uint8Array.from(
+                envelope.credentialCiphertext,
+              ),
+              credentialNonce: Uint8Array.from(envelope.credentialNonce),
+              credentialAuthTag: Uint8Array.from(envelope.credentialAuthTag),
+              encryptionKeyId: envelope.encryptionKeyId,
+              providerKeyId: String(payload.key_id),
+              authorizedScope: "read",
+              verifiedAt: this.now(),
+              grantedAt: this.now(),
+            };
+            if (existing) {
+              await transaction.wooCommerceRestReadGrant.update({
+                where: { installationId: attempt.installationId },
+                data: {
+                  ...grant,
+                  status: "ACTIVE",
+                  rotationVersion: existing.rotationVersion + 1,
+                  revokedAt: null,
+                  invalidatedAt: null,
+                },
+              });
+            } else {
+              await transaction.wooCommerceRestReadGrant.create({
+                data: {
+                  ...grant,
+                  installationId: attempt.installationId,
+                  status: "ACTIVE",
+                  rotationVersion: 1,
+                },
+              });
+            }
+          },
+          {
+            isolationLevel: Prisma.TransactionIsolationLevel.Serializable,
+            timeout: TRANSACTION_TIMEOUT_MS,
+          },
+        ),
+      );
     } catch (error) {
       if (error instanceof WooReadAuthorizationError) {
-        if (error.code === "authorization_conflict" && await this.acknowledgeCompleted(attempt)) return;
+        if (
+          error.code === "authorization_conflict" &&
+          (await this.acknowledgeCompleted(attempt))
+        )
+          return;
         throw error;
       }
       throw error;
@@ -306,25 +489,43 @@ export class WooReadAuthorizationService {
   }
 
   private async acknowledgeCompleted(attempt: {
-    id: string; shopId: string; installationId: string; credentialVersionSnapshot: number;
+    id: string;
+    shopId: string;
+    installationId: string;
+    credentialVersionSnapshot: number;
   }): Promise<boolean> {
     const current = await this.database.wooCommerceRestReadAttempt.findUnique({
       where: { id: attempt.id },
-      select: { status: true, shopId: true, installationId: true, credentialVersionSnapshot: true },
+      select: {
+        status: true,
+        shopId: true,
+        installationId: true,
+        credentialVersionSnapshot: true,
+      },
     });
-    if (!current || current.status !== "SUCCEEDED" || current.shopId !== attempt.shopId ||
+    if (
+      !current ||
+      current.status !== "SUCCEEDED" ||
+      current.shopId !== attempt.shopId ||
       current.installationId !== attempt.installationId ||
-      current.credentialVersionSnapshot !== attempt.credentialVersionSnapshot) return false;
+      current.credentialVersionSnapshot !== attempt.credentialVersionSnapshot
+    )
+      return false;
     const grant = await this.database.wooCommerceRestReadGrant.findUnique({
       where: { installationId: attempt.installationId },
       select: {
-        shopId: true, authorizationAttemptId: true, credentialVersionSnapshot: true,
+        shopId: true,
+        authorizationAttemptId: true,
+        credentialVersionSnapshot: true,
         status: true,
       },
     });
-    return grant?.authorizationAttemptId === attempt.id && grant.shopId === attempt.shopId &&
+    return (
+      grant?.authorizationAttemptId === attempt.id &&
+      grant.shopId === attempt.shopId &&
       grant.credentialVersionSnapshot === attempt.credentialVersionSnapshot &&
-      (grant.status === "ACTIVE" || grant.status === "REVOKED");
+      (grant.status === "ACTIVE" || grant.status === "REVOKED")
+    );
   }
 }
 
@@ -336,7 +537,9 @@ async function requireCurrentPrincipal(
     await requireCurrentWooMutationPrincipal(transaction, principal);
   } catch (error) {
     if (error instanceof WooMutationPrincipalConflictError) {
-      throw new WooReadAuthorizationError(409, "shop_unavailable", { cause: error });
+      throw new WooReadAuthorizationError(409, "shop_unavailable", {
+        cause: error,
+      });
     }
     throw error;
   }
@@ -347,10 +550,19 @@ async function serializableRetry<T>(operation: () => Promise<T>): Promise<T> {
     try {
       return await operation();
     } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034" &&
-        index + 1 < TRANSACTION_RETRIES) continue;
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2034") {
-        throw new WooReadAuthorizationError(409, "authorization_conflict", { cause: error });
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034" &&
+        index + 1 < TRANSACTION_RETRIES
+      )
+        continue;
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === "P2034"
+      ) {
+        throw new WooReadAuthorizationError(409, "authorization_conflict", {
+          cause: error,
+        });
       }
       throw error;
     }

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createLogger } from "@modainteract/moda-interact-shared/logging";
 import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
-import { BillingCatalogueError, BillingPlanCatalogueReadService } from "../../../../src/billing/presentation/plan-catalogue-read.service.js";
+import {
+  BillingCatalogueError,
+  BillingPlanCatalogueReadService,
+} from "../../../../src/billing/presentation/plan-catalogue-read.service.js";
 
 const principal: WooInstallationPrincipal = {
   installationId: "install_1",
@@ -26,7 +29,10 @@ const freePlan = {
   highlights: [],
 };
 
-function makeService(plans: unknown[], defaultLanguageTag: string | null = null) {
+function makeService(
+  plans: unknown[],
+  defaultLanguageTag: string | null = null,
+) {
   const logLines: string[] = [];
   const logger = createLogger({
     serviceName: "billing-test",
@@ -34,20 +40,26 @@ function makeService(plans: unknown[], defaultLanguageTag: string | null = null)
     sink: (line) => logLines.push(JSON.stringify(line)),
   });
   const database = {
-    $transaction: (callback: (transaction: unknown) => Promise<unknown>) => callback({
-      shop: { findUnique: async () => ({
-        id: principal.shopId,
-        domain: principal.canonicalSiteUrl,
-        platform: "WOOCOMMERCE",
-        shopifyShopId: null,
-        status: "ACTIVE",
-        onboardingCompleted: true,
-        defaultLanguageTag,
-      }) },
-      merchantPricingPlan: { findMany: async () => plans },
-    }),
+    $transaction: (callback: (transaction: unknown) => Promise<unknown>) =>
+      callback({
+        shop: {
+          findUnique: async () => ({
+            id: principal.shopId,
+            domain: principal.canonicalSiteUrl,
+            platform: "WOOCOMMERCE",
+            shopifyShopId: null,
+            status: "ACTIVE",
+            onboardingCompleted: true,
+            defaultLanguageTag,
+          }),
+        },
+        merchantPricingPlan: { findMany: async () => plans },
+      }),
   };
-  return { service: new BillingPlanCatalogueReadService(database as never, logger), logLines };
+  return {
+    service: new BillingPlanCatalogueReadService(database as never, logger),
+    logLines,
+  };
 }
 
 test("plan catalogue resolves one complete locale for all plans and highlights", async () => {
@@ -64,14 +76,24 @@ test("plan catalogue resolves one complete locale for all plans and highlights",
       { locale: "en", merchantDescription: "Growth plan" },
       { locale: "pt", merchantDescription: "Plano Growth" },
     ],
-    highlights: [{
-      contentKey: "f93d600e-9ed9-4821-bcfe-c40dacabe1b9",
-      position: 0,
-      translations: [
-        { locale: "en", merchantTitle: "More", merchantDescription: "More credits" },
-        { locale: "pt", merchantTitle: "Mais", merchantDescription: "Mais créditos" },
-      ],
-    }],
+    highlights: [
+      {
+        contentKey: "f93d600e-9ed9-4821-bcfe-c40dacabe1b9",
+        position: 0,
+        translations: [
+          {
+            locale: "en",
+            merchantTitle: "More",
+            merchantDescription: "More credits",
+          },
+          {
+            locale: "pt",
+            merchantTitle: "Mais",
+            merchantDescription: "Mais créditos",
+          },
+        ],
+      },
+    ],
   };
   const freeBilingual = {
     ...freePlan,
@@ -100,29 +122,52 @@ test("plan catalogue skips incompatible paid pricing, but requires exactly one F
   };
   const { service, logLines } = makeService([freePlan, incompatible]);
   const response = await service.read(principal);
-  assert.deepEqual(response.plans.map((plan) => plan.merchantPricingPlanId), ["mp_free"]);
-  assert.equal(logLines.length, 1);
-  await assert.rejects(makeService([]).service.read(principal), (error: unknown) =>
-    error instanceof BillingCatalogueError && error.code === "billing_catalogue_invalid",
+  assert.deepEqual(
+    response.plans.map((plan) => plan.merchantPricingPlanId),
+    ["mp_free"],
   );
-  await assert.rejects(makeService([freePlan, freePlan]).service.read(principal), (error: unknown) =>
-    error instanceof BillingCatalogueError && error.code === "billing_catalogue_invalid",
+  assert.equal(logLines.length, 1);
+  await assert.rejects(
+    makeService([]).service.read(principal),
+    (error: unknown) =>
+      error instanceof BillingCatalogueError &&
+      error.code === "billing_catalogue_invalid",
+  );
+  await assert.rejects(
+    makeService([freePlan, freePlan]).service.read(principal),
+    (error: unknown) =>
+      error instanceof BillingCatalogueError &&
+      error.code === "billing_catalogue_invalid",
   );
 });
 
 test("plan catalogue never mixes locales and rejects invalid presentation locale", async () => {
   const partial = {
     ...freePlan,
-    highlights: [{
-      contentKey: "a77fc9a2-5b0b-4f90-a80e-7da0a2206b5b",
-      position: 0,
-      translations: [{ locale: "fr", merchantTitle: "Titre", merchantDescription: "Description" }],
-    }],
+    highlights: [
+      {
+        contentKey: "a77fc9a2-5b0b-4f90-a80e-7da0a2206b5b",
+        position: 0,
+        translations: [
+          {
+            locale: "fr",
+            merchantTitle: "Titre",
+            merchantDescription: "Description",
+          },
+        ],
+      },
+    ],
   };
-  await assert.rejects(makeService([partial]).service.read(principal, "fr-CA"), (error: unknown) =>
-    error instanceof BillingCatalogueError && error.code === "billing_catalogue_translation_unavailable",
+  await assert.rejects(
+    makeService([partial]).service.read(principal, "fr-CA"),
+    (error: unknown) =>
+      error instanceof BillingCatalogueError &&
+      error.code === "billing_catalogue_translation_unavailable",
   );
-  await assert.rejects(makeService([freePlan]).service.read(principal, "bad_tag_@@"), (error: unknown) =>
-    error instanceof BillingCatalogueError && error.code === "billing_locale_invalid",
+  await assert.rejects(
+    makeService([freePlan]).service.read(principal, "bad_tag_@@"),
+    (error: unknown) =>
+      error instanceof BillingCatalogueError &&
+      error.code === "billing_locale_invalid",
   );
 });

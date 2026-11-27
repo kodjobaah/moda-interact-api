@@ -14,15 +14,15 @@ paths:
         - WooInstallationId: []
           WooInstallationCredential: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RecurringPlanRequest'
+              $ref: "#/components/schemas/RecurringPlanRequest"
       responses:
-        '200':
+        "200":
           description: The idempotent command already reached CONFIRMED; the persisted successful result is returned without another provider write.
           headers:
             Cache-Control:
@@ -30,8 +30,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConfirmationResult'
-        '202':
+                $ref: "#/components/schemas/ConfirmationResult"
+        "202":
           description: Woo accepted a paid recurring contract intent; merchant confirmation is required.
           headers:
             Cache-Control:
@@ -39,15 +39,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConfirmationResult'
-        '400': { $ref: '#/components/responses/CommandError' }
-        '401': { $ref: '#/components/responses/CommandError' }
-        '409': { $ref: '#/components/responses/CommandError' }
-        '413': { $ref: '#/components/responses/CommandError' }
-        '422': { $ref: '#/components/responses/CommandError' }
-        '502': { $ref: '#/components/responses/CommandError' }
-        '503': { $ref: '#/components/responses/CommandError' }
-        '500': { $ref: '#/components/responses/CommandError' }
+                $ref: "#/components/schemas/ConfirmationResult"
+        "400": { $ref: "#/components/responses/CommandError" }
+        "401": { $ref: "#/components/responses/CommandError" }
+        "409": { $ref: "#/components/responses/CommandError" }
+        "413": { $ref: "#/components/responses/CommandError" }
+        "422": { $ref: "#/components/responses/CommandError" }
+        "502": { $ref: "#/components/responses/CommandError" }
+        "503": { $ref: "#/components/responses/CommandError" }
+        "500": { $ref: "#/components/responses/CommandError" }
     delete:
       operationId: cancelWooRecurringSubscription
       summary: Initiate cancellation of the current recurring contract
@@ -55,9 +55,9 @@ paths:
         - WooInstallationId: []
           WooInstallationCredential: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       responses:
-        '200':
+        "200":
           description: Woo accepted the cancellation command; paid Moda entitlement remains unchanged until verified lifecycle evidence.
           headers:
             Cache-Control:
@@ -65,14 +65,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/CancellationResult'
-        '400': { $ref: '#/components/responses/CommandError' }
-        '401': { $ref: '#/components/responses/CommandError' }
-        '409': { $ref: '#/components/responses/CommandError' }
-        '422': { $ref: '#/components/responses/CommandError' }
-        '502': { $ref: '#/components/responses/CommandError' }
-        '503': { $ref: '#/components/responses/CommandError' }
-        '500': { $ref: '#/components/responses/CommandError' }
+                $ref: "#/components/schemas/CancellationResult"
+        "400": { $ref: "#/components/responses/CommandError" }
+        "401": { $ref: "#/components/responses/CommandError" }
+        "409": { $ref: "#/components/responses/CommandError" }
+        "422": { $ref: "#/components/responses/CommandError" }
+        "502": { $ref: "#/components/responses/CommandError" }
+        "503": { $ref: "#/components/responses/CommandError" }
+        "500": { $ref: "#/components/responses/CommandError" }
   /v1/billing/subscription/switch:
     post:
       operationId: switchWooRecurringSubscriptionPlan
@@ -81,15 +81,15 @@ paths:
         - WooInstallationId: []
           WooInstallationCredential: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RecurringPlanRequest'
+              $ref: "#/components/schemas/RecurringPlanRequest"
       responses:
-        '200':
+        "200":
           description: The idempotent plan-switch command already reached CONFIRMED; the persisted successful result is returned without another provider write.
           headers:
             Cache-Control:
@@ -97,8 +97,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConfirmationResult'
-        '202':
+                $ref: "#/components/schemas/ConfirmationResult"
+        "202":
           description: Woo accepted a plan-switch intent; merchant confirmation is required.
           headers:
             Cache-Control:
@@ -106,15 +106,15 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/ConfirmationResult'
-        '400': { $ref: '#/components/responses/CommandError' }
-        '401': { $ref: '#/components/responses/CommandError' }
-        '409': { $ref: '#/components/responses/CommandError' }
-        '413': { $ref: '#/components/responses/CommandError' }
-        '422': { $ref: '#/components/responses/CommandError' }
-        '502': { $ref: '#/components/responses/CommandError' }
-        '503': { $ref: '#/components/responses/CommandError' }
-        '500': { $ref: '#/components/responses/CommandError' }
+                $ref: "#/components/schemas/ConfirmationResult"
+        "400": { $ref: "#/components/responses/CommandError" }
+        "401": { $ref: "#/components/responses/CommandError" }
+        "409": { $ref: "#/components/responses/CommandError" }
+        "413": { $ref: "#/components/responses/CommandError" }
+        "422": { $ref: "#/components/responses/CommandError" }
+        "502": { $ref: "#/components/responses/CommandError" }
+        "503": { $ref: "#/components/responses/CommandError" }
+        "500": { $ref: "#/components/responses/CommandError" }
   /v1/billing/recovery-credit-purchases:
     post:
       operationId: initiateWooRecoveryCreditPurchase
@@ -123,15 +123,15 @@ paths:
         - WooInstallationId: []
           WooInstallationCredential: []
       parameters:
-        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: "#/components/parameters/IdempotencyKey"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RecoveryCreditPurchaseRequest'
+              $ref: "#/components/schemas/RecoveryCreditPurchaseRequest"
       responses:
-        '200':
+        "200":
           description: The idempotent command already reached CONFIRMED; the persisted result is returned without another provider write.
           headers:
             Cache-Control:
@@ -139,8 +139,8 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RecoveryCreditPurchaseResult'
-        '202':
+                $ref: "#/components/schemas/RecoveryCreditPurchaseResult"
+        "202":
           description: Woo accepted one predefined bundle charge; merchant confirmation is required.
           headers:
             Cache-Control:
@@ -148,16 +148,16 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RecoveryCreditPurchaseResult'
-        '400': { $ref: '#/components/responses/CommandError' }
-        '401': { $ref: '#/components/responses/CommandError' }
-        '404': { $ref: '#/components/responses/CommandError' }
-        '409': { $ref: '#/components/responses/CommandError' }
-        '413': { $ref: '#/components/responses/CommandError' }
-        '422': { $ref: '#/components/responses/CommandError' }
-        '502': { $ref: '#/components/responses/CommandError' }
-        '503': { $ref: '#/components/responses/CommandError' }
-        '500': { $ref: '#/components/responses/CommandError' }
+                $ref: "#/components/schemas/RecoveryCreditPurchaseResult"
+        "400": { $ref: "#/components/responses/CommandError" }
+        "401": { $ref: "#/components/responses/CommandError" }
+        "404": { $ref: "#/components/responses/CommandError" }
+        "409": { $ref: "#/components/responses/CommandError" }
+        "413": { $ref: "#/components/responses/CommandError" }
+        "422": { $ref: "#/components/responses/CommandError" }
+        "502": { $ref: "#/components/responses/CommandError" }
+        "503": { $ref: "#/components/responses/CommandError" }
+        "500": { $ref: "#/components/responses/CommandError" }
 components:
   securitySchemes:
     WooInstallationId:
@@ -178,7 +178,7 @@ components:
         type: string
         minLength: 1
         maxLength: 128
-        pattern: '^[A-Za-z0-9._:-]+$'
+        pattern: "^[A-Za-z0-9._:-]+$"
   responses:
     CommandError:
       description: Bounded request, authentication, eligibility, provider, or internal error.
@@ -188,7 +188,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/CommandError'
+            $ref: "#/components/schemas/CommandError"
   schemas:
     RecurringPlanRequest:
       type: object
@@ -247,7 +247,7 @@ components:
         operationId: { type: string, minLength: 1, maxLength: 128 }
         kind: { type: string, const: CANCEL }
         state: { type: string, const: CONFIRMED }
-        confirmationUrl: { type: 'null' }
+        confirmationUrl: { type: "null" }
     CommandError:
       type: object
       additionalProperties: false
@@ -292,7 +292,7 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Z0-9_]+$'
+          pattern: "^[A-Z0-9_]+$"
           description: Bounded normalized provider result code; never a raw provider response.
         purchaseId:
           type: string

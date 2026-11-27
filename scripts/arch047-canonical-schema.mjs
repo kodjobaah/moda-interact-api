@@ -20,12 +20,18 @@ function migrationFile(schemaPath, migration) {
 /** The migration folder alone is not proof that the schema is the accepted schema. */
 export function isAcceptedArch047Schema(schemaPath) {
   try {
-    if (!existsSync(schemaPath) ||
-        !acceptedMigrations.every((migration) => existsSync(migrationFile(schemaPath, migration)))) {
+    if (
+      !existsSync(schemaPath) ||
+      !acceptedMigrations.every((migration) =>
+        existsSync(migrationFile(schemaPath, migration)),
+      )
+    ) {
       return false;
     }
     const schema = readFileSync(schemaPath, "utf8");
-    return requiredModels.every((model) => new RegExp(`^model\\s+${model}\\s*\\{`, "m").test(schema));
+    return requiredModels.every((model) =>
+      new RegExp(`^model\\s+${model}\\s*\\{`, "m").test(schema),
+    );
   } catch {
     return false;
   }
@@ -35,13 +41,19 @@ export function isAcceptedArch047Schema(schemaPath) {
 export function isCompatibleMigrationLineage(apiSchema, canonicalSchema) {
   try {
     if (resolve(apiSchema) === resolve(canonicalSchema)) return true;
-    const migrations = readdirSync(join(dirname(apiSchema), "migrations"), { withFileTypes: true });
+    const migrations = readdirSync(join(dirname(apiSchema), "migrations"), {
+      withFileTypes: true,
+    });
     for (const migration of migrations) {
       if (!migration.isDirectory()) continue;
       const pinned = migrationFile(apiSchema, migration.name);
       if (!existsSync(pinned)) continue;
       const canonical = migrationFile(canonicalSchema, migration.name);
-      if (!existsSync(canonical) || !readFileSync(pinned).equals(readFileSync(canonical))) return false;
+      if (
+        !existsSync(canonical) ||
+        !readFileSync(pinned).equals(readFileSync(canonical))
+      )
+        return false;
     }
     return true;
   } catch {
@@ -55,10 +67,14 @@ function primaryWorkspaceFromGit(cwd) {
     // The first worktree is Git's primary checkout, even when this repository is
     // a submodule whose common git directory lives under its parent's .git/modules.
     const output = execFileSync("git", ["worktree", "list", "--porcelain"], {
-      cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     });
     const primary = output.match(/^worktree (.+)$/m)?.[1];
-    return primary && basename(primary) === "moda-interact-api" ? dirname(primary) : null;
+    return primary && basename(primary) === "moda-interact-api"
+      ? dirname(primary)
+      : null;
   } catch {
     return null;
   }
@@ -72,19 +88,32 @@ function primaryWorkspaceFromGit(cwd) {
  */
 function workspaceFromGitCommonDir(cwd) {
   try {
-    const output = execFileSync("git", ["rev-parse", "--path-format=absolute", "--git-common-dir"], {
-      cwd, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
+    const output = execFileSync(
+      "git",
+      ["rev-parse", "--path-format=absolute", "--git-common-dir"],
+      {
+        cwd,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      },
+    ).trim();
     const gitDir = resolve(cwd, output);
-    if (basename(gitDir) === "moda-interact-api" &&
-        basename(dirname(gitDir)) === "modules" &&
-        basename(dirname(dirname(gitDir))) === ".git") {
+    if (
+      basename(gitDir) === "moda-interact-api" &&
+      basename(dirname(gitDir)) === "modules" &&
+      basename(dirname(dirname(gitDir))) === ".git"
+    ) {
       return dirname(dirname(dirname(gitDir)));
     }
-    if (basename(gitDir) === ".git" && basename(dirname(gitDir)) === "moda-interact-api") {
+    if (
+      basename(gitDir) === ".git" &&
+      basename(dirname(gitDir)) === "moda-interact-api"
+    ) {
       return dirname(dirname(gitDir));
     }
-  } catch { /* No accessible Git common directory. */ }
+  } catch {
+    /* No accessible Git common directory. */
+  }
   return null;
 }
 
@@ -92,8 +121,11 @@ function workspaceFromGitCommonDir(cwd) {
  * canonical primary workspace. Do not traverse or search arbitrary directories.
  */
 function workspaceBesideTaskWorktree(cwd) {
-  if (basename(dirname(cwd)) !== "moda-interact-workspace.worktrees" ||
-      !/^ARCH-\d{3}-[A-Z]+-\d{3}$/.test(basename(cwd))) return null;
+  if (
+    basename(dirname(cwd)) !== "moda-interact-workspace.worktrees" ||
+    !/^ARCH-\d{3}-[A-Z]+-\d{3}$/.test(basename(cwd))
+  )
+    return null;
   return resolve(cwd, "../..", "moda-interact-workspace");
 }
 
@@ -107,24 +139,40 @@ export function findAcceptedArch047Schema({
   workspaceRoot,
 } = {}) {
   const apiSchema = resolve(cwd, "database/prisma/schema.prisma");
-  const valid = (candidate) => isAcceptedArch047Schema(candidate) &&
+  const valid = (candidate) =>
+    isAcceptedArch047Schema(candidate) &&
     isCompatibleMigrationLineage(apiSchema, candidate);
 
   if (explicitSchema !== undefined) {
-    if (typeof explicitSchema !== "string" || !explicitSchema.trim()) return null;
+    if (typeof explicitSchema !== "string" || !explicitSchema.trim())
+      return null;
     const candidate = resolve(cwd, explicitSchema);
     return valid(candidate) ? candidate : null;
   }
 
   const candidates = [apiSchema];
-  if (workspaceRoot) candidates.push(resolve(workspaceRoot, "moda-interact-database/prisma/schema.prisma"));
+  if (workspaceRoot)
+    candidates.push(
+      resolve(workspaceRoot, "moda-interact-database/prisma/schema.prisma"),
+    );
   const gitWorkspace = workspaceFromGitCommonDir(cwd);
-  if (gitWorkspace) candidates.push(join(gitWorkspace, "moda-interact-database/prisma/schema.prisma"));
+  if (gitWorkspace)
+    candidates.push(
+      join(gitWorkspace, "moda-interact-database/prisma/schema.prisma"),
+    );
   const primaryWorkspace = primaryWorkspaceFromGit(cwd);
-  if (primaryWorkspace) candidates.push(join(primaryWorkspace, "moda-interact-database/prisma/schema.prisma"));
+  if (primaryWorkspace)
+    candidates.push(
+      join(primaryWorkspace, "moda-interact-database/prisma/schema.prisma"),
+    );
   const siblingWorkspace = workspaceBesideTaskWorktree(cwd);
-  if (siblingWorkspace) candidates.push(join(siblingWorkspace, "moda-interact-database/prisma/schema.prisma"));
-  candidates.push(resolve(cwd, "../moda-interact-database/prisma/schema.prisma"));
+  if (siblingWorkspace)
+    candidates.push(
+      join(siblingWorkspace, "moda-interact-database/prisma/schema.prisma"),
+    );
+  candidates.push(
+    resolve(cwd, "../moda-interact-database/prisma/schema.prisma"),
+  );
 
   for (const candidate of new Set(candidates)) {
     if (valid(candidate)) return candidate;

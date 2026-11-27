@@ -1,4 +1,7 @@
-import { createLogger, type LogRecord } from "@modainteract/moda-interact-shared/logging";
+import {
+  createLogger,
+  type LogRecord,
+} from "@modainteract/moda-interact-shared/logging";
 import { WooBillingClient } from "../../../../src/woocommerce/billing/woo-billing-client.js";
 import assert from "node:assert/strict";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -8,23 +11,50 @@ import {
   BILLING_SUBSCRIPTION_ROUTE_PATH as subscriptionPath,
   BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH as switchPath,
 } from "../../../../src/billing/commands/routes.js";
-import { authorizedHeaders, commandFixture, rawCommand, rawHeaders, withCommandRouter } from "./command-route-fixtures.js";
+import {
+  authorizedHeaders,
+  commandFixture,
+  rawCommand,
+  rawHeaders,
+  withCommandRouter,
+} from "./command-route-fixtures.js";
 
 const planBody = JSON.stringify({ merchantPricingPlanId: "plan-12" });
-const created = { schemaVersion: 1, operationId: "op-create", kind: "SUBSCRIPTION_CREATE", state: "AWAITING_CONFIRMATION", confirmationUrl: "https://provider.example/private" };
+const created = {
+  schemaVersion: 1,
+  operationId: "op-create",
+  kind: "SUBSCRIPTION_CREATE",
+  state: "AWAITING_CONFIRMATION",
+  confirmationUrl: "https://provider.example/private",
+};
 const confirmed = { ...created, state: "CONFIRMED" };
 
 function recurringRecorder(calls: string[], reply: unknown = created) {
   return {
-    async create(...args: unknown[]) { calls.push(`create:${(args[0] as { shopId: string }).shopId}:${args[1]}:${args[2]}`); return reply; },
-    async switchPlan(...args: unknown[]) { calls.push(`switch:${(args[0] as { shopId: string }).shopId}:${args[1]}:${args[2]}`); return reply; },
-    async cancel(...args: unknown[]) { calls.push(`cancel:${(args[0] as { shopId: string }).shopId}:${args[1]}`); return confirmed; },
+    async create(...args: unknown[]) {
+      calls.push(
+        `create:${(args[0] as { shopId: string }).shopId}:${args[1]}:${args[2]}`,
+      );
+      return reply;
+    },
+    async switchPlan(...args: unknown[]) {
+      calls.push(
+        `switch:${(args[0] as { shopId: string }).shopId}:${args[1]}:${args[2]}`,
+      );
+      return reply;
+    },
+    async cancel(...args: unknown[]) {
+      calls.push(`cancel:${(args[0] as { shopId: string }).shopId}:${args[1]}`);
+      return confirmed;
+    },
   };
 }
 
 test("recurring create, switch and DELETE cancel use authenticated shop, status transitions and no-store headers", async () => {
   const serviceCalls: string[] = [];
-  const { router, calls, events } = commandFixture({ recurring: recurringRecorder(serviceCalls) });
+  const { router, calls, events } = commandFixture({
+    recurring: recurringRecorder(serviceCalls),
+  });
   await withCommandRouter(router, async (origin) => {
     for (const [path, method, expectedStatus, payload] of [
       [subscriptionPath, "POST", 202, planBody],
@@ -38,10 +68,16 @@ test("recurring create, switch and DELETE cancel use authenticated shop, status 
       });
       assert.equal(response.status, expectedStatus);
       assert.equal(response.headers.get("cache-control"), "no-store");
-      assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+      assert.equal(
+        response.headers.get("content-type"),
+        "application/json; charset=utf-8",
+      );
       assert.equal(response.headers.get("x-content-type-options"), "nosniff");
       assert.equal(response.headers.get("access-control-allow-origin"), null);
-      assert.deepEqual(await response.json(), expectedStatus === 200 ? confirmed : created);
+      assert.deepEqual(
+        await response.json(),
+        expectedStatus === 200 ? confirmed : created,
+      );
     }
   });
   assert.deepEqual(serviceCalls, [
@@ -50,50 +86,129 @@ test("recurring create, switch and DELETE cancel use authenticated shop, status 
     "cancel:authenticated-shop:request-123",
   ]);
   assert.deepEqual(calls, ["authenticate", "authenticate", "authenticate"]);
-  assert.deepEqual(events.map((event) => event.name), ["billing.recurring.command", "billing.recurring.command", "billing.recurring.command"]);
-  assert.ok(events.every((event) => event.data.shopId === "authenticated-shop" && event.data.durationMs === 0));
+  assert.deepEqual(
+    events.map((event) => event.name),
+    [
+      "billing.recurring.command",
+      "billing.recurring.command",
+      "billing.recurring.command",
+    ],
+  );
+  assert.ok(
+    events.every(
+      (event) =>
+        event.data.shopId === "authenticated-shop" &&
+        event.data.durationMs === 0,
+    ),
+  );
   assert.equal(JSON.stringify(events).includes("provider.example"), false);
   assert.equal(JSON.stringify(events).includes("spoofed-shop"), false);
 });
 
 test("recurring commands enforce a single Idempotency-Key header before reading request payload", async () => {
   const serviceCalls: string[] = [];
-  const { router, calls } = commandFixture({ recurring: recurringRecorder(serviceCalls) });
+  const { router, calls } = commandFixture({
+    recurring: recurringRecorder(serviceCalls),
+  });
   await withCommandRouter(router, async (origin) => {
     for (const headers of [
       rawHeaders().filter((_, index) => index !== 4 && index !== 5),
       [...rawHeaders(), "Idempotency-Key", "request-456"],
       rawHeaders("bad key"),
     ]) {
-      const response = await rawCommand(origin, subscriptionPath, "POST", headers, planBody);
+      const response = await rawCommand(
+        origin,
+        subscriptionPath,
+        "POST",
+        headers,
+        planBody,
+      );
       assert.equal(response.status, 400);
       assert.deepEqual(response.body, { error: "invalid_idempotency_key" });
     }
-    const accepted = await rawCommand(origin, subscriptionPath, "POST", rawHeaders("  valid.key-3  "), planBody);
+    const accepted = await rawCommand(
+      origin,
+      subscriptionPath,
+      "POST",
+      rawHeaders("  valid.key-3  "),
+      planBody,
+    );
     assert.equal(accepted.status, 202);
   });
-  assert.deepEqual(serviceCalls, ["create:authenticated-shop:valid.key-3:plan-12"]);
-  assert.deepEqual(calls, ["authenticate", "authenticate", "authenticate", "authenticate"]);
+  assert.deepEqual(serviceCalls, [
+    "create:authenticated-shop:valid.key-3:plan-12",
+  ]);
+  assert.deepEqual(calls, [
+    "authenticate",
+    "authenticate",
+    "authenticate",
+    "authenticate",
+  ]);
 });
 
 test("recurring commands preserve strict body fields, content type, query and no-body DELETE contract", async () => {
   const serviceCalls: string[] = [];
-  const { router } = commandFixture({ recurring: recurringRecorder(serviceCalls) });
+  const { router } = commandFixture({
+    recurring: recurringRecorder(serviceCalls),
+  });
   await withCommandRouter(router, async (origin) => {
     for (const [path, method, headers, body, expected] of [
-      [subscriptionPath, "POST", rawHeaders(), JSON.stringify({ merchantPricingPlanId: "plan-12", shopId: "forged" }), 400],
+      [
+        subscriptionPath,
+        "POST",
+        rawHeaders(),
+        JSON.stringify({ merchantPricingPlanId: "plan-12", shopId: "forged" }),
+        400,
+      ],
       [subscriptionPath, "POST", rawHeaders(), "[1,2]", 400],
-      [subscriptionPath, "POST", [...rawHeaders().slice(0, -2), "Content-Type", "text/plain"], planBody, 400],
+      [
+        subscriptionPath,
+        "POST",
+        [...rawHeaders().slice(0, -2), "Content-Type", "text/plain"],
+        planBody,
+        400,
+      ],
       [`${switchPath}?shopId=forged`, "POST", rawHeaders(), planBody, 400],
-      [subscriptionPath, "POST", rawHeaders(), JSON.stringify({ merchantPricingPlanId: "p".repeat(129) }), 400],
+      [
+        subscriptionPath,
+        "POST",
+        rawHeaders(),
+        JSON.stringify({ merchantPricingPlanId: "p".repeat(129) }),
+        400,
+      ],
       [subscriptionPath, "POST", rawHeaders(), "{", 400],
-      [subscriptionPath, "POST", rawHeaders(), JSON.stringify({ merchantPricingPlanId: "p".repeat(9000) }), 413],
-      [subscriptionPath, "DELETE", [...rawHeaders(), "Content-Length", "2"], "{}", 400],
-      [subscriptionPath, "DELETE", [...rawHeaders(), "Content-Length", "0"], undefined, 200],
+      [
+        subscriptionPath,
+        "POST",
+        rawHeaders(),
+        JSON.stringify({ merchantPricingPlanId: "p".repeat(9000) }),
+        413,
+      ],
+      [
+        subscriptionPath,
+        "DELETE",
+        [...rawHeaders(), "Content-Length", "2"],
+        "{}",
+        400,
+      ],
+      [
+        subscriptionPath,
+        "DELETE",
+        [...rawHeaders(), "Content-Length", "0"],
+        undefined,
+        200,
+      ],
     ] as const) {
       const result = await rawCommand(origin, path, method, headers, body);
       assert.equal(result.status, expected, `${method} ${path}`);
-      assert.deepEqual(result.body, expected === 200 ? confirmed : { error: expected === 413 ? "request_too_large" : "invalid_request" });
+      assert.deepEqual(
+        result.body,
+        expected === 200
+          ? confirmed
+          : {
+              error: expected === 413 ? "request_too_large" : "invalid_request",
+            },
+      );
     }
   });
   assert.deepEqual(serviceCalls, ["cancel:authenticated-shop:request-123"]);
@@ -102,99 +217,241 @@ test("recurring commands preserve strict body fields, content type, query and no
 test("recurring provider-unavailable and known errors preserve status, safe error body and bounded log metadata", async () => {
   const unavailable = commandFixture();
   await withCommandRouter(unavailable.router, async (origin) => {
-    const response = await fetch(`${origin}${subscriptionPath}`, { method: "POST", headers: authorizedHeaders, body: planBody });
+    const response = await fetch(`${origin}${subscriptionPath}`, {
+      method: "POST",
+      headers: authorizedHeaders,
+      body: planBody,
+    });
     assert.equal(response.status, 503);
-    assert.deepEqual(await response.json(), { error: "billing_provider_unavailable" });
+    assert.deepEqual(await response.json(), {
+      error: "billing_provider_unavailable",
+    });
   });
   assert.equal(unavailable.events[0]?.level, "warn");
-  assert.equal(unavailable.events[0]?.data.reason, "billing_provider_unavailable");
+  assert.equal(
+    unavailable.events[0]?.data.reason,
+    "billing_provider_unavailable",
+  );
   const errorService = {
-    async create() { throw new RecurringBillingCommandError(502, "billing_provider_outcome_unknown", "op-safe", "PROVIDER_SAFE"); },
-    async switchPlan() { throw new Error("distinct unexpected recurring diagnostic"); },
-    async cancel() { throw new Error("must not be reached"); },
+    async create() {
+      throw new RecurringBillingCommandError(
+        502,
+        "billing_provider_outcome_unknown",
+        "op-safe",
+        "PROVIDER_SAFE",
+      );
+    },
+    async switchPlan() {
+      throw new Error("distinct unexpected recurring diagnostic");
+    },
+    async cancel() {
+      throw new Error("must not be reached");
+    },
   };
   const { router, events } = commandFixture({ recurring: errorService });
   await withCommandRouter(router, async (origin) => {
-    const known = await fetch(`${origin}${subscriptionPath}`, { method: "POST", headers: authorizedHeaders, body: planBody });
+    const known = await fetch(`${origin}${subscriptionPath}`, {
+      method: "POST",
+      headers: authorizedHeaders,
+      body: planBody,
+    });
     assert.equal(known.status, 502);
-    assert.deepEqual(await known.json(), { error: "billing_provider_outcome_unknown", operationId: "op-safe", providerErrorCode: "PROVIDER_SAFE" });
-    const unexpected = await fetch(`${origin}${switchPath}`, { method: "POST", headers: authorizedHeaders, body: planBody });
+    assert.deepEqual(await known.json(), {
+      error: "billing_provider_outcome_unknown",
+      operationId: "op-safe",
+      providerErrorCode: "PROVIDER_SAFE",
+    });
+    const unexpected = await fetch(`${origin}${switchPath}`, {
+      method: "POST",
+      headers: authorizedHeaders,
+      body: planBody,
+    });
     assert.equal(unexpected.status, 500);
     assert.deepEqual(await unexpected.json(), { error: "internal_error" });
   });
-  assert.deepEqual(events.map((e) => [e.level, e.name, e.data.reason]), [
-    ["warn", "billing.recurring.command.failed", "billing_provider_outcome_unknown"],
-    ["error", "billing.recurring.command.failed", "internal"],
-  ]);
+  assert.deepEqual(
+    events.map((e) => [e.level, e.name, e.data.reason]),
+    [
+      [
+        "warn",
+        "billing.recurring.command.failed",
+        "billing_provider_outcome_unknown",
+      ],
+      ["error", "billing.recurring.command.failed", "internal"],
+    ],
+  );
   assert.equal(JSON.stringify(events).includes("PROVIDER_SAFE"), false);
-  assert.equal(JSON.stringify(events).includes("distinct unexpected recurring diagnostic"), true);
+  assert.equal(
+    JSON.stringify(events).includes("distinct unexpected recurring diagnostic"),
+    true,
+  );
 });
 
 test("recurring auth failures cannot reach provider services and unmatched methods always fall through", async () => {
   let invoked = 0;
   const recorder = {
-    async create() { invoked++; return created; },
-    async switchPlan() { invoked++; return created; },
-    async cancel() { invoked++; return confirmed; },
+    async create() {
+      invoked++;
+      return created;
+    },
+    async switchPlan() {
+      invoked++;
+      return created;
+    },
+    async cancel() {
+      invoked++;
+      return confirmed;
+    },
   };
   const { router, calls } = commandFixture({ recurring: recorder });
   await withCommandRouter(router, async (origin) => {
     const response = await fetch(`${origin}${subscriptionPath}`, {
-      method: "POST", headers: { "content-type": "application/json", "idempotency-key": "key" }, body: planBody,
+      method: "POST",
+      headers: { "content-type": "application/json", "idempotency-key": "key" },
+      body: planBody,
     });
     assert.equal(response.status, 401);
     assert.deepEqual(await response.json(), { error: "unauthorized" });
-    const spoof = await fetch(`${origin}${subscriptionPath}?shopId=attacker`, { method: "POST", headers: authorizedHeaders, body: planBody });
+    const spoof = await fetch(`${origin}${subscriptionPath}?shopId=attacker`, {
+      method: "POST",
+      headers: authorizedHeaders,
+      body: planBody,
+    });
     assert.equal(spoof.status, 400);
   });
   assert.equal(invoked, 0);
   assert.deepEqual(calls, ["authenticate", "authenticate"]);
   for (const [method, url] of [
-    ["GET", subscriptionPath], ["GET", switchPath], ["PUT", subscriptionPath],
-    ["GET", "/v1/billing/recovery-credit-purchases"], ["POST", "/v1/merchant/bootstrap"],
+    ["GET", subscriptionPath],
+    ["GET", switchPath],
+    ["PUT", subscriptionPath],
+    ["GET", "/v1/billing/recovery-credit-purchases"],
+    ["POST", "/v1/merchant/bootstrap"],
   ]) {
-    assert.equal(await router.handle({ method, url } as IncomingMessage, {} as ServerResponse), false);
+    assert.equal(
+      await router.handle(
+        { method, url } as IncomingMessage,
+        {} as ServerResponse,
+      ),
+      false,
+    );
   }
 });
 
 test("all recurring admission mismatch envelopes omit durable/provider identifiers", async () => {
-  const mismatch = new RecurringBillingCommandError(409, "billing_shop_invalid", undefined, undefined, { cause: new Error("helper mismatch") });
-  const fail = async () => { throw mismatch; };
-  const { router } = commandFixture({ recurring: { create: fail, switchPlan: fail, cancel: fail } });
-  await withCommandRouter(router, async origin => {
-    for (const [path, method, body] of [[subscriptionPath, "POST", planBody], [switchPath, "POST", planBody], [subscriptionPath, "DELETE", undefined]] as const) {
-      const reply = await fetch(origin + path, { method, headers: authorizedHeaders, ...(body ? { body } : {}) });
-      assert.equal(reply.status, 409); assert.deepEqual(await reply.json(), { error: "billing_shop_invalid" });
+  const mismatch = new RecurringBillingCommandError(
+    409,
+    "billing_shop_invalid",
+    undefined,
+    undefined,
+    { cause: new Error("helper mismatch") },
+  );
+  const fail = async () => {
+    throw mismatch;
+  };
+  const { router } = commandFixture({
+    recurring: { create: fail, switchPlan: fail, cancel: fail },
+  });
+  await withCommandRouter(router, async (origin) => {
+    for (const [path, method, body] of [
+      [subscriptionPath, "POST", planBody],
+      [switchPath, "POST", planBody],
+      [subscriptionPath, "DELETE", undefined],
+    ] as const) {
+      const reply = await fetch(origin + path, {
+        method,
+        headers: authorizedHeaders,
+        ...(body ? { body } : {}),
+      });
+      assert.equal(reply.status, 409);
+      assert.deepEqual(await reply.json(), { error: "billing_shop_invalid" });
     }
   });
 });
 
 test("shared logger emits bounded provider details and omits fabricated provider evidence", async () => {
   const records: LogRecord[] = [];
-  const logger = createLogger({ serviceName: "api-test", environment: "test", sink: record => { records.push(record); } });
-  const client = new WooBillingClient({
-    environment: "production", baseUrl: "https://woocommerce.com/wp-json/wccom/billing/1.0/",
-    apiKey: "private-key-value", apiSecret: "private-secret-value",
-  }, async () => new Response(JSON.stringify({
-    code: "upstream_refused", message: "distinct real decline private-secret-value https://woocommerce.com/private-confirmation",
-    email: "private-buyer@example.invalid", phone: "+15555550123",
-  }), { status: 422, headers: { "content-type": "application/json" } }));
+  const logger = createLogger({
+    serviceName: "api-test",
+    environment: "test",
+    sink: (record) => {
+      records.push(record);
+    },
+  });
+  const client = new WooBillingClient(
+    {
+      environment: "production",
+      baseUrl: "https://woocommerce.com/wp-json/wccom/billing/1.0/",
+      apiKey: "private-key-value",
+      apiSecret: "private-secret-value",
+    },
+    async () =>
+      new Response(
+        JSON.stringify({
+          code: "upstream_refused",
+          message:
+            "distinct real decline private-secret-value https://woocommerce.com/private-confirmation",
+          email: "private-buyer@example.invalid",
+          phone: "+15555550123",
+        }),
+        { status: 422, headers: { "content-type": "application/json" } },
+      ),
+  );
   let providerFailure: unknown;
-  try { await client.createCharge({ name: "Credits", price: "1.00", return_url: "https://merchant.invalid" }); }
-  catch (error) { providerFailure = error; }
-  let domainFailure = new RecurringBillingCommandError(502, "billing_provider_outcome_unknown", "operation", "PROVIDER_REJECTED", { cause: providerFailure });
-  const fail = async () => { throw domainFailure; };
-  const { router } = commandFixture({ logger, recurring: { create: fail, switchPlan: fail, cancel: fail } });
-  await withCommandRouter(router, async origin => {
-    const reply = await fetch(origin + subscriptionPath, { method: "POST", headers: authorizedHeaders, body: planBody });
+  try {
+    await client.createCharge({
+      name: "Credits",
+      price: "1.00",
+      return_url: "https://merchant.invalid",
+    });
+  } catch (error) {
+    providerFailure = error;
+  }
+  let domainFailure = new RecurringBillingCommandError(
+    502,
+    "billing_provider_outcome_unknown",
+    "operation",
+    "PROVIDER_REJECTED",
+    { cause: providerFailure },
+  );
+  const fail = async () => {
+    throw domainFailure;
+  };
+  const { router } = commandFixture({
+    logger,
+    recurring: { create: fail, switchPlan: fail, cancel: fail },
+  });
+  await withCommandRouter(router, async (origin) => {
+    const reply = await fetch(origin + subscriptionPath, {
+      method: "POST",
+      headers: authorizedHeaders,
+      body: planBody,
+    });
     assert.equal(reply.status, 502);
-    assert.deepEqual(await reply.json(), { error: "billing_provider_outcome_unknown", operationId: "operation", providerErrorCode: "PROVIDER_REJECTED" });
-    domainFailure = new RecurringBillingCommandError(409, "billing_shop_invalid");
-    const other = await fetch(origin + subscriptionPath, { method: "POST", headers: authorizedHeaders, body: planBody });
+    assert.deepEqual(await reply.json(), {
+      error: "billing_provider_outcome_unknown",
+      operationId: "operation",
+      providerErrorCode: "PROVIDER_REJECTED",
+    });
+    domainFailure = new RecurringBillingCommandError(
+      409,
+      "billing_shop_invalid",
+    );
+    const other = await fetch(origin + subscriptionPath, {
+      method: "POST",
+      headers: authorizedHeaders,
+      body: planBody,
+    });
     assert.equal(other.status, 409);
   });
-  assert.equal((records[0]?.data?.providerError as { httpStatus: number }).httpStatus, 422);
+  assert.equal(
+    (records[0]?.data?.providerError as { httpStatus: number }).httpStatus,
+    422,
+  );
   assert.match(JSON.stringify(records[0]), /distinct real decline/);
-  assert.doesNotMatch(JSON.stringify(records), /private-secret-value|private-confirmation|private-key-value|private-buyer|15555550123/);
+  assert.doesNotMatch(
+    JSON.stringify(records),
+    /private-secret-value|private-confirmation|private-key-value|private-buyer|15555550123/,
+  );
   assert.equal(Object.hasOwn(records[1]?.data ?? {}, "providerError"), false);
 });

@@ -2,22 +2,42 @@ import { performance } from "node:perf_hooks";
 
 /** Bounded per-request durations; never capture credentials, headers, customer data, or SQL parameters. */
 export type FeaturePreferencesPhase =
-  | "authenticationMs" | "authenticationLookupMs" | "authenticationOtherMs"
-  | "requestValidationMs" | "requestBodyMs"
-  | "serviceMs" | "transactionMs" | "transactionEntryMs" | "transactionWorkMs" | "transactionFinishMs"
-  | "shopLookupMs" | "installationLookupMs" | "subscriptionLookupMs"
-  | "shopValidationMs" | "installationValidationMs" | "subscriptionEligibilityMs"
-  | "featuresLookupMs" | "preferencesLookupMs" | "capabilitySelectionMs"
-  | "projectionMs" | "responseValidationMs" | "routeResponseValidationMs"
-  | "featureUpsertsMs" | "responseDispatchMs";
+  | "authenticationMs"
+  | "authenticationLookupMs"
+  | "authenticationOtherMs"
+  | "requestValidationMs"
+  | "requestBodyMs"
+  | "serviceMs"
+  | "transactionMs"
+  | "transactionEntryMs"
+  | "transactionWorkMs"
+  | "transactionFinishMs"
+  | "shopLookupMs"
+  | "installationLookupMs"
+  | "subscriptionLookupMs"
+  | "shopValidationMs"
+  | "installationValidationMs"
+  | "subscriptionEligibilityMs"
+  | "featuresLookupMs"
+  | "preferencesLookupMs"
+  | "capabilitySelectionMs"
+  | "projectionMs"
+  | "responseValidationMs"
+  | "routeResponseValidationMs"
+  | "featureUpsertsMs"
+  | "responseDispatchMs";
 
-export type FeaturePreferencesTimings = Partial<Record<FeaturePreferencesPhase, number>> & {
+export type FeaturePreferencesTimings = Partial<
+  Record<FeaturePreferencesPhase, number>
+> & {
   failedPhase?: FeaturePreferencesPhase;
 };
 
 export type FeaturePreferenceLoadPhase = "initial" | "final";
 export type FeaturePreferenceLoadTimings = Record<string, number>;
-export type FeaturePreferenceTimingSink = (timings: Readonly<FeaturePreferenceLoadTimings>) => void;
+export type FeaturePreferenceTimingSink = (
+  timings: Readonly<FeaturePreferenceLoadTimings>,
+) => void;
 
 export function elapsedFeatureMs(startedAt: number): number {
   return Math.max(0, Math.round((performance.now() - startedAt) * 100) / 100);
@@ -31,8 +51,9 @@ export async function timeFeaturePhase<T>(
 ): Promise<T> {
   if (!timings) return operation();
   const startedAt = performance.now();
-  try { return await operation(); }
-  catch (error) {
+  try {
+    return await operation();
+  } catch (error) {
     timings.failedPhase ??= phase;
     throw error;
   } finally {
@@ -47,8 +68,9 @@ export function timeFeatureSync<T>(
 ): T {
   if (!timings) return operation();
   const startedAt = performance.now();
-  try { return operation(); }
-  catch (error) {
+  try {
+    return operation();
+  } catch (error) {
     timings.failedPhase ??= phase;
     throw error;
   } finally {
@@ -58,14 +80,21 @@ export function timeFeatureSync<T>(
 export async function measureFeaturePreferencePhase<T>(
   timings: FeaturePreferenceLoadTimings,
   phase: FeaturePreferenceLoadPhase,
-  name: "subscriptionLookupMs" | "featuresLookupMs" | "preferencesLookupMs" | "projectionMs",
+  name:
+    | "subscriptionLookupMs"
+    | "featuresLookupMs"
+    | "preferencesLookupMs"
+    | "projectionMs",
   operation: () => Promise<T>,
 ): Promise<T> {
   const started = performance.now();
   try {
     return await operation();
   } finally {
-    timings[`${phase}.${name}`] = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
+    timings[`${phase}.${name}`] = Math.max(
+      0,
+      Math.round((performance.now() - started) * 100) / 100,
+    );
   }
 }
 
@@ -78,6 +107,9 @@ export function measureFeaturePreferenceProjection<T>(
   try {
     return project();
   } finally {
-    timings[`${phase}.projectionMs`] = Math.max(0, Math.round((performance.now() - started) * 100) / 100);
+    timings[`${phase}.projectionMs`] = Math.max(
+      0,
+      Math.round((performance.now() - started) * 100) / 100,
+    );
   }
 }

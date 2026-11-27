@@ -11,58 +11,106 @@ import { SUPPORTED_WOO_BILLING_WEBHOOK_TOPICS } from "../../../../../src/woocomm
 
 interface WebhookOpenApiDocument {
   openapi: string;
-  paths: Record<string, {
-    post?: {
-      security?: Array<Record<string, string[]>>;
-      parameters?: Array<{
-        name: string;
-        in: string;
-        required: boolean;
-        schema: { type: string; enum?: string[] };
-      }>;
-      requestBody?: {
-        required: boolean;
-        content: Record<string, { schema: { type: string; "x-max-body-bytes"?: number; "x-verify-signature-over-raw-bytes"?: boolean } }>;
+  paths: Record<
+    string,
+    {
+      post?: {
+        security?: Array<Record<string, string[]>>;
+        parameters?: Array<{
+          name: string;
+          in: string;
+          required: boolean;
+          schema: { type: string; enum?: string[] };
+        }>;
+        requestBody?: {
+          required: boolean;
+          content: Record<
+            string,
+            {
+              schema: {
+                type: string;
+                "x-max-body-bytes"?: number;
+                "x-verify-signature-over-raw-bytes"?: boolean;
+              };
+            }
+          >;
+        };
+        responses: Record<string, unknown>;
       };
-      responses: Record<string, unknown>;
-    };
-  }>;
+    }
+  >;
   components: {
-    responses: Record<string, {
-      content?: { "application/json"?: { schema?: { $ref?: string } } };
-    }>;
-    schemas: Record<string, {
-      additionalProperties?: boolean;
-      required?: string[];
-      properties?: Record<string, { enum?: string[] }>;
-    }>;
+    responses: Record<
+      string,
+      {
+        content?: { "application/json"?: { schema?: { $ref?: string } } };
+      }
+    >;
+    schemas: Record<
+      string,
+      {
+        additionalProperties?: boolean;
+        required?: string[];
+        properties?: Record<string, { enum?: string[] }>;
+      }
+    >;
   };
 }
 
 test("Woo billing webhook OpenAPI documents the unsigned public ingress and durable receipt contract", async () => {
-  const contractPath = new URL("../../../../../openapi/woocommerce-billing-webhook-v1.yaml", import.meta.url);
-  const document = parse(await readFile(fileURLToPath(contractPath), "utf8")) as WebhookOpenApiDocument;
+  const contractPath = new URL(
+    "../../../../../openapi/woocommerce-billing-webhook-v1.yaml",
+    import.meta.url,
+  );
+  const document = parse(
+    await readFile(fileURLToPath(contractPath), "utf8"),
+  ) as WebhookOpenApiDocument;
   assert.equal(document.openapi, "3.1.0");
 
   const operation = document.paths[WOO_BILLING_WEBHOOK_ROUTE_PATH]?.post;
   assert.ok(operation);
   assert.deepEqual(operation.security, []);
-  assert.deepEqual(operation.parameters?.map(({ name, in: location, required }) => [name, location, required]), [
-    ["X-WC-Webhook-Signature", "header", true],
-    ["X-WC-Webhook-Topic", "header", true],
+  assert.deepEqual(
+    operation.parameters?.map(({ name, in: location, required }) => [
+      name,
+      location,
+      required,
+    ]),
+    [
+      ["X-WC-Webhook-Signature", "header", true],
+      ["X-WC-Webhook-Topic", "header", true],
+    ],
+  );
+  assert.deepEqual(operation.parameters?.[1]?.schema.enum, [
+    ...SUPPORTED_WOO_BILLING_WEBHOOK_TOPICS,
   ]);
-  assert.deepEqual(operation.parameters?.[1]?.schema.enum, [...SUPPORTED_WOO_BILLING_WEBHOOK_TOPICS]);
   assert.equal(operation.requestBody?.required, true);
-  const rawBodySchema = operation.requestBody?.content["application/json"]?.schema;
+  const rawBodySchema =
+    operation.requestBody?.content["application/json"]?.schema;
   assert.ok(rawBodySchema);
-  assert.deepEqual([rawBodySchema.type, rawBodySchema["x-verify-signature-over-raw-bytes"], rawBodySchema["x-max-body-bytes"]], [
-    "object", true, MAX_WOO_BILLING_WEBHOOK_BODY_BYTES,
+  assert.deepEqual(
+    [
+      rawBodySchema.type,
+      rawBodySchema["x-verify-signature-over-raw-bytes"],
+      rawBodySchema["x-max-body-bytes"],
+    ],
+    ["object", true, MAX_WOO_BILLING_WEBHOOK_BODY_BYTES],
+  );
+  assert.deepEqual(Object.keys(operation.responses).sort(), [
+    "204",
+    "400",
+    "401",
+    "413",
+    "415",
+    "422",
+    "500",
+    "503",
   ]);
-  assert.deepEqual(Object.keys(operation.responses).sort(), ["204", "400", "401", "413", "415", "422", "500", "503"]);
 
   const errorResponse = document.components.responses.WebhookError;
   assert.ok(errorResponse);
-  const errorSchemaRef = errorResponse.content?.["application/json"]?.schema?.$ref;
+  const errorSchemaRef =
+    errorResponse.content?.["application/json"]?.schema?.$ref;
   assert.equal(errorSchemaRef, "#/components/schemas/WebhookError");
   const errorSchema = document.components.schemas.WebhookError;
   assert.ok(errorSchema);

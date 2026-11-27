@@ -1,6 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
+import {
+  WooUnauthenticatedError,
+  type WooInstallationAuthenticator,
+} from "../../auth/woo-installation/authenticator.js";
 import { sendNoStoreJson } from "../../http/response.js";
 import {
   AiResponseDelayConflictError,
@@ -10,7 +13,10 @@ import {
   isAiResponseDelayRead,
   MERCHANT_AI_RESPONSE_DELAY_PATH,
 } from "./contract.js";
-import { readAiResponseDelayWrite, requestHasAiResponseDelayBody } from "./request.js";
+import {
+  readAiResponseDelayWrite,
+  requestHasAiResponseDelayBody,
+} from "./request.js";
 import type { MerchantAiResponseDelayService } from "./service.js";
 
 export function createMerchantAiResponseDelayRoutes(options: {
@@ -20,20 +26,38 @@ export function createMerchantAiResponseDelayRoutes(options: {
 }) {
   const { authenticator, service, logger } = options;
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const url = new URL(request.url ?? "/", "http://localhost");
-      if (url.pathname !== MERCHANT_AI_RESPONSE_DELAY_PATH || !["GET", "PUT"].includes(request.method ?? "")) return false;
+      if (
+        url.pathname !== MERCHANT_AI_RESPONSE_DELAY_PATH ||
+        !["GET", "PUT"].includes(request.method ?? "")
+      )
+        return false;
       const operation = request.method === "PUT" ? "update" : "read";
       try {
         const principal = await authenticator.authenticate(request);
-        if (url.search || (operation === "read" && requestHasAiResponseDelayBody(request))) {
+        if (
+          url.search ||
+          (operation === "read" && requestHasAiResponseDelayBody(request))
+        ) {
           throw new AiResponseDelayRequestError(400, "invalid_request");
         }
-        const result = operation === "update"
-          ? await service.update(principal, await readAiResponseDelayWrite(request))
-          : await service.read(principal);
-        if (!isAiResponseDelayRead(result)) throw new AiResponseDelayIntegrityError();
-        logger.info("merchant.ai_response_delay.access", { shopId: principal.shopId, operation });
+        const result =
+          operation === "update"
+            ? await service.update(
+                principal,
+                await readAiResponseDelayWrite(request),
+              )
+            : await service.read(principal);
+        if (!isAiResponseDelayRead(result))
+          throw new AiResponseDelayIntegrityError();
+        logger.info("merchant.ai_response_delay.access", {
+          shopId: principal.shopId,
+          operation,
+        });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
         if (error instanceof WooUnauthenticatedError) {
@@ -43,11 +67,26 @@ export function createMerchantAiResponseDelayRoutes(options: {
         } else if (error instanceof AiResponseDelayRequestError) {
           sendNoStoreJson(response, error.status, { error: error.code });
         } else if (error instanceof AiResponseDelayConflictError) {
-          logFailure(logger, "warn", operation, "ai_response_delay_conflict", error);
-          sendNoStoreJson(response, 409, { error: "ai_response_delay_conflict" });
+          logFailure(
+            logger,
+            "warn",
+            operation,
+            "ai_response_delay_conflict",
+            error,
+          );
+          sendNoStoreJson(response, 409, {
+            error: "ai_response_delay_conflict",
+          });
         } else {
-          logFailure(logger, "error", operation,
-            error instanceof AiResponseDelayIntegrityError ? "integrity" : "internal", error);
+          logFailure(
+            logger,
+            "error",
+            operation,
+            error instanceof AiResponseDelayIntegrityError
+              ? "integrity"
+              : "internal",
+            error,
+          );
           sendNoStoreJson(response, 500, { error: "internal_error" });
         }
       }
@@ -56,7 +95,13 @@ export function createMerchantAiResponseDelayRoutes(options: {
   };
 }
 
-function logFailure(logger: StructuredLogger, level: "warn" | "error", operation: string, reason: string, error: unknown): void {
+function logFailure(
+  logger: StructuredLogger,
+  level: "warn" | "error",
+  operation: string,
+  reason: string,
+  error: unknown,
+): void {
   try {
     logger[level]("merchant.ai_response_delay.access.failed", {
       operation,

@@ -24,7 +24,16 @@ paths:
           description: One supported Woo SaaS Billing topic. This header is not signed and is validated only after body signature verification.
           schema:
             type: string
-            enum: [saas_billing_contract.activated, saas_billing_contract.updated, saas_billing_contract.renewed, saas_billing_contract.paused, saas_billing_contract.canceled, saas_billing_contract.prepaid_term_ended, saas_billing_contract.refunded]
+            enum:
+              [
+                saas_billing_contract.activated,
+                saas_billing_contract.updated,
+                saas_billing_contract.renewed,
+                saas_billing_contract.paused,
+                saas_billing_contract.canceled,
+                saas_billing_contract.prepaid_term_ended,
+                saas_billing_contract.refunded,
+              ]
       requestBody:
         required: true
         content:
@@ -35,18 +44,18 @@ paths:
               x-verify-signature-over-raw-bytes: true
               x-max-body-bytes: 262144
       responses:
-        '204':
+        "204":
           description: The receipt was durably committed, or an exact topic-and-body duplicate was already committed. No billing state transition occurs on this request.
           headers:
             Cache-Control:
               schema: { type: string, const: no-store }
-        '400': { $ref: '#/components/responses/WebhookError' }
-        '401': { $ref: '#/components/responses/WebhookError' }
-        '413': { $ref: '#/components/responses/WebhookError' }
-        '415': { $ref: '#/components/responses/WebhookError' }
-        '422': { $ref: '#/components/responses/WebhookError' }
-        '500': { $ref: '#/components/responses/WebhookError' }
-        '503': { $ref: '#/components/responses/WebhookError' }
+        "400": { $ref: "#/components/responses/WebhookError" }
+        "401": { $ref: "#/components/responses/WebhookError" }
+        "413": { $ref: "#/components/responses/WebhookError" }
+        "415": { $ref: "#/components/responses/WebhookError" }
+        "422": { $ref: "#/components/responses/WebhookError" }
+        "500": { $ref: "#/components/responses/WebhookError" }
+        "503": { $ref: "#/components/responses/WebhookError" }
 components:
   responses:
     WebhookError:
@@ -57,7 +66,7 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/WebhookError'
+            $ref: "#/components/schemas/WebhookError"
   schemas:
     WebhookError:
       type: object

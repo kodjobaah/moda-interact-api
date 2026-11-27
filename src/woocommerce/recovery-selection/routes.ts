@@ -4,9 +4,15 @@ import type { WooInstallationAuthenticator } from "../../auth/woo-installation/a
 import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { SupportUnavailableError } from "../../merchant/support/contract.js";
 import { sendNoStoreJson } from "../../http/response.js";
-import { WOO_RECOVERY_SELECTION_PATH, WooRecoverySelectionError } from "./contract.js";
-import { requireWooAdminAttestation, readWooRecoverySelectionChange,
-  readWooRecoverySelectionQuery } from "./request.js";
+import {
+  WOO_RECOVERY_SELECTION_PATH,
+  WooRecoverySelectionError,
+} from "./contract.js";
+import {
+  requireWooAdminAttestation,
+  readWooRecoverySelectionChange,
+  readWooRecoverySelectionQuery,
+} from "./request.js";
 import type { WooRecoverySelectionService } from "./service.js";
 
 export function createWooRecoverySelectionRoute(options: {
@@ -15,10 +21,16 @@ export function createWooRecoverySelectionRoute(options: {
   logger: StructuredLogger;
 }) {
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const url = new URL(request.url ?? "/", "http://localhost");
-      if (url.pathname !== WOO_RECOVERY_SELECTION_PATH ||
-        (request.method !== "GET" && request.method !== "POST")) return false;
+      if (
+        url.pathname !== WOO_RECOVERY_SELECTION_PATH ||
+        (request.method !== "GET" && request.method !== "POST")
+      )
+        return false;
       const action = request.method === "GET" ? "read" : "change";
       try {
         // Installation bearer first; only the authenticated PHP plugin can
@@ -26,14 +38,23 @@ export function createWooRecoverySelectionRoute(options: {
         const principal = await options.authenticator.authenticate(request);
         requireWooAdminAttestation(request);
         if (action === "read") {
-          sendNoStoreJson(response, 200, await options.service.read(principal,
-            readWooRecoverySelectionQuery(request, url)));
+          sendNoStoreJson(
+            response,
+            200,
+            await options.service.read(
+              principal,
+              readWooRecoverySelectionQuery(request, url),
+            ),
+          );
         } else {
-          if (url.search) throw new WooRecoverySelectionError(400, "invalid_request");
+          if (url.search)
+            throw new WooRecoverySelectionError(400, "invalid_request");
           const command = await readWooRecoverySelectionChange(request);
           const result = await options.service.change(principal, command);
           options.logger.info("woocommerce.recovery_selection.changed", {
-            shopId: principal.shopId, action: command.action, outcome: result.outcome,
+            shopId: principal.shopId,
+            action: command.action,
+            outcome: result.outcome,
           });
           sendNoStoreJson(response, 200, result);
         }
@@ -43,18 +64,23 @@ export function createWooRecoverySelectionRoute(options: {
         } else if (error instanceof SupportUnavailableError) {
           sendNoStoreJson(response, 403, { error: "merchant_unavailable" });
         } else if (error instanceof WooRecoverySelectionError) {
-          options.logger.warn("woocommerce.recovery_selection.denied", { reason: error.code, operation: action,
+          options.logger.warn("woocommerce.recovery_selection.denied", {
+            reason: error.code,
+            operation: action,
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
           sendNoStoreJson(response, error.status, { error: error.code });
         } else {
           // Log the original error for development diagnostics, not in the HTTP response.
-          options.logger.warn("woocommerce.recovery_selection.unavailable", { operation: action,
+          options.logger.warn("woocommerce.recovery_selection.unavailable", {
+            operation: action,
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });

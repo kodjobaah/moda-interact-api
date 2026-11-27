@@ -48,20 +48,30 @@ function makeRow(overrides: Record<string, unknown> = {}) {
 
 function harness(rows: unknown[] | (() => unknown[])) {
   const queries: Array<{ sql: string; values: unknown[] }> = [];
-  const offerReader = { async read() { return { kind: "NONE" as const, reason: "NO_CONFIRMED_OFFER" as const }; } };
-  const service = new WooRecoveryRestoreService({
-    async $queryRaw(query: { sql: string; values: unknown[] }) {
-      queries.push(query);
-      return typeof rows === "function" ? rows() : rows;
+  const offerReader = {
+    async read() {
+      return { kind: "NONE" as const, reason: "NO_CONFIRMED_OFFER" as const };
     },
-  } as never, offerReader, () => now);
+  };
+  const service = new WooRecoveryRestoreService(
+    {
+      async $queryRaw(query: { sql: string; values: unknown[] }) {
+        queries.push(query);
+        return typeof rows === "function" ? rows() : rows;
+      },
+    } as never,
+    offerReader,
+    () => now,
+  );
   return { service, queries };
 }
 
 test("resolves only the tenant's latest supported eligible recovery and returns the complete Shared v1 response", async () => {
   const { service, queries } = harness([makeRow()]);
   const result = await service.resolve(principal, {
-    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
+    schemaVersion: "woo.restore.resolve.v1",
+    recoveryId,
+    token,
   });
 
   assert.ok(result);
@@ -73,7 +83,10 @@ test("resolves only the tenant's latest supported eligible recovery and returns 
     snapshot,
     outreachOffer: { kind: "NONE", reason: "NO_CONFIRMED_OFFER" },
   });
-  assert.match(queries[0]!.sql, /LEFT JOIN "public"\."BackgroundRuntimeConfig"/);
+  assert.match(
+    queries[0]!.sql,
+    /LEFT JOIN "public"\."BackgroundRuntimeConfig"/,
+  );
   assert.match(queries[0]!.sql, /config\."id" = 'default'/);
   assert.match(queries[0]!.sql, /cr\."shopId" =/);
   assert.match(queries[0]!.sql, /MAX\(latest\."generation"\)/);
@@ -90,7 +103,11 @@ test("uniformly denies wrong tenant, terminal, stale, disabled and unsupported r
     makeRow({ status: "CANCELLED" }),
     makeRow({ status: "EXPIRED", expiredAt: now }),
     makeRow({ status: "PENDING" }),
-    makeRow({ lastExternalActivityAt: new Date(now.getTime() - 21 * 24 * 60 * 60 * 1000) }),
+    makeRow({
+      lastExternalActivityAt: new Date(
+        now.getTime() - 21 * 24 * 60 * 60 * 1000,
+      ),
+    }),
     makeRow({ lastExternalActivityAt: new Date(now.getTime() + 1) }),
     makeRow({ shopStatus: "UNINSTALLED" }),
     makeRow({ shopPlatform: "SHOPIFY", shopifyShopId: "legacy" }),
@@ -99,15 +116,26 @@ test("uniformly denies wrong tenant, terminal, stale, disabled and unsupported r
     makeRow({ installationCredentialVersion: 3 }),
     makeRow({ shopDomain: "https://other.example/store" }),
     makeRow({ installationCanonicalSiteUrl: "https://other.example/store" }),
-    makeRow({ wooRestoreSnapshot: { schemaVersion: "woo.cart-restore.v1", kind: "unsupported",
-      reason: "ITEMS_UNAVAILABLE", appliedCouponCodes: [] } }),
+    makeRow({
+      wooRestoreSnapshot: {
+        schemaVersion: "woo.cart-restore.v1",
+        kind: "unsupported",
+        reason: "ITEMS_UNAVAILABLE",
+        appliedCouponCodes: [],
+      },
+    }),
     makeRow({ wooRestoreSnapshot: { ...snapshot, extra: true } }),
   ];
   for (const row of cases) {
     const { service } = harness([row]);
-    assert.equal(await service.resolve(principal, {
-      schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-    }), null);
+    assert.equal(
+      await service.resolve(principal, {
+        schemaVersion: "woo.restore.resolve.v1",
+        recoveryId,
+        token,
+      }),
+      null,
+    );
   }
 });
 
@@ -119,12 +147,16 @@ test("uses the canonical lifetime with exact millisecond boundaries and no busin
       [days * dayMs, false],
       [days * dayMs + 1, false],
     ] as const) {
-      const { service } = harness([makeRow({
-        checkoutRecoveryLifetimeDays: days,
-        lastExternalActivityAt: new Date(now.getTime() - ageMs),
-      })]);
+      const { service } = harness([
+        makeRow({
+          checkoutRecoveryLifetimeDays: days,
+          lastExternalActivityAt: new Date(now.getTime() - ageMs),
+        }),
+      ]);
       const result = await service.resolve(principal, {
-        schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
+        schemaVersion: "woo.restore.resolve.v1",
+        recoveryId,
+        token,
       });
       assert.equal(Boolean(result), expected);
     }
@@ -132,86 +164,162 @@ test("uses the canonical lifetime with exact millisecond boundaries and no busin
 
   const eightDaysOld = new Date(now.getTime() - 8 * dayMs);
   for (const lifetimeDays of [21, 91, 180, 365, 2_147_483_647]) {
-    const { service } = harness([makeRow({
-      checkoutRecoveryLifetimeDays: lifetimeDays,
-      lastExternalActivityAt: lifetimeDays === 2_147_483_647
-        ? new Date(now.getTime() - 90_000_000 * dayMs)
-        : eightDaysOld,
-    })]);
-    assert.ok(await service.resolve(principal, {
-      schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-    }));
+    const { service } = harness([
+      makeRow({
+        checkoutRecoveryLifetimeDays: lifetimeDays,
+        lastExternalActivityAt:
+          lifetimeDays === 2_147_483_647
+            ? new Date(now.getTime() - 90_000_000 * dayMs)
+            : eightDaysOld,
+      }),
+    ]);
+    assert.ok(
+      await service.resolve(principal, {
+        schemaVersion: "woo.restore.resolve.v1",
+        recoveryId,
+        token,
+      }),
+    );
   }
 
-  const sixMinutesOld = harness([makeRow({ lastExternalActivityAt: new Date(now.getTime() - 6 * 60_000) })]);
-  assert.ok(await sixMinutesOld.service.resolve(principal, {
-    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-  }));
+  const sixMinutesOld = harness([
+    makeRow({ lastExternalActivityAt: new Date(now.getTime() - 6 * 60_000) }),
+  ]);
+  assert.ok(
+    await sixMinutesOld.service.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1",
+      recoveryId,
+      token,
+    }),
+  );
 });
 
 test("zero lifetime always denies and invalid or missing configuration fails closed", async () => {
   for (const lastExternalActivityAt of [now, new Date(now.getTime() - 1)]) {
-    const { service } = harness([makeRow({ checkoutRecoveryLifetimeDays: 0, lastExternalActivityAt })]);
-    assert.equal(await service.resolve(principal, {
-      schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-    }), null);
+    const { service } = harness([
+      makeRow({ checkoutRecoveryLifetimeDays: 0, lastExternalActivityAt }),
+    ]);
+    assert.equal(
+      await service.resolve(principal, {
+        schemaVersion: "woo.restore.resolve.v1",
+        recoveryId,
+        token,
+      }),
+      null,
+    );
   }
 
-  for (const checkoutRecoveryLifetimeDays of [null, -1, 1.5, "21", 2_147_483_648, undefined]) {
+  for (const checkoutRecoveryLifetimeDays of [
+    null,
+    -1,
+    1.5,
+    "21",
+    2_147_483_648,
+    undefined,
+  ]) {
     const { service } = harness([makeRow({ checkoutRecoveryLifetimeDays })]);
-    await assert.rejects(service.resolve(principal, {
-      schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-    }), /Invalid checkout recovery lifetime configuration/);
+    await assert.rejects(
+      service.resolve(principal, {
+        schemaVersion: "woo.restore.resolve.v1",
+        recoveryId,
+        token,
+      }),
+      /Invalid checkout recovery lifetime configuration/,
+    );
   }
 
-  const { service } = harness([makeRow({ id: null, checkoutRecoveryLifetimeDays: null })]);
-  await assert.rejects(service.resolve(principal, {
-    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-  }), /Invalid checkout recovery lifetime configuration/);
+  const { service } = harness([
+    makeRow({ id: null, checkoutRecoveryLifetimeDays: null }),
+  ]);
+  await assert.rejects(
+    service.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1",
+      recoveryId,
+      token,
+    }),
+    /Invalid checkout recovery lifetime configuration/,
+  );
 });
 
 test("reads changed policy on the next resolve and propagates database failures", async () => {
-  const row = makeRow({ lastExternalActivityAt: new Date(now.getTime() - 8 * 86_400_000) });
+  const row = makeRow({
+    lastExternalActivityAt: new Date(now.getTime() - 8 * 86_400_000),
+  });
   const { service, queries } = harness(() => [row]);
-  assert.ok(await service.resolve(principal, {
-    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-  }));
+  assert.ok(
+    await service.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1",
+      recoveryId,
+      token,
+    }),
+  );
   row.checkoutRecoveryLifetimeDays = 1;
-  assert.equal(await service.resolve(principal, {
-    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-  }), null);
+  assert.equal(
+    await service.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1",
+      recoveryId,
+      token,
+    }),
+    null,
+  );
   assert.equal(queries.length, 3);
 
   const dependencyError = new Error("database unavailable");
-  const broken = new WooRecoveryRestoreService({
-    async $queryRaw() { throw dependencyError; },
-  } as never,
-  { async read() { return { kind: "NONE" as const, reason: "NO_CONFIRMED_OFFER" as const }; } },
-  () => now);
-  await assert.rejects(broken.resolve(principal, {
-    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-  }), error => error === dependencyError);
+  const broken = new WooRecoveryRestoreService(
+    {
+      async $queryRaw() {
+        throw dependencyError;
+      },
+    } as never,
+    {
+      async read() {
+        return { kind: "NONE" as const, reason: "NO_CONFIRMED_OFFER" as const };
+      },
+    },
+    () => now,
+  );
+  await assert.rejects(
+    broken.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1",
+      recoveryId,
+      token,
+    }),
+    (error) => error === dependencyError,
+  );
 });
 
 test("rechecks recovery eligibility and generation after reading offer evidence", async () => {
   const rows = [makeRow(), makeRow({ status: "COMPLETED", completedAt: now })];
   let offerReads = 0;
   const queries: Array<{ sql: string; values: unknown[] }> = [];
-  const service = new WooRecoveryRestoreService({
-    async $queryRaw(query: { sql: string; values: unknown[] }) {
-      queries.push(query);
-      return [rows.shift()];
+  const service = new WooRecoveryRestoreService(
+    {
+      async $queryRaw(query: { sql: string; values: unknown[] }) {
+        queries.push(query);
+        return [rows.shift()];
+      },
+    } as never,
+    {
+      async read() {
+        offerReads += 1;
+        return {
+          kind: "CHECKOUT_CODE",
+          code: "SAVE15",
+          providerDiscountId: "discount-1",
+        };
+      },
     },
-  } as never, {
-    async read() {
-      offerReads += 1;
-      return { kind: "CHECKOUT_CODE", code: "SAVE15", providerDiscountId: "discount-1" };
-    },
-  }, () => now);
+    () => now,
+  );
 
-  assert.equal(await service.resolve(principal, {
-    schemaVersion: "woo.restore.resolve.v1", recoveryId, token,
-  }), null);
+  assert.equal(
+    await service.resolve(principal, {
+      schemaVersion: "woo.restore.resolve.v1",
+      recoveryId,
+      token,
+    }),
+    null,
+  );
   assert.equal(offerReads, 1);
   assert.equal(queries.length, 2);
 });
@@ -219,18 +327,43 @@ test("rechecks recovery eligibility and generation after reading offer evidence"
 test("rejects token, recovery identity, host, scheme, query and path tampering", async () => {
   const cases: Array<{ row?: Record<string, unknown>; token?: string }> = [
     { token: Buffer.alloc(32, 9).toString("base64url") },
-    { row: { checkoutUrl: `${principal.canonicalSiteUrl}/?moda_interact_resume=1&r=another&t=${token}` } },
-    { row: { checkoutUrl: `https://attacker.example/store/?moda_interact_resume=1&r=${recoveryId}&t=${token}` } },
-    { row: { checkoutUrl: `http://merchant.example/store/?moda_interact_resume=1&r=${recoveryId}&t=${token}` } },
-    { row: { checkoutUrl: `${principal.canonicalSiteUrl}/wrong/?moda_interact_resume=1&r=${recoveryId}&t=${token}` } },
+    {
+      row: {
+        checkoutUrl: `${principal.canonicalSiteUrl}/?moda_interact_resume=1&r=another&t=${token}`,
+      },
+    },
+    {
+      row: {
+        checkoutUrl: `https://attacker.example/store/?moda_interact_resume=1&r=${recoveryId}&t=${token}`,
+      },
+    },
+    {
+      row: {
+        checkoutUrl: `http://merchant.example/store/?moda_interact_resume=1&r=${recoveryId}&t=${token}`,
+      },
+    },
+    {
+      row: {
+        checkoutUrl: `${principal.canonicalSiteUrl}/wrong/?moda_interact_resume=1&r=${recoveryId}&t=${token}`,
+      },
+    },
     { row: { checkoutUrl: `${restoreUrl}&shopId=shop_123` } },
-    { row: { checkoutUrl: `${principal.canonicalSiteUrl}/?moda_interact_resume=1&r=${recoveryId}&r=${recoveryId}&t=${token}` } },
+    {
+      row: {
+        checkoutUrl: `${principal.canonicalSiteUrl}/?moda_interact_resume=1&r=${recoveryId}&r=${recoveryId}&t=${token}`,
+      },
+    },
     { row: { checkoutUrl: `${restoreUrl}#fragment` } },
   ];
   for (const current of cases) {
     const { service } = harness([makeRow(current.row)]);
-    assert.equal(await service.resolve(principal, {
-      schemaVersion: "woo.restore.resolve.v1", recoveryId, token: current.token ?? token,
-    }), null);
+    assert.equal(
+      await service.resolve(principal, {
+        schemaVersion: "woo.restore.resolve.v1",
+        recoveryId,
+        token: current.token ?? token,
+      }),
+      null,
+    );
   }
 });

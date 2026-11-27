@@ -1,5 +1,8 @@
 import { createHmac } from "node:crypto";
-import { constantTimeDigestMatches, decodeSecret } from "../../auth/woo-installation/credential.js";
+import {
+  constantTimeDigestMatches,
+  decodeSecret,
+} from "../../auth/woo-installation/credential.js";
 
 export function createSiteProof(
   bootstrapSecret: Uint8Array,
@@ -8,7 +11,9 @@ export function createSiteProof(
   canonicalSiteUrl: string,
 ): string {
   const message = `moda-interact-connect-v1\n${attemptId}\n${nonce}\n${canonicalSiteUrl}`;
-  return createHmac("sha256", bootstrapSecret).update(message, "utf8").digest("base64url");
+  return createHmac("sha256", bootstrapSecret)
+    .update(message, "utf8")
+    .digest("base64url");
 }
 
 export function verifySiteProof(

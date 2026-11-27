@@ -25,9 +25,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WooConsentEvent'
+              $ref: "#/components/schemas/WooConsentEvent"
       responses:
-        '200':
+        "200":
           description: Committed consent event or idempotent duplicate
           headers:
             Cache-Control:
@@ -37,18 +37,18 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WooConsentResponse'
-        '400':
+                $ref: "#/components/schemas/WooConsentResponse"
+        "400":
           description: Malformed payload, unsupported version or unexpected field
-        '401':
+        "401":
           description: Invalid, revoked or rotated installation credential
-        '409':
+        "409":
           description: Replay conflict, stale choice or ambiguous phone
-        '413':
+        "413":
           description: Request exceeds 8192 bytes
-        '422':
+        "422":
           description: Noncanonical or invalid phone number
-        '503':
+        "503":
           description: No durable consent acknowledgement
 components:
   securitySchemes:
@@ -64,7 +64,15 @@ components:
     WooConsentEvent:
       type: object
       additionalProperties: false
-      required: [schemaVersion, eventId, decision, canonicalPhone, occurredAt, disclosure]
+      required:
+        [
+          schemaVersion,
+          eventId,
+          decision,
+          canonicalPhone,
+          occurredAt,
+          disclosure,
+        ]
       properties:
         schemaVersion:
           const: woo.whatsapp-consent.v2
@@ -72,21 +80,21 @@ components:
           type: string
           minLength: 1
           maxLength: 128
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
         decision:
           enum: [GRANT, REVOKE]
         canonicalPhone:
           type: string
           maxLength: 15
-          pattern: '^[1-9][0-9]{1,14}$'
+          pattern: "^[1-9][0-9]{1,14}$"
         occurredAt:
           type: string
           description: Canonical UTC millisecond timestamp, ordered per merchant and recipient
           pattern: '^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$'
         disclosure:
           oneOf:
-            - $ref: '#/components/schemas/MarketingDisclosure'
-            - type: 'null'
+            - $ref: "#/components/schemas/MarketingDisclosure"
+            - type: "null"
       allOf:
         - if:
             properties:
@@ -95,7 +103,7 @@ components:
           then:
             properties:
               disclosure:
-                $ref: '#/components/schemas/MarketingDisclosure'
+                $ref: "#/components/schemas/MarketingDisclosure"
         - if:
             properties:
               decision:
@@ -103,7 +111,7 @@ components:
           then:
             properties:
               disclosure:
-                type: 'null'
+                type: "null"
     MarketingDisclosure:
       type: object
       additionalProperties: false
@@ -125,7 +133,8 @@ components:
     WooConsentResponse:
       type: object
       additionalProperties: false
-      required: [schemaVersion, status, decision, consentRevision, decisionSequence]
+      required:
+        [schemaVersion, status, decision, consentRevision, decisionSequence]
       properties:
         schemaVersion:
           const: woo.whatsapp-consent.v2
@@ -135,7 +144,7 @@ components:
           enum: [GRANT, REVOKE]
         consentRevision:
           type: string
-          pattern: '^[1-9][0-9]*$'
+          pattern: "^[1-9][0-9]*$"
         decisionSequence:
           type: string
-          pattern: '^[1-9][0-9]*$'
+          pattern: "^[1-9][0-9]*$"

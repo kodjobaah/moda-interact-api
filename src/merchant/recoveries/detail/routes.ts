@@ -4,26 +4,43 @@ import {
   WooUnauthenticatedError,
   type WooInstallationAuthenticator,
 } from "../../../auth/woo-installation/authenticator.js";
-import { InvalidRecoveryDetailRequest, parseDetailNavigation, validRecoveryId } from "./cursor.js";
+import {
+  InvalidRecoveryDetailRequest,
+  parseDetailNavigation,
+  validRecoveryId,
+} from "./cursor.js";
 import { RecoveryDetailIntegrityError } from "./contracts.js";
 import type { MerchantRecoveryDetailService } from "./read.service.js";
-import { isDetailSummary, isMessagePage, isRelatedPage } from "./validate-response.js";
+import {
+  isDetailSummary,
+  isMessagePage,
+  isRelatedPage,
+} from "./validate-response.js";
 import { isOutreachProjection } from "./outreach-projection.js";
 
 export const DETAIL_ROUTE_BASE = "/v1/merchant/recoveries/";
-const PATH = /^\/v1\/merchant\/recoveries\/([^/]+)(?:\/(messages|related|outreach))?$/;
+const PATH =
+  /^\/v1\/merchant\/recoveries\/([^/]+)(?:\/(messages|related|outreach))?$/;
 
 function requestHasBody(request: IncomingMessage): boolean {
   for (let index = 0; index < request.rawHeaders.length; index += 2) {
     const name = request.rawHeaders[index]?.toLowerCase();
     const value = request.rawHeaders[index + 1];
     if (name === "transfer-encoding") return true;
-    if (name === "content-length" && (value === undefined || !/^0+$/.test(value))) return true;
+    if (
+      name === "content-length" &&
+      (value === undefined || !/^0+$/.test(value))
+    )
+      return true;
   }
   return false;
 }
 
-function send(response: ServerResponse, status: number, payload: unknown): void {
+function send(
+  response: ServerResponse,
+  status: number,
+  payload: unknown,
+): void {
   if (response.destroyed || response.headersSent) return;
   response.writeHead(status, {
     "cache-control": "private, no-store",
@@ -42,7 +59,10 @@ export function createMerchantRecoveryDetailRoute(options: {
 }) {
   const { authenticator, service, logger, now = Date.now } = options;
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const url = new URL(request.url ?? "/", "http://localhost");
       const matched = PATH.exec(url.pathname);
       if (!matched || request.method !== "GET") return false;
@@ -55,25 +75,42 @@ export function createMerchantRecoveryDetailRoute(options: {
         }
         // URL.pathname retains percent-escaping: reject aliases rather than accepting encoded separators.
         const recoveryId = matched[1];
-        if (!validRecoveryId(recoveryId)) throw new InvalidRecoveryDetailRequest();
-        if ((section === "summary" || section === "outreach") && url.search !== "") throw new InvalidRecoveryDetailRequest();
+        if (!validRecoveryId(recoveryId))
+          throw new InvalidRecoveryDetailRequest();
+        if (
+          (section === "summary" || section === "outreach") &&
+          url.search !== ""
+        )
+          throw new InvalidRecoveryDetailRequest();
         if (section === "messages" || section === "related") {
-          parseDetailNavigation(principal.shopId, recoveryId, section, url.searchParams);
+          parseDetailNavigation(
+            principal.shopId,
+            recoveryId,
+            section,
+            url.searchParams,
+          );
         }
-        const result = section === "messages"
-          ? await service.messages(principal, recoveryId, url.searchParams)
-          : section === "related"
-            ? await service.related(principal, recoveryId, url.searchParams)
-            : section === "outreach"
-              ? await service.outreach(principal, recoveryId)
-              : await service.summary(principal, recoveryId);
+        const result =
+          section === "messages"
+            ? await service.messages(principal, recoveryId, url.searchParams)
+            : section === "related"
+              ? await service.related(principal, recoveryId, url.searchParams)
+              : section === "outreach"
+                ? await service.outreach(principal, recoveryId)
+                : await service.summary(principal, recoveryId);
         if (result === null) {
           send(response, 404, { error: "not_found" });
           return true;
         }
-        const valid = section === "messages" ? isMessagePage(result) :
-          section === "related" ? isRelatedPage(result) :
-            section === "outreach" ? isOutreachProjection(result) && result.recoveryId === recoveryId : isDetailSummary(result);
+        const valid =
+          section === "messages"
+            ? isMessagePage(result)
+            : section === "related"
+              ? isRelatedPage(result)
+              : section === "outreach"
+                ? isOutreachProjection(result) &&
+                  result.recoveryId === recoveryId
+                : isDetailSummary(result);
         if (!valid) throw new RecoveryDetailIntegrityError();
         logger.info("merchant.recoveries.detail.read", {
           shopId: principal.shopId,
@@ -82,20 +119,28 @@ export function createMerchantRecoveryDetailRoute(options: {
         });
         send(response, 200, result);
       } catch (error) {
-        if (error instanceof WooUnauthenticatedError) send(response, 401, { error: "unauthorized" });
-        else if (error instanceof InvalidRecoveryDetailRequest) send(response, 400, { error: "invalid_request" });
+        if (error instanceof WooUnauthenticatedError)
+          send(response, 401, { error: "unauthorized" });
+        else if (error instanceof InvalidRecoveryDetailRequest)
+          send(response, 400, { error: "invalid_request" });
         else if (error instanceof RecoveryDetailIntegrityError) {
-          logger.warn("merchant.recoveries.detail.failed", { reason: "integrity", section,
+          logger.warn("merchant.recoveries.detail.failed", {
+            reason: "integrity",
+            section,
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
           send(response, 409, { error: "recovery_detail_integrity_invalid" });
         } else {
-          logger.error("merchant.recoveries.detail.failed", { reason: "internal", section,
+          logger.error("merchant.recoveries.detail.failed", {
+            reason: "internal",
+            section,
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
