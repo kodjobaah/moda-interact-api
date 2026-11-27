@@ -8,9 +8,10 @@ import { InvalidRecoveryDetailRequest, parseDetailNavigation, validRecoveryId } 
 import { RecoveryDetailIntegrityError } from "./contracts.js";
 import type { MerchantRecoveryDetailService } from "./read.service.js";
 import { isDetailSummary, isMessagePage, isRelatedPage } from "./validate-response.js";
+import { isOutreachProjection } from "./outreach-projection.js";
 
 export const DETAIL_ROUTE_BASE = "/v1/merchant/recoveries/";
-const PATH = /^\/v1\/merchant\/recoveries\/([^/]+)(?:\/(messages|related))?$/;
+const PATH = /^\/v1\/merchant\/recoveries\/([^/]+)(?:\/(messages|related|outreach))?$/;
 
 function requestHasBody(request: IncomingMessage): boolean {
   for (let index = 0; index < request.rawHeaders.length; index += 2) {
@@ -32,7 +33,7 @@ function send(response: ServerResponse, status: number, payload: unknown): void 
   response.end(JSON.stringify(payload));
 }
 
-/** Three independently authorised Woo merchant reads, never accessible directly from browser JS. */
+/** Independently authorised Woo merchant reads, never accessible directly from browser JS. */
 export function createMerchantRecoveryDetailRoute(options: {
   authenticator: WooInstallationAuthenticator;
   service: MerchantRecoveryDetailService;
@@ -55,7 +56,7 @@ export function createMerchantRecoveryDetailRoute(options: {
         // URL.pathname retains percent-escaping: reject aliases rather than accepting encoded separators.
         const recoveryId = matched[1];
         if (!validRecoveryId(recoveryId)) throw new InvalidRecoveryDetailRequest();
-        if (section === "summary" && url.search !== "") throw new InvalidRecoveryDetailRequest();
+        if ((section === "summary" || section === "outreach") && url.search !== "") throw new InvalidRecoveryDetailRequest();
         if (section === "messages" || section === "related") {
           parseDetailNavigation(principal.shopId, recoveryId, section, url.searchParams);
         }
@@ -63,13 +64,16 @@ export function createMerchantRecoveryDetailRoute(options: {
           ? await service.messages(principal, recoveryId, url.searchParams)
           : section === "related"
             ? await service.related(principal, recoveryId, url.searchParams)
-            : await service.summary(principal, recoveryId);
+            : section === "outreach"
+              ? await service.outreach(principal, recoveryId)
+              : await service.summary(principal, recoveryId);
         if (result === null) {
           send(response, 404, { error: "not_found" });
           return true;
         }
         const valid = section === "messages" ? isMessagePage(result) :
-          section === "related" ? isRelatedPage(result) : isDetailSummary(result);
+          section === "related" ? isRelatedPage(result) :
+            section === "outreach" ? isOutreachProjection(result) && result.recoveryId === recoveryId : isDetailSummary(result);
         if (!valid) throw new RecoveryDetailIntegrityError();
         logger.info("merchant.recoveries.detail.read", {
           shopId: principal.shopId,

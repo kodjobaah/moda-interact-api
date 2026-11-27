@@ -11,6 +11,7 @@ const at = new Date("2026-10-09T15:44:00.000Z");
 const recovery = {
   id: "rec_1", shopId: principal.shopId, customerId: "customer_1", status: "COMPLETED",
   totalPrice: { toString: () => "89.99" }, currency: "GBP", detectedAt: at,
+  generation: 1, lastExternalActivityAt: at,
   messageSentAt: null, engagedAt: null, completedAt: at, expiredAt: null,
   lineItems: [{ title: "Shirt", variantTitle: "Blue", quantity: 2, price: "19.9500" }],
   outreachAttempts: [ { sequence: 1, sentAt: new Date("2026-10-09T12:00:00.000Z"),
@@ -38,6 +39,7 @@ function database(override: {
     } : override.installation },
     shopHumanMessagingRestriction: { findUnique: async () => null },
     conversationMessage: { findFirst: async () => null },
+    recoveryOutreachAttempt: { findMany: async (arg: unknown) => { calls.push(arg); return []; } },
     checkoutRecovery: { findFirst: async (arg: unknown) => {
       calls.push(arg);
       return override.recovery === undefined ? recovery : override.recovery;
@@ -95,4 +97,20 @@ test("stale installation, foreign customer and foreign conversation fail closed"
     ...recovery.conversation, shopId: null, customerId: "foreign_customer",
   } } });
   await assert.rejects(foreignConversationCustomer.service.summary(principal, "rec_1"), RecoveryDetailIntegrityError);
+});
+
+test("outreach read scopes and bounds persisted attempt history within the existing ownership transaction", async () => {
+  const { service, calls } = database();
+  const result = await service.outreach(principal, "rec_1");
+  assert.equal(result?.recoveryId, "rec_1");
+  assert.equal(result?.initial.state, "MISSING");
+  assert.equal(result?.followUp.state, "MISSING");
+  assert.deepEqual(calls[0], { isolationLevel: "RepeatableRead" });
+  const query = calls[2] as { where: unknown; take: number; orderBy: unknown };
+  assert.deepEqual(query.where, { checkoutRecoveryId: "rec_1", checkoutRecovery: { shopId: "shop_1" } });
+  assert.equal(query.take, 101);
+  assert.deepEqual(query.orderBy, { sequence: "asc" });
+  const absent = database({ recovery: null });
+  assert.equal(await absent.service.outreach(principal, "rec_1"), null);
+  assert.equal(absent.calls.length, 2);
 });

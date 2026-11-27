@@ -19,6 +19,8 @@ const summary = {
     engagedAt: null, completedAt: null, expiredAt: null },
 };
 const emptyPage = { schemaVersion: 1, items: [], previousCursor: null, nextCursor: null };
+const emptySlot = { state: "MISSING", currentSequence: null, history: [] };
+const emptyOutreach = { schemaVersion: 1, recoveryId: "rec_1", initial: emptySlot, followUp: emptySlot };
 
 function request(path: string, headers: string[] = [], method = "GET") {
   return { url: path, method, rawHeaders: headers } as unknown as IncomingMessage;
@@ -49,6 +51,7 @@ function setup({ authError, serviceError, result }: { authError?: Error; service
       summary: async () => { calls.push("summary"); if (serviceError) throw serviceError; return result === undefined ? summary : result; },
       messages: async () => { calls.push("messages"); if (serviceError) throw serviceError; return result === undefined ? emptyPage : result; },
       related: async () => { calls.push("related"); if (serviceError) throw serviceError; return result === undefined ? emptyPage : result; },
+      outreach: async () => { calls.push("outreach"); if (serviceError) throw serviceError; return result === undefined ? emptyOutreach : result; },
     } as never,
     logger: { info: () => {}, warn: () => {}, error: () => {} } as never,
   });
@@ -100,4 +103,31 @@ test("bad paths, bodies, query and unsafe response fail without returning secret
     request("/v1/merchant/recoveries/rec_1"), secret.output);
   assert.equal(secret.result().status, 409);
   assert.doesNotMatch(JSON.stringify(secret.result()), /super-secret/);
+});
+
+test("outreach read is authenticated, private, resource bound and rejects request parameters", async () => {
+  const path = "/v1/merchant/recoveries/rec_1/outreach";
+  const { instance, calls } = setup();
+  const success = response();
+  assert.equal(await instance.handle(request(path), success.output), true);
+  assert.equal(success.result().status, 200);
+  assert.equal(success.result().headers["cache-control"], "private, no-store");
+  assert.deepEqual(success.result().body, emptyOutreach);
+  assert.deepEqual(calls, ["auth", "outreach"]);
+  for (const [options, code] of [
+    [{ authError: new WooUnauthenticatedError() }, 401], [{ result: null }, 404],
+    [{ result: { ...emptyOutreach, recoveryId: "foreign" } }, 409],
+    [{ result: { ...emptyOutreach, recipient: "private-phone" } }, 409],
+  ] as const) {
+    const output = response();
+    await setup(options).instance.handle(request(path), output.output);
+    assert.equal(output.result().status, code);
+    assert.doesNotMatch(JSON.stringify(output.result()), /private-phone|foreign/);
+  }
+  for (const bad of [request(`${path}?shopId=other`), request(path, ["Content-Length", "1"])]) {
+    const output = response();
+    await instance.handle(bad, output.output);
+    assert.equal(output.result().status, 400);
+  }
+  assert.equal(await instance.handle(request(path, [], "POST"), response().output), false);
 });

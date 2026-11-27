@@ -12,6 +12,8 @@ import { parseDetailNavigation, validRecoveryId } from "./cursor.js";
 import { readMessagePage, readRelatedPage } from "./pages.js";
 import { recoveryBasket } from "./basket.js";
 import { humanMessagingProjection, recoveryConversationDetail } from "./conversation-projection.js";
+import { readRecoveryOutreach } from "./outreach-read.js";
+import type { RecoveryOutreachProjection } from "./outreach-projection.js";
 
 const recoverySelect = {
   id: true,
@@ -41,6 +43,10 @@ const pageOwnershipSelect = {
   customerId: true,
   customer: { select: { shopId: true } },
   conversation: { select: { id: true, shopId: true, customerId: true, checkoutRecoveryId: true } },
+} as const satisfies Prisma.CheckoutRecoverySelect;
+
+const outreachOwnershipSelect = {
+  ...pageOwnershipSelect, generation: true, lastExternalActivityAt: true,
 } as const satisfies Prisma.CheckoutRecoverySelect;
 
 type ReadTransaction = Prisma.TransactionClient;
@@ -136,6 +142,13 @@ export class MerchantRecoveryDetailService {
         },
       } satisfies RecoveryDetailSummary;
     });
+  }
+
+  async outreach(principal: WooInstallationPrincipal, recoveryId: string): Promise<RecoveryOutreachProjection | null> {
+    return this.withOwned(principal, recoveryId, outreachOwnershipSelect, async ({ tx, owned }) =>
+      readRecoveryOutreach(tx, { shopId: principal.shopId, recoveryId: owned.id,
+        conversationId: owned.conversation?.id ?? null, generation: owned.generation,
+        lastExternalActivityAt: owned.lastExternalActivityAt }));
   }
 
   async messages(

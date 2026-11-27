@@ -600,6 +600,14 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
     const allowCommand = await db.merchantConversationSendCommand.findUniqueOrThrow({
       where: { id: allowAccepted.response.commandId },
     });
+    // The forward HUMAN subject guard still requires frozen content before
+    // any HUMAN_TEXT assessment, even though digest matching is application-owned.
+    await assert.rejects(db.$transaction(tx => tx.$queryRaw(Prisma.sql`
+      SELECT "whatsapp".arch040_moderation_create_or_reuse(
+        ${id()},${first.shop.id},${humanConversation.id},
+        'HUMAN_COMMAND'::"whatsapp"."ConversationModerationSubject",NULL,${allowCommand.id},
+        ${sha(allowInput.textBody)},'TEXT','arch055-test-model','arch055-prepared-v1')
+    `)), /ARCH040 moderation HUMAN text requires frozen prepared content/);
     const allowPreparedBody = "Prepared allow body differs";
     const allowLeaseToken = id();
     const allowLeaseAt = new Date();
@@ -613,12 +621,31 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
         "preparedAt"=${allowLeaseAt},"updatedAt"=${allowLeaseAt}
       WHERE "id"=${allowCommand.id} AND "state"='CLAIMED' AND "leaseToken"=${allowLeaseToken}
         AND "preparedTextBody" IS NULL`;
-    await assert.rejects(db.$transaction(tx => tx.$queryRaw(Prisma.sql`
+    // 20261126140000_human_moderation_subject_guard deliberately permits
+    // storage of a different digest after freezing. Prove that even a completed
+    // ALLOW for the original body cannot approve the actual prepared body.
+    assert.notEqual(sha(allowInput.textBody), sha(allowPreparedBody));
+    const [staleAssessment] = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
       SELECT "whatsapp".arch040_moderation_create_or_reuse(
         ${id()},${first.shop.id},${humanConversation.id},
         'HUMAN_COMMAND'::"whatsapp"."ConversationModerationSubject",NULL,${allowCommand.id},
-        ${sha(allowInput.textBody)},'TEXT','arch055-test-model','arch055-prepared-v1')
-    `)));
+        ${sha(allowInput.textBody)},'TEXT','arch055-test-model','arch055-prepared-v1') AS "id"
+    `);
+    assert.ok(staleAssessment?.id);
+    const staleLease = id();
+    await db.conversationModerationAssessment.update({ where: { id: staleAssessment.id }, data: {
+      decision: "CHECKING", attemptCount: 1, leaseToken: staleLease,
+      leaseExpiresAt: new Date(Date.now() + 60_000),
+    } });
+    const [staleCompleted] = await db.$queryRaw<Array<{ result: boolean }>>(Prisma.sql`
+      SELECT "whatsapp".arch040_moderation_complete(${staleAssessment.id},${staleLease},
+        'ALLOW'::"whatsapp"."ConversationModerationDecision",'arch055-test-model',false,
+        '{}'::jsonb,'{}'::jsonb,NULL,'arch055-original-allow-request',NULL) AS "result"
+    `);
+    assert.equal(staleCompleted?.result, true);
+    const staleStored = await db.conversationModerationAssessment.findUniqueOrThrow({ where: { id: staleAssessment.id } });
+    assert.equal(staleStored.contentSha256, sha(allowInput.textBody));
+    assert.equal(staleStored.decision, "ALLOW");
     assert.equal((await status.read(principal(first), humanConversation.id, allowCommand.id)).moderationStatus,
       "moderation_pending");
     const [allowAssessment] = await db.$queryRaw<Array<{ id: string }>>(Prisma.sql`
@@ -628,6 +655,9 @@ test("ARCH-055 isolates human follow-up claims by command and matches prepared t
         ${sha(allowPreparedBody)},'TEXT','arch055-test-model','arch055-prepared-v1') AS "id"
     `);
     assert.ok(allowAssessment?.id);
+    assert.notEqual(allowAssessment.id, staleAssessment.id);
+    assert.equal((await status.read(principal(first), humanConversation.id, allowCommand.id)).moderationStatus,
+      "moderation_pending");
     const allowModerationLease = id();
     await db.conversationModerationAssessment.update({ where: { id: allowAssessment!.id }, data: {
       decision: "CHECKING", attemptCount: 1, leaseToken: allowModerationLease,
