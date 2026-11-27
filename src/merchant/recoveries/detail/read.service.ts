@@ -12,8 +12,8 @@ import { parseDetailNavigation, validRecoveryId } from "./cursor.js";
 import { readMessagePage, readRelatedPage } from "./pages.js";
 import { recoveryBasket } from "./basket.js";
 import { humanMessagingProjection, recoveryConversationDetail } from "./conversation-projection.js";
-import { readRecoveryOutreach } from "./outreach-read.js";
-import type { RecoveryOutreachProjection } from "./outreach-projection.js";
+import { attemptSelect, readRecoveryOutreach } from "./outreach-read.js";
+import { MAX_OUTREACH_HISTORY, type RecoveryOutreachProjection } from "./outreach-projection.js";
 
 const recoverySelect = {
   id: true,
@@ -31,10 +31,7 @@ const recoverySelect = {
   customer: { select: { shopId: true, firstName: true, lastName: true, email: true } },
   conversation: { select: { id: true, shopId: true, customerId: true, checkoutRecoveryId: true,
     controlMode: true, controlRevision: true } },
-  outreachAttempts: { where: { sequence: { in: [1, 2] } }, select: {
-    sequence: true, sentAt: true, status: true, initiatedBy: true, initiationKey: true,
-    outboundMessageId: true,
-  } },
+  outreachAttempts: { orderBy: { sequence: "asc" }, take: MAX_OUTREACH_HISTORY + 1, select: attemptSelect },
 } as const satisfies Prisma.CheckoutRecoverySelect;
 
 const pageOwnershipSelect = {
@@ -51,20 +48,22 @@ const outreachOwnershipSelect = {
 
 type ReadTransaction = Prisma.TransactionClient;
 
-interface ReadContext<Select extends Prisma.CheckoutRecoverySelect> {
+type OwnedRecovery = Prisma.CheckoutRecoveryGetPayload<{ select: typeof pageOwnershipSelect }>;
+
+interface ReadContext<Owned extends OwnedRecovery> {
   tx: ReadTransaction;
-  owned: Prisma.CheckoutRecoveryGetPayload<{ select: Select }>;
+  owned: Owned;
   timeZone: string;
 }
 
 export class MerchantRecoveryDetailService {
   constructor(private readonly database: Pick<PrismaClient, "$transaction">) {}
 
-  private async withOwned<T>(
+  private async withOwned<T, Owned extends OwnedRecovery>(
     principal: WooInstallationPrincipal,
     recoveryId: string,
-    select: Prisma.CheckoutRecoverySelect,
-    read: (context: ReadContext<typeof select>) => Promise<T>,
+    load: (tx: ReadTransaction, where: Prisma.CheckoutRecoveryWhereInput) => Promise<Owned | null>,
+    read: (context: ReadContext<Owned>) => Promise<T>,
   ): Promise<T | null> {
     if (!validRecoveryId(recoveryId)) return null;
     return this.database.$transaction(async (tx: ReadTransaction) => {
@@ -93,10 +92,9 @@ export class MerchantRecoveryDetailService {
         installation.credentialVersion !== principal.credentialVersion) {
         throw new RecoveryDetailIntegrityError();
       }
-      const owned = await tx.checkoutRecovery.findFirst({
-        where: { id: recoveryId, shopId: principal.shopId },
-        select,
-      });
+      // Keep the concrete Prisma result type from each caller's selection.
+      // Widening to CheckoutRecoverySelect loses nested outreach relations.
+      const owned = await load(tx, { id: recoveryId, shopId: principal.shopId });
       if (!owned) return null;
       if (owned.shopId !== principal.shopId ||
         (owned.customer && owned.customer.shopId !== principal.shopId) ||
@@ -110,12 +108,14 @@ export class MerchantRecoveryDetailService {
   }
 
   async summary(principal: WooInstallationPrincipal, recoveryId: string): Promise<RecoveryDetailSummary | null> {
-    return this.withOwned(principal, recoveryId, recoverySelect, async ({ tx, owned, timeZone }) => {
+    return this.withOwned(principal, recoveryId,
+      (tx, where) => tx.checkoutRecovery.findFirst({ where, select: recoverySelect }), async ({ tx, owned, timeZone }) => {
       const now = new Date();
       const [restriction, conversation] = await Promise.all([
         tx.shopHumanMessagingRestriction.findUnique({ where: { shopId: principal.shopId },
           select: { status: true } }),
-        recoveryConversationDetail(tx, owned.conversation, owned.outreachAttempts, now),
+        recoveryConversationDetail(tx, owned.conversation, { shopId: principal.shopId,
+          recoveryId: owned.id, platform: "WOOCOMMERCE" }, owned.outreachAttempts, now),
       ]);
       const value = recoveryValue(owned.totalPrice, owned.currency);
       return {
@@ -145,7 +145,8 @@ export class MerchantRecoveryDetailService {
   }
 
   async outreach(principal: WooInstallationPrincipal, recoveryId: string): Promise<RecoveryOutreachProjection | null> {
-    return this.withOwned(principal, recoveryId, outreachOwnershipSelect, async ({ tx, owned }) =>
+    return this.withOwned(principal, recoveryId,
+      (tx, where) => tx.checkoutRecovery.findFirst({ where, select: outreachOwnershipSelect }), async ({ tx, owned }) =>
       readRecoveryOutreach(tx, { shopId: principal.shopId, recoveryId: owned.id,
         conversationId: owned.conversation?.id ?? null, generation: owned.generation,
         lastExternalActivityAt: owned.lastExternalActivityAt }));
@@ -157,7 +158,8 @@ export class MerchantRecoveryDetailService {
     params: URLSearchParams,
   ): Promise<RecoveryDetailPage<RecoveryDetailMessage> | null> {
     const navigation = parseDetailNavigation(principal.shopId, recoveryId, "messages", params);
-    return this.withOwned(principal, recoveryId, pageOwnershipSelect, async ({ tx, owned }) => {
+    return this.withOwned(principal, recoveryId,
+      (tx, where) => tx.checkoutRecovery.findFirst({ where, select: pageOwnershipSelect }), async ({ tx, owned }) => {
       if (!owned.conversation) {
         const empty: RecoveryDetailPage<RecoveryDetailMessage> = {
           schemaVersion: 1, items: [], previousCursor: null, nextCursor: null,
@@ -174,7 +176,8 @@ export class MerchantRecoveryDetailService {
     params: URLSearchParams,
   ): Promise<RecoveryDetailPage<RecoveryRelatedItem> | null> {
     const navigation = parseDetailNavigation(principal.shopId, recoveryId, "related", params);
-    return this.withOwned(principal, recoveryId, pageOwnershipSelect, async ({ tx, owned }) => {
+    return this.withOwned(principal, recoveryId,
+      (tx, where) => tx.checkoutRecovery.findFirst({ where, select: pageOwnershipSelect }), async ({ tx, owned }) => {
       if (!owned.customerId) {
         const empty: RecoveryDetailPage<RecoveryRelatedItem> = {
           schemaVersion: 1, items: [], previousCursor: null, nextCursor: null,

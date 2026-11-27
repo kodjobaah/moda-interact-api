@@ -2,10 +2,11 @@ import { Prisma, type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../../auth/woo-installation/principal.js";
 import { ownedRecoveryConversation, requireCurrentWooShop } from "./admission.service.js";
 import { SendHttpError } from "./contract.js";
-import { merchantFollowUpDue, latestVerifiedCustomerInbound,
+import { configuredFollowUpDue, latestVerifiedCustomerInbound,
   requireRecoveryExecution, windowOpen } from "./eligibility.js";
 import { readEligibleFollowUpChoices, type FollowUpChoicesResponse,
   type SenderWabaReader } from "./follow-up-catalogue.js";
+import { readMerchantOutreach } from "../../recoveries/detail/merchant-outreach-read.js";
 
 const EMPTY: FollowUpChoicesResponse = { schemaVersion: 1, templates: [] };
 
@@ -35,26 +36,22 @@ export class MerchantConversationFollowUpService {
       }
       const now = this.now();
       if (!Number.isFinite(now.getTime())) return EMPTY;
-      const attempts = await tx.$queryRaw<Array<{ recipient: string; sentAt: Date | null;
-        followUpDueAt: Date | null }>>(Prisma.sql`
-        SELECT "recipient", "sentAt", "followUpDueAt" FROM "commerce"."RecoveryOutreachAttempt"
-        WHERE "checkoutRecoveryId"=${conversation.checkoutRecoveryId} AND "sequence"=1`);
-      const initial = attempts[0];
-      if (!initial?.sentAt || !/^\+?[1-9]\d{6,14}$/.test(initial.recipient)) return EMPTY;
+      const evidence = await readMerchantOutreach(tx, { shopId: shop.id,
+        recoveryId: conversation.checkoutRecoveryId, conversationId: conversation.id,
+        platform: "WOOCOMMERCE" }, now, false);
+      const initial = evidence.initial;
+      if (!initial?.sentAt || evidence.replyAnchor?.recipient !== initial.recipient ||
+          evidence.followUpUsed || !/^\+?[1-9]\d{6,14}$/.test(initial.recipient)) return EMPTY;
       const reachability = await tx.whatsAppRecipientReachability.findUnique({
         where: { shopId_recipient: { shopId: shop.id, recipient: initial.recipient } },
         select: { suppressUntil: true },
       });
       if (reachability?.suppressUntil && reachability.suppressUntil > now) return EMPTY;
-      const inbound = await latestVerifiedCustomerInbound(tx, conversation.id, initial.sentAt, now);
-      if (windowOpen(inbound, now) || !merchantFollowUpDue(initial.sentAt, initial.followUpDueAt, inbound, now)) return EMPTY;
-      const existing = await tx.recoveryOutreachAttempt.findUnique({
-        where: { checkoutRecoveryId_sequence: { checkoutRecoveryId: conversation.checkoutRecoveryId, sequence: 2 } },
-        select: { status: true, initiationKey: true, outboundMessageId: true },
-      });
-      if (existing && (existing.status !== "PENDING" || existing.initiationKey !== null ||
-          existing.outboundMessageId !== null)) return EMPTY;
-      const templates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now, conversation.checkoutRecoveryId);
+      const inbound = evidence.replyAnchor?.sentAt
+        ? await latestVerifiedCustomerInbound(tx, conversation.id, evidence.replyAnchor.sentAt, now) : null;
+      if (windowOpen(inbound, now) || !configuredFollowUpDue(initial.followUpDueAt, now)) return EMPTY;
+      const templates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now,
+        { recoveryId: conversation.checkoutRecoveryId, conversationId: conversation.id, initial });
       return { schemaVersion: 1, templates };
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }

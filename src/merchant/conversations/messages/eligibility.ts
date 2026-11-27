@@ -49,13 +49,3 @@ export function configuredFollowUpDue(followUpDueAt: Date | null, now: Date): bo
   return followUpDueAt !== null && Number.isFinite(followUpDueAt.getTime()) &&
     followUpDueAt.getTime() <= now.getTime();
 }
-
-/** Manual outreach has its own slot after 24 hours of silence, even when
- * no automated follow-up was scheduled. An older configured post-window
- * template still requires its saved due time after a customer has engaged. */
-export function merchantFollowUpDue(initialSentAt: Date, scheduledDueAt: Date | null,
-  verifiedInboundAt: Date | null, now: Date): boolean {
-  if (!(now.getTime() - initialSentAt.getTime() >= CUSTOMER_SERVICE_WINDOW_MS)) return false;
-  if (scheduledDueAt) return configuredFollowUpDue(scheduledDueAt, now);
-  return verifiedInboundAt === null;
-}

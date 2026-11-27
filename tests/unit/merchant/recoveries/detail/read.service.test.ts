@@ -3,6 +3,8 @@ import test from "node:test";
 import { MerchantRecoveryDetailService } from "../../../../../src/merchant/recoveries/detail/read.service.js";
 import { RecoveryDetailIntegrityError } from "../../../../../src/merchant/recoveries/detail/contracts.js";
 
+import { attempt, pendingFollowUp } from "./merchant-outreach.fixture.js";
+
 const principal = {
   installationId: "inst_1", shopId: "shop_1",
   canonicalSiteUrl: "https://woo.example", credentialVersion: 3,
@@ -14,9 +16,9 @@ const recovery = {
   generation: 1, lastExternalActivityAt: at,
   messageSentAt: null, engagedAt: null, completedAt: at, expiredAt: null,
   lineItems: [{ title: "Shirt", variantTitle: "Blue", quantity: 2, price: "19.9500" }],
-  outreachAttempts: [ { sequence: 1, sentAt: new Date("2026-10-09T12:00:00.000Z"),
-    status: "WAITING_FOR_RESPONSE", initiatedBy: "AUTOMATION", initiationKey: null, outboundMessageId: "m_1" },
-    { sequence: 2, sentAt: null, status: "PENDING", initiatedBy: null, initiationKey: null, outboundMessageId: null } ],
+  outreachAttempts: [attempt(1, { sentAt: new Date("2026-10-09T12:00:00.000Z") }, {
+    shopId: principal.shopId, recoveryId: "rec_1", conversationId: "conv_1", platform: "WOOCOMMERCE",
+  }), pendingFollowUp({ shopId: principal.shopId, recoveryId: "rec_1", conversationId: "conv_1", platform: "WOOCOMMERCE" })],
   customer: { shopId: principal.shopId, firstName: "Ada", lastName: "Lovelace", email: "ada@example.test" },
   conversation: { id: "conv_1", shopId: principal.shopId, customerId: "customer_1", checkoutRecoveryId: "rec_1",
     controlMode: "HUMAN", controlRevision: 3 },

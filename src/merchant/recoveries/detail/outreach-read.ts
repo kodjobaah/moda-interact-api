@@ -2,13 +2,15 @@ import type { Prisma } from "@prisma/client";
 import { MAX_OUTREACH_HISTORY, projectRecoveryOutreach, type RecoveryOutreachProjection } from "./outreach-projection.js";
 import { RecoveryDetailIntegrityError } from "./contracts.js";
 
-const attemptSelect = {
+export const attemptSelect = {
   id: true, checkoutRecoveryId: true, sequence: true, trigger: true, recipient: true,
-  initiatedBy: true, status: true, sentAt: true, customerRespondedAt: true,
+  initiatedBy: true, initiationKey: true, claimedAt: true, followUpDueAt: true,
+  status: true, sentAt: true, customerRespondedAt: true,
   outboundMessageId: true, failureCode: true,
   outboundMessage: { select: {
     id: true, conversationId: true, direction: true, senderType: true, status: true,
     providerMessageId: true, providerDispatchKey: true, providerDispatchAdmittedAt: true,
+    providerDispatchControlRevision: true, dispatchProviderAccountId: true, dispatchProviderPhoneNumberId: true,
     providerFailureCode: true, sentAt: true, deliveredAt: true, readAt: true, failedAt: true,
   } },
   deliveryRetryIntent: { select: {

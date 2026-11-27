@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import type { MerchantOutreachAttempt } from "../../recoveries/detail/merchant-outreach.js";
 import type { TransactionMessagingSenderFactory } from "../../../platform-configuration/composition.js";
 
 export type SenderWabaReader = TransactionMessagingSenderFactory;
@@ -107,23 +108,26 @@ export function choicesFromRows(rows: readonly FollowUpRow[], shopId: string,
 }
 
 export async function readEligibleFollowUpChoices(tx: Prisma.TransactionClient, shopId: string,
-  sender: SenderWabaReader | undefined, now: Date, recoveryId?: string): Promise<FollowUpChoice[]> {
+  sender: SenderWabaReader | undefined, now: Date,
+  outreach?: { recoveryId: string; conversationId: string; initial: MerchantOutreachAttempt }): Promise<FollowUpChoice[]> {
   // A missing or misconfigured sender must never permit a guessed provider WABA.
   if (!sender) return [];
   const senderWaba = await sender(tx).readMessagingSenderWabaId();
   if (!waba.test(senderWaba)) return [];
   let context: { purpose: string; hasName: boolean } | undefined;
-  if (recoveryId) {
+  if (outreach) {
+    const { recoveryId, conversationId, initial } = outreach;
     const recovery = await tx.checkoutRecovery.findFirst({
       where: { id: recoveryId, shopId },
-      select: { customer: { select: { firstName: true } },
-        outreachAttempts: { where: { sequence: 1 }, select: { sentAt: true, outboundMessageId: true } } },
+      select: { customer: { select: { firstName: true } }, conversation: { select: { id: true } } },
     });
-    const initial = recovery?.outreachAttempts[0];
-    if (!initial?.sentAt || !initial.outboundMessageId) return [];
+    if (recovery?.conversation?.id !== conversationId || initial.checkoutRecoveryId !== recoveryId ||
+        !initial.sentAt || !initial.outboundMessageId) return [];
     const message = await tx.conversationMessage.findUnique({ where: { id: initial.outboundMessageId },
-      select: { content: true, status: true, providerMessageId: true, direction: true, senderType: true } });
-    if (!message?.providerMessageId || !["SENT", "DELIVERED", "READ"].includes(message.status) ||
+      select: { conversationId: true, content: true, status: true, providerMessageId: true, direction: true, senderType: true } });
+    if (!message?.providerMessageId || message.conversationId !== conversationId ||
+        !["SENT", "DELIVERED", "READ"].includes(message.status) ||
+        (initial.sequence >= 3 && !["DELIVERED", "READ"].includes(message.status)) ||
         message.direction !== "OUTBOUND" || message.senderType !== "AUTOMATION") return [];
     let receipt;
     try { receipt = JSON.parse(message.content); } catch { return []; }

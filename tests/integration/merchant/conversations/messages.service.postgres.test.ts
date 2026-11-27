@@ -233,7 +233,7 @@ test("ARCH-040-API-004 PostgreSQL durable commands, eligibility, moderation and 
     await db.recoveryOutreachAttempt.create({ data: {
       checkoutRecoveryId: raced.recovery.id, sequence: 1, recipient: "447700900001",
       trigger: "INITIAL", status: "WAITING_FOR_RESPONSE", configuredOfferMode: "NONE",
-      sentAt: initialAt, outboundMessageId: racedOutbound.id,
+      sentAt: initialAt, followUpDueAt: new Date(initialAt.getTime() + 3600_000), outboundMessageId: racedOutbound.id,
     } });
     let entered!: () => void, release!: () => void;
     const holding = new Promise<void>((r) => { entered=r; });

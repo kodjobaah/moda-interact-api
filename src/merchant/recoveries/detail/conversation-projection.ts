@@ -2,14 +2,8 @@ import type { Prisma } from "@prisma/client";
 import { CUSTOMER_SERVICE_WINDOW_MS, latestVerifiedCustomerInbound } from "../../conversations/messages/eligibility.js";
 import type { RecoveryConversationDetail, RecoveryDetailSummary } from "./contracts.js";
 
-interface Outreach {
-  sequence: number;
-  sentAt: Date | null;
-  status: string;
-  initiatedBy: "HUMAN" | "AGENT" | "AUTOMATION" | null;
-  initiationKey: string | null;
-  outboundMessageId: string | null;
-}
+import { resolveMerchantOutreach, type MerchantOutreachAttempt, type MerchantOutreachScope } from "./merchant-outreach.js";
+
 interface Conversation {
   id: string;
   controlMode: "AI" | "HUMAN";
@@ -20,14 +14,14 @@ interface Conversation {
 export async function recoveryConversationDetail(
   tx: Prisma.TransactionClient,
   conversation: Conversation | null,
-  attempts: readonly Outreach[],
+  scope: Omit<MerchantOutreachScope, "conversationId">,
+  attempts: readonly MerchantOutreachAttempt[],
   now: Date,
 ): Promise<RecoveryConversationDetail | null> {
   if (!conversation) return null;
-  const initial = attempts.find((item) => item.sequence === 1);
-  const sequenceTwo = attempts.find((item) => item.sequence === 2);
-  const lastInbound = initial?.sentAt
-    ? await latestVerifiedCustomerInbound(tx, conversation.id, initial.sentAt, now) : null;
+  const evidence = resolveMerchantOutreach({ ...scope, conversationId: conversation.id }, attempts, now);
+  const lastInbound = evidence.replyAnchor?.sentAt
+    ? await latestVerifiedCustomerInbound(tx, conversation.id, evidence.replyAnchor.sentAt, now) : null;
   return {
     id: conversation.id,
     controlMode: conversation.controlMode,
@@ -35,9 +29,8 @@ export async function recoveryConversationDetail(
     lastInboundAt: lastInbound?.toISOString() ?? null,
     windowExpiresAt: lastInbound ? new Date(lastInbound.getTime() + CUSTOMER_SERVICE_WINDOW_MS).toISOString() : null,
     followUp: {
-      sequence2Used: !!sequenceTwo && (sequenceTwo.initiationKey !== null || sequenceTwo.initiatedBy !== null ||
-        sequenceTwo.status !== "PENDING" || sequenceTwo.outboundMessageId !== null),
-      initiatedBy: sequenceTwo?.initiatedBy ?? null,
+      sequence2Used: evidence.followUpUsed,
+      initiatedBy: evidence.initiatedBy,
     },
   };
 }

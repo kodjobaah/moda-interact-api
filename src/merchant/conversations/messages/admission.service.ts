@@ -5,8 +5,9 @@ import { WooUnauthenticatedError } from "../../../auth/woo-installation/authenti
 import { humanPayloadDigest, SendHttpError, type HumanSendInput, type SendResponse } from "./contract.js";
 import { allowedFollowUpChoice, readEligibleFollowUpChoices,
   type SenderWabaReader } from "./follow-up-catalogue.js";
-import { merchantFollowUpDue, latestVerifiedCustomerInbound,
+import { configuredFollowUpDue, latestVerifiedCustomerInbound,
   requireRecoveryExecution, windowOpen } from "./eligibility.js";
+import { readMerchantOutreach } from "../../recoveries/detail/merchant-outreach-read.js";
 
 interface ShopRow { id: string; domain: string; status: string; platform: string;
   shopifyShopId: string | null; onboardingCompleted: boolean }
@@ -118,13 +119,12 @@ export class MerchantConversationMessageAdmissionService {
 
         const now = this.now();
         if (!Number.isFinite(now.getTime())) throw new SendHttpError(500,"internal_error");
-        const attempts = await tx.$queryRaw<Array<{ id: string; recipient: string;
-          sentAt: Date | null; followUpDueAt: Date | null }>>`
-          SELECT "id","recipient","sentAt","followUpDueAt" FROM "commerce"."RecoveryOutreachAttempt"
-          WHERE "checkoutRecoveryId"=${conversation.checkoutRecoveryId} AND "sequence"=1 FOR UPDATE`;
-        const initial = attempts[0];
-        if (!initial?.sentAt) throw new SendHttpError(409,"follow_up_unavailable");
-        const recipient = initial.recipient;
+        const evidence = await readMerchantOutreach(tx, { shopId: shop.id,
+          recoveryId: conversation.checkoutRecoveryId, conversationId: conversation.id,
+          platform: "WOOCOMMERCE" }, now, true);
+        const contact = evidence.replyAnchor;
+        if (!contact?.sentAt) throw new SendHttpError(409,"follow_up_unavailable");
+        const recipient = contact.recipient;
         if (!goodRecipient(recipient)) throw new SendHttpError(409,"recipient_unavailable");
         const reachability = await tx.whatsAppRecipientReachability.findUnique({
           where: { shopId_recipient: { shopId: principal.shopId, recipient } },
@@ -132,7 +132,7 @@ export class MerchantConversationMessageAdmissionService {
         });
         if (reachability?.suppressUntil && reachability.suppressUntil > now)
           throw new SendHttpError(409,"recipient_unavailable");
-        const lastInbound = await latestVerifiedCustomerInbound(tx, conversation.id, initial.sentAt, now);
+        const lastInbound = await latestVerifiedCustomerInbound(tx, conversation.id, contact.sentAt, now);
         let attemptId: string | undefined;
         let commandId: string | undefined;
         if (input.kind === "HUMAN_TEXT") {
@@ -140,18 +140,15 @@ export class MerchantConversationMessageAdmissionService {
           commandId = randomUUID();
         } else {
           if (windowOpen(lastInbound, now)) throw new SendHttpError(409,"service_window_closed");
-          if (!merchantFollowUpDue(initial.sentAt, initial.followUpDueAt, lastInbound, now))
+          const initial = evidence.initial;
+          if (!initial || initial.recipient !== recipient || evidence.followUpUsed ||
+              !configuredFollowUpDue(initial.followUpDueAt, now))
             throw new SendHttpError(409,"follow_up_unavailable");
-          const priorAttempt = await tx.recoveryOutreachAttempt.findUnique({
-            where: { checkoutRecoveryId_sequence: { checkoutRecoveryId: conversation.checkoutRecoveryId, sequence: 2 } },
-            select: { status: true, initiationKey: true, outboundMessageId: true },
-          });
-          if (priorAttempt && (priorAttempt.status !== "PENDING" || priorAttempt.initiationKey !== null ||
-              priorAttempt.outboundMessageId !== null)) throw new SendHttpError(409, "follow_up_unavailable");
           // Only the exact current published Moda assignment and approved,
           // fresh, drift-free registration is a permitted merchant choice.
           // No client-selected WABA or unverified positive offer is trusted.
-          const candidates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now, conversation.checkoutRecoveryId);
+          const candidates = await readEligibleFollowUpChoices(tx, shop.id, this.sender, now,
+            { recoveryId: conversation.checkoutRecoveryId, conversationId: conversation.id, initial });
           if (!allowedFollowUpChoice(candidates, input.templateName, input.templateLanguage))
             throw new SendHttpError(409,"template_not_allowed");
           commandId = randomUUID();
@@ -167,15 +164,19 @@ export class MerchantConversationMessageAdmissionService {
             FROM "commerce"."RecoveryOutreachAttempt" a WHERE a."id"=${initial.id}
             ON CONFLICT ("checkoutRecoveryId","sequence") DO NOTHING`;
           const sequenceTwo = await tx.$queryRaw<Array<{ id: string; status: string;
-            initiationKey: string | null; outboundMessageId: string | null }>>`
-            SELECT "id","status"::text AS "status","initiationKey","outboundMessageId"
+            initiationKey: string | null; initiatedBy: string | null; claimedAt: Date | null;
+            sentAt: Date | null; outboundMessageId: string | null }>>`
+            SELECT "id","status"::text AS "status","initiationKey","initiatedBy"::text AS "initiatedBy",
+              "claimedAt","sentAt","outboundMessageId"
             FROM "commerce"."RecoveryOutreachAttempt"
             WHERE "checkoutRecoveryId"=${conversation.checkoutRecoveryId} AND "sequence"=2 FOR UPDATE`;
           const candidate = sequenceTwo[0];
           if (!candidate || candidate.status !== "PENDING" || candidate.initiationKey !== null ||
+            candidate.initiatedBy !== null || candidate.claimedAt !== null || candidate.sentAt !== null ||
             candidate.outboundMessageId !== null) throw new SendHttpError(409,"follow_up_unavailable");
           const claimed = await tx.recoveryOutreachAttempt.updateMany({
-            where: { id: candidate.id, status: "PENDING", initiationKey: null, outboundMessageId: null },
+            where: { id: candidate.id, status: "PENDING", initiationKey: null, initiatedBy: null,
+              claimedAt: null, sentAt: null, outboundMessageId: null },
             data: { initiatedBy: "HUMAN", initiationKey: commandId,
               claimedAt: now, trigger: "POST_WINDOW_FOLLOW_UP" },
           });

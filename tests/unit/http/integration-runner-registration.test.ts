@@ -44,6 +44,69 @@ async function integrationTests(directory: string): Promise<string[]> {
   return files;
 }
 
+async function collectRunnerRegistrations(
+  runner: string,
+  readRunner: (runner: string) => Promise<string>,
+  ancestors: readonly string[] = [],
+): Promise<string[]> {
+  const lineage = [...ancestors, runner];
+  assert.ok(!ancestors.includes(runner), `cyclic integration runner reference: ${lineage.join(" -> ")}`);
+  const body = await readRunner(runner);
+  const matches = body.matchAll(/tests\/integration\/[A-Za-z0-9_./-]+\.test\.ts/g);
+  // Measurement runners may reference the same suite for candidate and baseline passes.
+  const registrations = [...new Set(Array.from(matches, ([path]) => path))];
+  for (const match of body.matchAll(/scripts\/[A-Za-z0-9_./-]+\.mjs/g)) {
+    const [nestedRunner] = match;
+    // A usage diagnostic may print its own command; that is not a delegation.
+    if (nestedRunner === runner && body.slice(0, match.index).endsWith("Usage: node ")) continue;
+    registrations.push(...await collectRunnerRegistrations(nestedRunner, readRunner, lineage));
+  }
+  return registrations;
+}
+
+function fixtureReader(bodies: Record<string, string>): (runner: string) => Promise<string> {
+  return async runner => {
+    const body = bodies[runner];
+    assert.ok(body !== undefined, `missing fixture runner: ${runner}`);
+    return body;
+  };
+}
+
+test("runner registration ignores its own usage diagnostic but follows delegated runners", async () => {
+  const runner = "scripts/root.mjs";
+  const nested = "scripts/leaf.mjs";
+  const readRunner = fixtureReader({
+    [runner]: `throw new Error("Usage: node ${runner} [--optional]"); const suites = ["tests/integration/root.test.ts"]; const delegate = "${nested}";`,
+    [nested]: 'const suites = ["tests/integration/leaf.test.ts"];',
+  });
+  assert.deepEqual(await collectRunnerRegistrations(runner, readRunner), [
+    "tests/integration/root.test.ts", "tests/integration/leaf.test.ts",
+  ]);
+});
+
+test("runner registration rejects actual self references and indirect cycles", async () => {
+  const runner = "scripts/root.mjs";
+  const nested = "scripts/leaf.mjs";
+  await assert.rejects(collectRunnerRegistrations(runner, fixtureReader({
+    [runner]: `const delegate = "${runner}";`,
+  })), /cyclic integration runner reference/);
+  await assert.rejects(collectRunnerRegistrations(runner, fixtureReader({
+    [runner]: `const delegate = "${nested}";`,
+    [nested]: `const delegate = "${runner}";`,
+  })), /cyclic integration runner reference/);
+});
+
+test("runner registration preserves duplicate suite ownership across different runners", async () => {
+  const runner = "scripts/root.mjs";
+  const suite = "tests/integration/shared.test.ts";
+  const readRunner = fixtureReader({
+    [runner]: `const delegates = ["scripts/first.mjs", "scripts/second.mjs"];`,
+    "scripts/first.mjs": `const suites = ["${suite}", "${suite}"];`,
+    "scripts/second.mjs": `const suites = ["${suite}"];`,
+  });
+  assert.deepEqual(await collectRunnerRegistrations(runner, readRunner), [suite, suite]);
+});
+
 test("every integration suite has a disposable runner or explicit PHP contract command", async () => {
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as {
     scripts: Record<string, string>;
@@ -51,13 +114,7 @@ test("every integration suite has a disposable runner or explicit PHP contract c
   const chain = packageJson.scripts["test:integration"] ?? "";
   const registrations: string[] = [];
   const register = async (runner: string) => {
-    const body = await readFile(join(root, runner), "utf8");
-    const matches = body.matchAll(/tests\/integration\/[A-Za-z0-9_./-]+\.test\.ts/g);
-    // Measurement runners may reference the same suite for candidate and baseline passes.
-    registrations.push(...new Set(Array.from(matches, ([path]) => path)));
-    for (const [nestedRunner] of body.matchAll(/scripts\/[A-Za-z0-9_./-]+\.mjs/g)) {
-      await register(nestedRunner);
-    }
+    registrations.push(...await collectRunnerRegistrations(runner, path => readFile(join(root, path), "utf8")));
   };
   for (const runner of directRunners) {
     assert.ok(chain.includes(`node ${runner}`), `${runner} missing from test:integration`);

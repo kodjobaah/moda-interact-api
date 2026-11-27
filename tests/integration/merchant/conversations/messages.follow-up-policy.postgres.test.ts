@@ -95,13 +95,14 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
       } }), 0);
     }
 
-    // The manual slot opens exactly 24 hours after the confirmed first send.
+    // Approved 4c.2 policy: the configured deadline, not elapsed 24 hours
+    // since outreach, opens the one manual slot outside a verified reply window.
     // Competing merchants still obtain at most one claim of the SAME attempt.
     const shortAt = new Date(now.getTime() - 30 * minute);
     const early = await recovery(shortAt, new Date(shortAt.getTime() + 10 * minute));
-    await denied(early.conversation.id, "follow_up_unavailable", "TEMPLATE");
-    await noClaim(early.conversation.id, early.checkout.id);
-    const short = await recovery(new Date(now.getTime() - 24 * hour), null);
+    assert.equal((await admission.admit(principal, early.conversation.id, template())).code, 202);
+    assert.equal(await db.recoveryOutreachAttempt.count({ where: { checkoutRecoveryId: early.checkout.id, sequence: 2 } }), 1);
+    const short = await recovery(new Date(now.getTime() - 24 * hour), now);
     await denied(short.conversation.id, "service_window_closed", "HUMAN_TEXT");
     const first = template();
     const contender = template();
@@ -139,7 +140,11 @@ test("ARCH-040-API-005 configured Woo follow-up due and verified customer window
     assert.equal(claimed.initiationKey, command.id);
     assert.equal(await db.usageEvent.count({ where: { shopId: shop.id } }), 0);
 
-    // Disabled/unscheduled and future-due policies reject without writing commands.
+    // Disabled/unscheduled and future-due policies reject without writing commands,
+    // including after the obsolete 24-hour fallback would have opened a slot.
+    const disabled = await recovery(new Date(now.getTime() - 48 * hour), null);
+    await denied(disabled.conversation.id, "follow_up_unavailable", "TEMPLATE");
+    await noClaim(disabled.conversation.id, disabled.checkout.id);
     for (const due of [null, new Date(now.getTime() + minute)]) {
       const candidate = await recovery(shortAt, due);
       await denied(candidate.conversation.id, "follow_up_unavailable", "TEMPLATE");
