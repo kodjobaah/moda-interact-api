@@ -1,5 +1,11 @@
-import { loadWooRestReadPublicOrigin, type WooRestReadAuthorizationConfig } from "./woocommerce/rest-read/config.js";
-import { loadWooBillingConfig, type WooBillingTarget } from "./woocommerce/billing/woo-billing-config.js";
+import {
+  loadWooRestReadPublicOrigin,
+  type WooRestReadAuthorizationConfig,
+} from "./woocommerce/rest-read/config.js";
+import {
+  loadWooBillingConfig,
+  type WooBillingTarget,
+} from "./woocommerce/billing/woo-billing-config.js";
 
 export interface RuntimeConfig {
   databaseUrl: string;
@@ -56,14 +62,20 @@ export function loadRuntimeConfig(
       "MODA_WOOCOMMERCE_CONNECTION_MODE must be public or local-development",
     );
   }
-  if (connectionMode === "local-development" && environmentName === "production") {
+  if (
+    connectionMode === "local-development" &&
+    environmentName === "production"
+  ) {
     throw new Error(
       "MODA_WOOCOMMERCE_CONNECTION_MODE local-development is forbidden in production",
     );
   }
 
   const wooBilling = loadWooBillingConfig(environment);
-  const wooRestReadPublicOrigin = loadWooRestReadPublicOrigin(environment, connectionMode);
+  const wooRestReadPublicOrigin = loadWooRestReadPublicOrigin(
+    environment,
+    connectionMode,
+  );
 
   return {
     databaseUrl,

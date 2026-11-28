@@ -22,28 +22,28 @@ original error details from `access.failed` when diagnosing failures; the
 
 ## Interpret the fields (milliseconds, monotonic clock)
 
-| Field | What it measures |
-| --- | --- |
-| `durationMs` | Total route execution inside Node up to the end of the timing log setup, not full remote HTTP round-trip |
-| `authenticationMs` | Header/credential validation, DB installation lookup, constant-time digest verification |
-| `authenticationLookupMs` | Prisma installation `findUnique`, including its own acquisition/DB time |
-| `authenticationOtherMs` | Remaining authentication time (not a separately sampled operation) |
-| `requestValidationMs`, `requestBodyMs` | HTTP request constraints and PUT JSON body read/parse |
-| `serviceMs` | Entire service call, including Prisma transaction completion |
-| `transactionMs` | Entire Prisma interactive transaction lifecycle |
-| `transactionEntryMs` | From starting the transaction to callback entry: connection/pool wait plus transaction setup; NOT pool wait alone |
-| `transactionWorkMs` | Time inside the interactive transaction callback |
-| `transactionFinishMs` | Approximate remainder after callback, including commit/rollback and Prisma completion |
-| `shopLookupMs`, `installationLookupMs` | The two identity checks performed inside the transaction |
-| `shopValidationMs`, `installationValidationMs` | Validations of those identity results |
-| `subscriptionLookupMs` | Subscription with plan and plan-feature join |
-| `subscriptionEligibilityMs` | Plan/subscription eligibility guard |
-| `featuresLookupMs`, `preferencesLookupMs` | Feature and merchant-preference database reads (issued via `Promise.all`) |
-| `capabilitySelectionMs`, `projectionMs`, `responseValidationMs` | Shared capability selection, revision/DTO projection, service DTO validation |
-| `routeResponseValidationMs`, `responseDispatchMs` | Route DTO validation and synchronous `response.end()` call; **not** client receipt |
-| `featureUpsertsMs` | PUT only: updates inside the existing transaction |
-| `failedPhase` | First failing timed phase, when applicable |
-| `statusCode`, `outcome`, `connectionClosed` | Route-level result and whether the socket was already destroyed |
+| Field                                                           | What it measures                                                                                                  |
+| --------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `durationMs`                                                    | Total route execution inside Node up to the end of the timing log setup, not full remote HTTP round-trip          |
+| `authenticationMs`                                              | Header/credential validation, DB installation lookup, constant-time digest verification                           |
+| `authenticationLookupMs`                                        | Prisma installation `findUnique`, including its own acquisition/DB time                                           |
+| `authenticationOtherMs`                                         | Remaining authentication time (not a separately sampled operation)                                                |
+| `requestValidationMs`, `requestBodyMs`                          | HTTP request constraints and PUT JSON body read/parse                                                             |
+| `serviceMs`                                                     | Entire service call, including Prisma transaction completion                                                      |
+| `transactionMs`                                                 | Entire Prisma interactive transaction lifecycle                                                                   |
+| `transactionEntryMs`                                            | From starting the transaction to callback entry: connection/pool wait plus transaction setup; NOT pool wait alone |
+| `transactionWorkMs`                                             | Time inside the interactive transaction callback                                                                  |
+| `transactionFinishMs`                                           | Approximate remainder after callback, including commit/rollback and Prisma completion                             |
+| `shopLookupMs`, `installationLookupMs`                          | The two identity checks performed inside the transaction                                                          |
+| `shopValidationMs`, `installationValidationMs`                  | Validations of those identity results                                                                             |
+| `subscriptionLookupMs`                                          | Subscription with plan and plan-feature join                                                                      |
+| `subscriptionEligibilityMs`                                     | Plan/subscription eligibility guard                                                                               |
+| `featuresLookupMs`, `preferencesLookupMs`                       | Feature and merchant-preference database reads (issued via `Promise.all`)                                         |
+| `capabilitySelectionMs`, `projectionMs`, `responseValidationMs` | Shared capability selection, revision/DTO projection, service DTO validation                                      |
+| `routeResponseValidationMs`, `responseDispatchMs`               | Route DTO validation and synchronous `response.end()` call; **not** client receipt                                |
+| `featureUpsertsMs`                                              | PUT only: updates inside the existing transaction                                                                 |
+| `failedPhase`                                                   | First failing timed phase, when applicable                                                                        |
+| `statusCode`, `outcome`, `connectionClosed`                     | Route-level result and whether the socket was already destroyed                                                   |
 
 Important: these timers are **nested and some database reads overlap**. Do not
 add all phase times together or equate `transactionEntryMs` with pure PostgreSQL

@@ -25,7 +25,7 @@ paths:
             per Shop. Each page contains at most 100 source rows.
           schema: { type: integer, minimum: 0, maximum: 2147483647 }
       responses:
-        '200':
+        "200":
           description: >-
             Readable state: ENABLED, MERCHANT_DISABLED or PLAN_UNENTITLED.
             The latter two states do not hide previously configured sources.
@@ -34,11 +34,12 @@ paths:
               schema: { type: string, const: no-store }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/MerchantKnowledgeReadResponse' }
-        '400': { $ref: '#/components/responses/InvalidRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { $ref: '#/components/responses/IntegrityInvalid' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+              schema:
+                { $ref: "#/components/schemas/MerchantKnowledgeReadResponse" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/IntegrityInvalid" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/merchant/merchant-knowledge/sources:
     post:
       operationId: createWooKnowledgeWebSource
@@ -49,19 +50,19 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/CreateWebSource' }
+            schema: { $ref: "#/components/schemas/CreateWebSource" }
       responses:
-        '201': { $ref: '#/components/responses/CommandSuccess' }
-        '200': { $ref: '#/components/responses/CommandSuccess' }
-        '400': { $ref: '#/components/responses/InvalidRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/CommandDenied' }
-        '409': { $ref: '#/components/responses/CommandConflict' }
-        '413': { $ref: '#/components/responses/TooLarge' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        "201": { $ref: "#/components/responses/CommandSuccess" }
+        "200": { $ref: "#/components/responses/CommandSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommandDenied" }
+        "409": { $ref: "#/components/responses/CommandConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/merchant/merchant-knowledge/sources/{id}:
     parameters:
-      - $ref: '#/components/parameters/SourceId'
+      - $ref: "#/components/parameters/SourceId"
     patch:
       operationId: editWooKnowledgeWebSource
       summary: Edit web source metadata and optionally create URL_CHANGE revision
@@ -70,16 +71,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/EditWebSource' }
+            schema: { $ref: "#/components/schemas/EditWebSource" }
       responses:
-        '200': { $ref: '#/components/responses/CommandSuccess' }
-        '400': { $ref: '#/components/responses/InvalidRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/CommandDenied' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/CommandConflict' }
-        '413': { $ref: '#/components/responses/TooLarge' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        "200": { $ref: "#/components/responses/CommandSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommandDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/CommandConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
     delete:
       operationId: deleteWooKnowledgeWebSource
       summary: Delete a web source and atomically compact positions
@@ -88,19 +89,19 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ExpectedGeneration' }
+            schema: { $ref: "#/components/schemas/ExpectedGeneration" }
       responses:
-        '200': { $ref: '#/components/responses/CommandSuccess' }
-        '400': { $ref: '#/components/responses/InvalidRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/CommandDenied' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/CommandConflict' }
-        '413': { $ref: '#/components/responses/TooLarge' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        "200": { $ref: "#/components/responses/CommandSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommandDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/CommandConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/merchant/merchant-knowledge/sources/{id}/refresh:
     parameters:
-      - $ref: '#/components/parameters/SourceId'
+      - $ref: "#/components/parameters/SourceId"
     post:
       operationId: refreshWooKnowledgeWebSource
       summary: Create a pending REFRESH revision if not already pending/processing
@@ -109,16 +110,16 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/ExpectedGeneration' }
+            schema: { $ref: "#/components/schemas/ExpectedGeneration" }
       responses:
-        '200': { $ref: '#/components/responses/CommandSuccess' }
-        '400': { $ref: '#/components/responses/InvalidRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/CommandDenied' }
-        '404': { $ref: '#/components/responses/NotFound' }
-        '409': { $ref: '#/components/responses/CommandConflict' }
-        '413': { $ref: '#/components/responses/TooLarge' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        "200": { $ref: "#/components/responses/CommandSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommandDenied" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/CommandConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/merchant/merchant-knowledge/order:
     put:
       operationId: reorderWooKnowledgeSources
@@ -128,15 +129,15 @@ paths:
         required: true
         content:
           application/json:
-            schema: { $ref: '#/components/schemas/SourceOrder' }
+            schema: { $ref: "#/components/schemas/SourceOrder" }
       responses:
-        '200': { $ref: '#/components/responses/CommandSuccess' }
-        '400': { $ref: '#/components/responses/InvalidRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '403': { $ref: '#/components/responses/CommandDenied' }
-        '409': { $ref: '#/components/responses/CommandConflict' }
-        '413': { $ref: '#/components/responses/TooLarge' }
-        '503': { $ref: '#/components/responses/Unavailable' }
+        "200": { $ref: "#/components/responses/CommandSuccess" }
+        "400": { $ref: "#/components/responses/InvalidRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "403": { $ref: "#/components/responses/CommandDenied" }
+        "409": { $ref: "#/components/responses/CommandConflict" }
+        "413": { $ref: "#/components/responses/TooLarge" }
+        "503": { $ref: "#/components/responses/Unavailable" }
   /v1/merchant/merchant-knowledge/upload-intents:
     post:
       operationId: createWooKnowledgeUploadIntent
@@ -167,7 +168,16 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [idempotencyKey, purposeKey, dataFormatKey, originalFileName, contentType, sizeBytes, sha256]
+              required:
+                [
+                  idempotencyKey,
+                  purposeKey,
+                  dataFormatKey,
+                  originalFileName,
+                  contentType,
+                  sizeBytes,
+                  sha256,
+                ]
               properties:
                 idempotencyKey: { type: string, format: uuid }
                 purposeKey: { type: string, maxLength: 64 }
@@ -175,9 +185,9 @@ paths:
                 originalFileName: { type: string, minLength: 1, maxLength: 255 }
                 contentType: { type: string, maxLength: 128 }
                 sizeBytes: { type: integer, minimum: 1 }
-                sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
+                sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
       responses:
-        '200':
+        "200":
           description: >-
             Immutable Shop-bound intent. The uploadUrl is an opaque bearer capability,
             not a server credential; only the authenticated WordPress administrator may
@@ -189,7 +199,15 @@ paths:
               schema:
                 type: object
                 additionalProperties: false
-                required: [schemaVersion, assetId, uploadUrl, expiresAt, requiredHeaders, maxUploadBytes]
+                required:
+                  [
+                    schemaVersion,
+                    assetId,
+                    uploadUrl,
+                    expiresAt,
+                    requiredHeaders,
+                    maxUploadBytes,
+                  ]
                 properties:
                   schemaVersion: { type: integer, const: 1 }
                   assetId: { type: string }
@@ -212,26 +230,33 @@ paths:
                     required: [Content-Type, If-None-Match, x-amz-meta-sha256]
                     properties:
                       Content-Type: { type: string }
-                      If-None-Match: { type: string, const: '*' }
-                      x-amz-meta-sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
-        '400':
+                      If-None-Match: { type: string, const: "*" }
+                      x-amz-meta-sha256:
+                        { type: string, pattern: "^[a-f0-9]{64}$" }
+        "400":
           description: Invalid request/body/file contract
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '401':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "401":
           description: Revoked or invalid installation; never includes signed capabilities
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '403':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "403":
           description: Feature entitlement/source type/quota denied
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '409':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "409":
           description: Conflicting/expired idempotency key
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '413':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "413":
           description: Upload exceeds configured limit
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '503':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "503":
           description: R2/configuration/transaction unavailable (bounded error, no signed URL)
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
   /v1/merchant/merchant-knowledge/upload-finalize:
     post:
       operationId: finalizeWooKnowledgeUpload
@@ -252,7 +277,16 @@ paths:
             schema:
               type: object
               additionalProperties: false
-              required: [assetId, purposeKey, name, languageTag, contentType, sizeBytes, sha256]
+              required:
+                [
+                  assetId,
+                  purposeKey,
+                  name,
+                  languageTag,
+                  contentType,
+                  sizeBytes,
+                  sha256,
+                ]
               properties:
                 assetId: { type: string, maxLength: 128 }
                 purposeKey: { type: string, maxLength: 64 }
@@ -260,39 +294,60 @@ paths:
                 languageTag: { type: string, maxLength: 16 }
                 contentType: { type: string, maxLength: 128 }
                 sizeBytes: { type: integer, minimum: 1 }
-                sha256: { type: string, pattern: '^[a-f0-9]{64}$' }
-                sourceId: { type: string, maxLength: 128, description: Optional owned upload source to replace }
+                sha256: { type: string, pattern: "^[a-f0-9]{64}$" }
+                sourceId:
+                  {
+                    type: string,
+                    maxLength: 128,
+                    description: Optional owned upload source to replace,
+                  }
       responses:
-        '200':
+        "200":
           description: Accepted sourceId, revisionId, generation and ACCEPTED status
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '400':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "400":
           description: Malformed request
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '401':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "401":
           description: Unauthorized installation
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '403':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "403":
           description: Not entitled, not owned or invalid source format
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '404':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "404":
           description: Missing asset
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '409':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "409":
           description: Expired/conflicting intent or integrity mismatch
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '413':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "413":
           description: Excessive request body
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-        '503':
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+        "503":
           description: R2 unavailable or persistence failed
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
   /v1/merchant/merchant-knowledge/uploads/{sourceId}:
     patch:
       operationId: editWooKnowledgeUploadSource
       summary: Update name and language of owned, currently entitled upload source
       security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
-      parameters: [{ name: sourceId, in: path, required: true, schema: { type: string, maxLength: 128 } }]
+      parameters:
+        [
+          {
+            name: sourceId,
+            in: path,
+            required: true,
+            schema: { type: string, maxLength: 128 },
+          },
+        ]
       requestBody:
         required: true
         content:
@@ -305,11 +360,11 @@ paths:
                 name: { type: string, minLength: 1, maxLength: 160 }
                 languageTag: { type: string, maxLength: 16 }
       responses:
-        '200': { description: Updated source identity }
-        '400': { description: Invalid request }
-        '401': { description: Invalid installation }
-        '403': { description: Denied }
-        '503': { description: Unavailable }
+        "200": { description: Updated source identity }
+        "400": { description: Invalid request }
+        "401": { description: Invalid installation }
+        "403": { description: Denied }
+        "503": { description: Unavailable }
   /v1/merchant/merchant-knowledge/uploads/{sourceId}/reprocess:
     post:
       operationId: reprocessWooKnowledgeUploadSource
@@ -320,14 +375,22 @@ paths:
         accepted sequential call appends a new revision; this operation is not
         idempotent. A stale concurrent generation returns 409 Conflict.
       security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
-      parameters: [{ name: sourceId, in: path, required: true, schema: { type: string, maxLength: 128 } }]
+      parameters:
+        [
+          {
+            name: sourceId,
+            in: path,
+            required: true,
+            schema: { type: string, maxLength: 128 },
+          },
+        ]
       responses:
-        '200': { description: Accepted revision identity and generation }
-        '400': { description: Invalid request }
-        '401': { description: Invalid installation }
-        '403': { description: Denied }
-        '409': { description: Conflict or stale source generation }
-        '503': { description: Unavailable }
+        "200": { description: Accepted revision identity and generation }
+        "400": { description: Invalid request }
+        "401": { description: Invalid installation }
+        "403": { description: Denied }
+        "409": { description: Conflict or stale source generation }
+        "503": { description: Unavailable }
 components:
   securitySchemes:
     WooInstallationId:
@@ -343,7 +406,13 @@ components:
       name: id
       in: path
       required: true
-      schema: { type: string, minLength: 1, maxLength: 128, pattern: '^[A-Za-z0-9_-]+$' }
+      schema:
+        {
+          type: string,
+          minLength: 1,
+          maxLength: 128,
+          pattern: "^[A-Za-z0-9_-]+$",
+        }
   responses:
     CommandSuccess:
       description: Command committed; knowledge is the canonical API-015 projection after commit
@@ -351,50 +420,50 @@ components:
         Cache-Control: { schema: { type: string, const: no-store } }
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/CommandResult' }
+          schema: { $ref: "#/components/schemas/CommandResult" }
     CommandDenied:
       description: Plan or source type is not currently entitled
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
     NotFound:
       description: Source missing, belongs to another shop, or is not a web source
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
     CommandConflict:
       description: Generation mismatch, stale ordering or inconsistent installation
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
     TooLarge:
       description: Request body exceeds 65536 bytes
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
     InvalidRequest:
       description: Unknown query/body or malformed page position
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
           example: { error: invalid_request }
     Unauthorized:
       description: Invalid/revoked/rotated WooCommerce installation credential
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
           example: { error: unauthorized }
     IntegrityInvalid:
       description: Shop or installation state no longer matches the authenticated principal
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
           example: { error: merchant_knowledge_integrity_invalid }
     Unavailable:
       description: Missing/malformed plan configuration or backend integration failure, not an entitlement denial
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
           example: { error: merchant_knowledge_unavailable }
   schemas:
     CommandResult:
@@ -404,7 +473,8 @@ components:
       properties:
         sourceId: { type: string, maxLength: 128 }
         created: { type: boolean }
-        knowledge: { $ref: '#/components/schemas/MerchantKnowledgeReadResponse' }
+        knowledge:
+          { $ref: "#/components/schemas/MerchantKnowledgeReadResponse" }
     ExpectedGeneration:
       type: object
       additionalProperties: false
@@ -417,10 +487,34 @@ components:
       required: [name, purposeKey, dataFormatKey, url]
       properties:
         name: { type: string, minLength: 1, maxLength: 160 }
-        purposeKey: { type: string, enum: [COMPANY_INFORMATION, CUSTOMER_SUPPORT, POLICIES, FAQ, PRODUCT_INFORMATION, SHIPPING_AND_DELIVERY, PRICING] }
+        purposeKey:
+          {
+            type: string,
+            enum:
+              [
+                COMPANY_INFORMATION,
+                CUSTOMER_SUPPORT,
+                POLICIES,
+                FAQ,
+                PRODUCT_INFORMATION,
+                SHIPPING_AND_DELIVERY,
+                PRICING,
+              ],
+          }
         dataFormatKey: { type: string, const: WEB_PAGE }
-        url: { type: string, maxLength: 2048, description: Canonical HTTPS public hostname; no credentials, private hosts or nondefault ports }
-        languageTag: { type: string, maxLength: 16, description: One of the 20 Shared-supported language tags; defaults to store language }
+        url:
+          {
+            type: string,
+            maxLength: 2048,
+            description: Canonical HTTPS public hostname; no credentials,
+            private hosts or nondefault ports,
+          }
+        languageTag:
+          {
+            type: string,
+            maxLength: 16,
+            description: One of the 20 Shared-supported language tags; defaults to store language,
+          }
     EditWebSource:
       type: object
       additionalProperties: false
@@ -451,7 +545,17 @@ components:
       properties:
         error:
           type: string
-          enum: [invalid_request, request_too_large, unauthorized, merchant_knowledge_integrity_invalid, merchant_knowledge_unavailable, merchant_knowledge_denied, merchant_knowledge_source_not_found, merchant_knowledge_conflict]
+          enum:
+            [
+              invalid_request,
+              request_too_large,
+              unauthorized,
+              merchant_knowledge_integrity_invalid,
+              merchant_knowledge_unavailable,
+              merchant_knowledge_denied,
+              merchant_knowledge_source_not_found,
+              merchant_knowledge_conflict,
+            ]
     Purpose:
       type: object
       additionalProperties: false
@@ -459,25 +563,36 @@ components:
       properties:
         key:
           type: string
-          enum: [COMPANY_INFORMATION, CUSTOMER_SUPPORT, POLICIES, FAQ, PRODUCT_INFORMATION, SHIPPING_AND_DELIVERY, PRICING]
+          enum:
+            [
+              COMPANY_INFORMATION,
+              CUSTOMER_SUPPORT,
+              POLICIES,
+              FAQ,
+              PRODUCT_INFORMATION,
+              SHIPPING_AND_DELIVERY,
+              PRICING,
+            ]
         displayName: { type: string, minLength: 1, maxLength: 160 }
     DataFormat:
       type: object
       additionalProperties: false
-      required: [key, displayName, inputKind, canonicalExtension, acceptedContentTypes]
+      required:
+        [key, displayName, inputKind, canonicalExtension, acceptedContentTypes]
       properties:
         key: { type: string, enum: [WEB_PAGE, CSV, XLSX] }
         displayName: { type: string, minLength: 1, maxLength: 160 }
         inputKind: { type: string, enum: [REMOTE_URL, UPLOAD] }
-        canonicalExtension: { type: [string, 'null'], maxLength: 16 }
-        acceptedContentTypes: { type: array, maxItems: 20, items: { type: string, maxLength: 128 } }
+        canonicalExtension: { type: [string, "null"], maxLength: 16 }
+        acceptedContentTypes:
+          { type: array, maxItems: 20, items: { type: string, maxLength: 128 } }
     CatalogueEntry:
       type: object
       additionalProperties: false
       required: [purpose, dataFormat]
       properties:
-        purpose: { $ref: '#/components/schemas/Purpose' }
-        dataFormat: { $ref: '#/components/schemas/DataFormat' }
+        purpose: { $ref: "#/components/schemas/Purpose" }
+        dataFormat: { $ref: "#/components/schemas/DataFormat" }
     ActiveRevision:
       type: object
       additionalProperties: false
@@ -485,57 +600,160 @@ components:
       properties:
         id: { type: string, maxLength: 128 }
         generation: { type: integer, minimum: 1 }
-        contentUnits: { type: [integer, 'null'], minimum: 0 }
+        contentUnits: { type: [integer, "null"], minimum: 0 }
         truncated: { type: boolean }
-        fetchedAt: { type: [string, 'null'], format: date-time }
+        fetchedAt: { type: [string, "null"], format: date-time }
     Revision:
       type: object
       additionalProperties: false
-      required: [id, generation, reason, status, requestedUrl, resolvedUrl, contentUnits, truncated, fetchedAt, completedAt, failureCode, activeContentUnits, activeTruncated, activeFetchedAt]
+      required:
+        [
+          id,
+          generation,
+          reason,
+          status,
+          requestedUrl,
+          resolvedUrl,
+          contentUnits,
+          truncated,
+          fetchedAt,
+          completedAt,
+          failureCode,
+          activeContentUnits,
+          activeTruncated,
+          activeFetchedAt,
+        ]
       properties:
         id: { type: string, maxLength: 128 }
         generation: { type: integer, minimum: 1 }
-        reason: { type: string, enum: [CREATE, URL_CHANGE, FILE_REPLACE, REFRESH, REPROCESS, ENTITLEMENT_CHANGE] }
-        status: { type: string, enum: [PENDING, PROCESSING, ACTIVE, FAILED, SUPERSEDED] }
-        requestedUrl: { type: [string, 'null'], maxLength: 2048, description: HTTPS web address without query/fragment, never a signed/object-storage URL }
-        resolvedUrl: { type: [string, 'null'], maxLength: 2048 }
-        contentUnits: { type: [integer, 'null'], minimum: 0 }
+        reason:
+          {
+            type: string,
+            enum:
+              [
+                CREATE,
+                URL_CHANGE,
+                FILE_REPLACE,
+                REFRESH,
+                REPROCESS,
+                ENTITLEMENT_CHANGE,
+              ],
+          }
+        status:
+          {
+            type: string,
+            enum: [PENDING, PROCESSING, ACTIVE, FAILED, SUPERSEDED],
+          }
+        requestedUrl:
+          {
+            type: [string, "null"],
+            maxLength: 2048,
+            description: HTTPS web address without query/fragment,
+            never a signed/object-storage URL,
+          }
+        resolvedUrl: { type: [string, "null"], maxLength: 2048 }
+        contentUnits: { type: [integer, "null"], minimum: 0 }
         truncated: { type: boolean }
-        fetchedAt: { type: [string, 'null'], format: date-time }
-        completedAt: { type: [string, 'null'], format: date-time }
-        failureCode: { type: [string, 'null'], maxLength: 64, description: Approved Merchant Knowledge failure category only; unknown persisted values and provider diagnostics are returned as null }
-        activeContentUnits: { type: [integer, 'null'], minimum: 0 }
+        fetchedAt: { type: [string, "null"], format: date-time }
+        completedAt: { type: [string, "null"], format: date-time }
+        failureCode:
+          {
+            type: [string, "null"],
+            maxLength: 64,
+            description: Approved Merchant Knowledge failure category only; unknown persisted values and provider diagnostics are returned as null,
+          }
+        activeContentUnits: { type: [integer, "null"], minimum: 0 }
         activeTruncated: { type: boolean }
-        activeFetchedAt: { type: [string, 'null'], format: date-time }
+        activeFetchedAt: { type: [string, "null"], format: date-time }
     Source:
       type: object
       additionalProperties: false
-      required: [id, name, purposeKey, purposeDisplayName, dataFormatKey, dataFormatDisplayName, uploadedFileName, languageTag, position, currentGeneration, currentlyPlanEntitled, processingEligible, dormantReason, revision, activeRevision]
+      required:
+        [
+          id,
+          name,
+          purposeKey,
+          purposeDisplayName,
+          dataFormatKey,
+          dataFormatDisplayName,
+          uploadedFileName,
+          languageTag,
+          position,
+          currentGeneration,
+          currentlyPlanEntitled,
+          processingEligible,
+          dormantReason,
+          revision,
+          activeRevision,
+        ]
       properties:
         id: { type: string, maxLength: 128 }
         name: { type: string, minLength: 1, maxLength: 160 }
-        purposeKey: { type: string, enum: [COMPANY_INFORMATION, CUSTOMER_SUPPORT, POLICIES, FAQ, PRODUCT_INFORMATION, SHIPPING_AND_DELIVERY, PRICING] }
+        purposeKey:
+          {
+            type: string,
+            enum:
+              [
+                COMPANY_INFORMATION,
+                CUSTOMER_SUPPORT,
+                POLICIES,
+                FAQ,
+                PRODUCT_INFORMATION,
+                SHIPPING_AND_DELIVERY,
+                PRICING,
+              ],
+          }
         purposeDisplayName: { type: string, maxLength: 160 }
         dataFormatKey: { type: string, enum: [WEB_PAGE, CSV, XLSX] }
         dataFormatDisplayName: { type: string, maxLength: 160 }
-        uploadedFileName: { type: [string, 'null'], maxLength: 255 }
+        uploadedFileName: { type: [string, "null"], maxLength: 255 }
         languageTag: { type: string, maxLength: 16 }
         position: { type: integer, minimum: 0 }
         currentGeneration: { type: integer, minimum: 0 }
         currentlyPlanEntitled: { type: boolean }
         processingEligible: { type: boolean }
-        dormantReason: { type: [string, 'null'], enum: [NO_CURRENT_PLAN, SOURCE_TYPE, SOURCE_COUNT, MERCHANT_DISABLED, null] }
+        dormantReason:
+          {
+            type: [string, "null"],
+            enum:
+              [
+                NO_CURRENT_PLAN,
+                SOURCE_TYPE,
+                SOURCE_COUNT,
+                MERCHANT_DISABLED,
+                null,
+              ],
+          }
         revision:
-          anyOf: [{ $ref: '#/components/schemas/Revision' }, { type: 'null' }]
+          anyOf: [{ $ref: "#/components/schemas/Revision" }, { type: "null" }]
         activeRevision:
-          anyOf: [{ $ref: '#/components/schemas/ActiveRevision' }, { type: 'null' }]
+          anyOf:
+            [{ $ref: "#/components/schemas/ActiveRevision" }, { type: "null" }]
     MerchantKnowledgeReadResponse:
       type: object
       additionalProperties: false
-      required: [schemaVersion, state, planEntitled, merchantEnabled, effectiveEnabled, maxKnowledgeSources, maxContentUnitsPerSource, maxUploadBytes, configuredCount, planEligibleSourceCount, defaultLanguageTag, supportedLanguageTags, catalogue, sources, nextPosition]
+      required:
+        [
+          schemaVersion,
+          state,
+          planEntitled,
+          merchantEnabled,
+          effectiveEnabled,
+          maxKnowledgeSources,
+          maxContentUnitsPerSource,
+          maxUploadBytes,
+          configuredCount,
+          planEligibleSourceCount,
+          defaultLanguageTag,
+          supportedLanguageTags,
+          catalogue,
+          sources,
+          nextPosition,
+        ]
       properties:
         schemaVersion: { type: integer, const: 1 }
-        state: { type: string, enum: [ENABLED, MERCHANT_DISABLED, PLAN_UNENTITLED] }
+        state:
+          { type: string, enum: [ENABLED, MERCHANT_DISABLED, PLAN_UNENTITLED] }
         planEntitled: { type: boolean }
         merchantEnabled: { type: boolean }
         effectiveEnabled: { type: boolean }
@@ -545,7 +763,23 @@ components:
         configuredCount: { type: integer, minimum: 0 }
         planEligibleSourceCount: { type: integer, minimum: 0 }
         defaultLanguageTag: { type: string, maxLength: 16 }
-        supportedLanguageTags: { type: array, minItems: 20, maxItems: 20, items: { type: string, maxLength: 16 } }
-        catalogue: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/CatalogueEntry' } }
-        sources: { type: array, maxItems: 100, items: { $ref: '#/components/schemas/Source' } }
-        nextPosition: { type: [integer, 'null'], minimum: 0 }
+        supportedLanguageTags:
+          {
+            type: array,
+            minItems: 20,
+            maxItems: 20,
+            items: { type: string, maxLength: 16 },
+          }
+        catalogue:
+          {
+            type: array,
+            maxItems: 100,
+            items: { $ref: "#/components/schemas/CatalogueEntry" },
+          }
+        sources:
+          {
+            type: array,
+            maxItems: 100,
+            items: { $ref: "#/components/schemas/Source" },
+          }
+        nextPosition: { type: [integer, "null"], minimum: 0 }

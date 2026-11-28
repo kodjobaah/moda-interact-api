@@ -1,11 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { sendNoStoreJson as sendJson } from "../../http/response.js";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
+import {
+  WooUnauthenticatedError,
+  type WooInstallationAuthenticator,
+} from "../../auth/woo-installation/authenticator.js";
 import { StoreCategoryReadError } from "./locale.js";
 import type { StoreCategoriesReadService } from "./store-categories-read.service.js";
 
-export const MERCHANT_STORE_CATEGORIES_ROUTE_PATH = "/v1/merchant/store-categories";
+export const MERCHANT_STORE_CATEGORIES_ROUTE_PATH =
+  "/v1/merchant/store-categories";
 
 /** Dedicated API-005 route to keep the Woo installation router thin. */
 export function createStoreCategoriesRoute(options: {
@@ -16,14 +20,25 @@ export function createStoreCategoriesRoute(options: {
 }) {
   const { authenticator, service, logger, now = Date.now } = options;
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
-      if (requestUrl.pathname !== MERCHANT_STORE_CATEGORIES_ROUTE_PATH || request.method !== "GET") return false;
+      if (
+        requestUrl.pathname !== MERCHANT_STORE_CATEGORIES_ROUTE_PATH ||
+        request.method !== "GET"
+      )
+        return false;
       const startedAt = now();
       try {
         const principal = await authenticator.authenticate(request);
         const localeValues = requestUrl.searchParams.getAll("locale");
-        if (localeValues.length > 1 || requestUrl.searchParams.size !== localeValues.length || hasBody(request)) {
+        if (
+          localeValues.length > 1 ||
+          requestUrl.searchParams.size !== localeValues.length ||
+          hasBody(request)
+        ) {
           throw new StoreCategoryReadError("invalid_locale");
         }
         const result = await service.read(principal, localeValues[0]);
@@ -35,19 +50,27 @@ export function createStoreCategoriesRoute(options: {
         });
         sendJson(response, 200, result);
       } catch (error) {
-        if (error instanceof WooUnauthenticatedError) sendJson(response, 401, { error: "unauthorized" });
+        if (error instanceof WooUnauthenticatedError)
+          sendJson(response, 401, { error: "unauthorized" });
         else if (error instanceof StoreCategoryReadError) {
-          if (error.code !== "invalid_locale") logger.warn("merchant.store_categories.read.failed", { reason: error.code,
-            errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            errorStack: error instanceof Error ? error.stack : undefined,
-            errorCause: error instanceof Error ? error.cause : undefined,
+          if (error.code !== "invalid_locale")
+            logger.warn("merchant.store_categories.read.failed", {
+              reason: error.code,
+              errorName: error instanceof Error ? error.name : typeof error,
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
+              errorStack: error instanceof Error ? error.stack : undefined,
+              errorCause: error instanceof Error ? error.cause : undefined,
+            });
+          sendJson(response, error.code === "invalid_locale" ? 400 : 409, {
+            error: error.code,
           });
-          sendJson(response, error.code === "invalid_locale" ? 400 : 409, { error: error.code });
         } else {
-          logger.error("merchant.store_categories.read.failed", { reason: "internal",
+          logger.error("merchant.store_categories.read.failed", {
+            reason: "internal",
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
@@ -64,7 +87,11 @@ function hasBody(request: IncomingMessage): boolean {
     const name = request.rawHeaders[index]?.toLowerCase();
     const value = request.rawHeaders[index + 1];
     if (name === "transfer-encoding") return true;
-    if (name === "content-length" && (value === undefined || !/^0+$/.test(value))) return true;
+    if (
+      name === "content-length" &&
+      (value === undefined || !/^0+$/.test(value))
+    )
+      return true;
   }
   return false;
 }

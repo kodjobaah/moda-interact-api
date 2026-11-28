@@ -28,11 +28,14 @@ export async function requireCurrentWooMutationPrincipal(
   `);
   if (lockedShop.length !== 1) throw new WooMutationPrincipalConflictError();
 
-  const lockedInstallation = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+  const lockedInstallation = await tx.$queryRaw<
+    Array<{ id: string }>
+  >(Prisma.sql`
     SELECT "id" FROM "woocommerce"."WooCommerceInstallation"
     WHERE "id" = ${principal.installationId} FOR SHARE
   `);
-  if (lockedInstallation.length !== 1) throw new WooMutationPrincipalConflictError();
+  if (lockedInstallation.length !== 1)
+    throw new WooMutationPrincipalConflictError();
 
   const [shop, installation] = await Promise.all([
     tx.shop.findUnique({
@@ -60,11 +63,18 @@ export async function requireCurrentWooMutationPrincipal(
   ]);
 
   if (
-    !shop || shop.id !== principal.shopId || shop.domain !== principal.canonicalSiteUrl ||
-    shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null || shop.status !== "ACTIVE" ||
-    !installation || installation.id !== principal.installationId || installation.shopId !== principal.shopId ||
+    !shop ||
+    shop.id !== principal.shopId ||
+    shop.domain !== principal.canonicalSiteUrl ||
+    shop.platform !== "WOOCOMMERCE" ||
+    shop.shopifyShopId !== null ||
+    shop.status !== "ACTIVE" ||
+    !installation ||
+    installation.id !== principal.installationId ||
+    installation.shopId !== principal.shopId ||
     installation.canonicalSiteUrl !== principal.canonicalSiteUrl ||
-    installation.credentialVersion !== principal.credentialVersion || installation.status !== "ACTIVE" ||
+    installation.credentialVersion !== principal.credentialVersion ||
+    installation.status !== "ACTIVE" ||
     installation.revokedAt !== null
   ) {
     throw new WooMutationPrincipalConflictError();

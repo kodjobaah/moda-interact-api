@@ -1,41 +1,79 @@
 import type { Prisma, BillingPeriodStatus } from "@prisma/client";
-import { UsageHistoryRequestError, type UsageView, type UsageHistoryResponse } from "./contract.js";
+import {
+  UsageHistoryRequestError,
+  type UsageView,
+  type UsageHistoryResponse,
+} from "./contract.js";
 import { decodePeriodCursor, encodePeriodCursor } from "./cursor.js";
 
 export const periodSelect = {
-  id: true, shopId: true, subscriptionId: true, planKindSnapshot: true,
-  periodStart: true, periodEnd: true, status: true,
+  id: true,
+  shopId: true,
+  subscriptionId: true,
+  planKindSnapshot: true,
+  periodStart: true,
+  periodEnd: true,
+  status: true,
 } as const satisfies Prisma.BillingPeriodSelect;
-export type PeriodRow = Prisma.BillingPeriodGetPayload<{ select: typeof periodSelect }>;
+export type PeriodRow = Prisma.BillingPeriodGetPayload<{
+  select: typeof periodSelect;
+}>;
 
-function periodSeek(start: Date, id: string, newer: boolean): Prisma.BillingPeriodWhereInput {
-  return { OR: [
-    { periodStart: newer ? { gt: start } : { lt: start } },
-    { periodStart: start, id: newer ? { gt: id } : { lt: id } },
-  ] };
+function periodSeek(
+  start: Date,
+  id: string,
+  newer: boolean,
+): Prisma.BillingPeriodWhereInput {
+  return {
+    OR: [
+      { periodStart: newer ? { gt: start } : { lt: start } },
+      { periodStart: start, id: newer ? { gt: id } : { lt: id } },
+    ],
+  };
 }
 
 /** A single page with a signed, Shop-and-view-bound keyset anchor. */
 export async function readPeriodPage(
   tx: Prisma.TransactionClient,
-  input: { shopId: string; view: UsageView; cursor: string | null; key: Uint8Array; currentPeriod: PeriodRow | null },
+  input: {
+    shopId: string;
+    view: UsageView;
+    cursor: string | null;
+    key: Uint8Array;
+    currentPeriod: PeriodRow | null;
+  },
 ): Promise<UsageHistoryResponse["periodPage"]> {
   return (await readPeriodPageSnapshot(tx, input)).page;
 }
 
 export async function readPeriodPageSnapshot(
   tx: Prisma.TransactionClient,
-  input: { shopId: string; view: UsageView; cursor: string | null; key: Uint8Array; currentPeriod: PeriodRow | null },
+  input: {
+    shopId: string;
+    view: UsageView;
+    cursor: string | null;
+    key: Uint8Array;
+    currentPeriod: PeriodRow | null;
+  },
 ): Promise<{ page: UsageHistoryResponse["periodPage"]; rows: PeriodRow[] }> {
   const { shopId, view, cursor, key, currentPeriod } = input;
   if (view === "all") {
     if (cursor !== null) throw new UsageHistoryRequestError("invalid_cursor");
-    return { page: { items: [], previousCursor: null, nextCursor: null }, rows: [] };
+    return {
+      page: { items: [], previousCursor: null, nextCursor: null },
+      rows: [],
+    };
   }
   if (view === "current") {
     if (cursor !== null) throw new UsageHistoryRequestError("invalid_cursor");
-    return { page: { items: currentPeriod ? [projectPeriod(currentPeriod)] : [], previousCursor: null, nextCursor: null },
-      rows: currentPeriod ? [currentPeriod] : [] };
+    return {
+      page: {
+        items: currentPeriod ? [projectPeriod(currentPeriod)] : [],
+        previousCursor: null,
+        nextCursor: null,
+      },
+      rows: currentPeriod ? [currentPeriod] : [],
+    };
   }
   const boundary = decodePeriodCursor(cursor, shopId, view, key);
   const status: BillingPeriodStatus = "CLOSED";
@@ -50,9 +88,16 @@ export async function readPeriodPageSnapshot(
   }
   const newer = boundary?.direction === "previous";
   const rows = await tx.billingPeriod.findMany({
-    where: { shopId, status, ...(boundary ? periodSeek(boundary.start, boundary.id, newer) : {}) },
+    where: {
+      shopId,
+      status,
+      ...(boundary ? periodSeek(boundary.start, boundary.id, newer) : {}),
+    },
     select: periodSelect,
-    orderBy: [{ periodStart: newer ? "asc" : "desc" }, { id: newer ? "asc" : "desc" }],
+    orderBy: [
+      { periodStart: newer ? "asc" : "desc" },
+      { id: newer ? "asc" : "desc" },
+    ],
     take: 26,
   });
   const hasMore = rows.length > 25;
@@ -64,14 +109,32 @@ export async function readPeriodPageSnapshot(
     rows: visible,
     page: {
       items: visible.map(projectPeriod),
-      previousCursor: first && (newer ? hasMore : boundary !== null)
-        ? encodePeriodCursor(shopId, view, { direction: "previous", start: first.periodStart, id: first.id }, key) : null,
-      nextCursor: last && (newer ? boundary !== null : hasMore)
-        ? encodePeriodCursor(shopId, view, { direction: "next", start: last.periodStart, id: last.id }, key) : null,
+      previousCursor:
+        first && (newer ? hasMore : boundary !== null)
+          ? encodePeriodCursor(
+              shopId,
+              view,
+              { direction: "previous", start: first.periodStart, id: first.id },
+              key,
+            )
+          : null,
+      nextCursor:
+        last && (newer ? boundary !== null : hasMore)
+          ? encodePeriodCursor(
+              shopId,
+              view,
+              { direction: "next", start: last.periodStart, id: last.id },
+              key,
+            )
+          : null,
     },
   };
 }
 
 function projectPeriod(row: PeriodRow) {
-  return { id: row.id, periodStart: row.periodStart.toISOString(), periodEnd: row.periodEnd.toISOString() };
+  return {
+    id: row.id,
+    periodStart: row.periodStart.toISOString(),
+    periodEnd: row.periodEnd.toISOString(),
+  };
 }

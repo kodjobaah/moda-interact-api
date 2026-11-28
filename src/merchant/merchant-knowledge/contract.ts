@@ -1,12 +1,19 @@
 import type {
-  MerchantKnowledgeDataFormatKey, MerchantKnowledgePurposeKey,
+  MerchantKnowledgeDataFormatKey,
+  MerchantKnowledgePurposeKey,
 } from "@modainteract/moda-interact-shared/merchant-knowledge";
 
 export const MERCHANT_KNOWLEDGE_PATH = "/v1/merchant/merchant-knowledge";
 export const MERCHANT_KNOWLEDGE_PAGE_SIZE = 100;
 
 export class MerchantKnowledgeReadError extends Error {
-  constructor(readonly status: 400 | 409 | 503, readonly code: "invalid_request" | "merchant_knowledge_integrity_invalid" | "merchant_knowledge_unavailable") {
+  constructor(
+    readonly status: 400 | 409 | 503,
+    readonly code:
+      | "invalid_request"
+      | "merchant_knowledge_integrity_invalid"
+      | "merchant_knowledge_unavailable",
+  ) {
     super(code);
   }
 }
@@ -25,7 +32,13 @@ export interface MerchantKnowledgeCatalogueEntry {
 export interface MerchantKnowledgeRevisionProjection {
   id: string;
   generation: number;
-  reason: "CREATE" | "URL_CHANGE" | "FILE_REPLACE" | "REFRESH" | "REPROCESS" | "ENTITLEMENT_CHANGE";
+  reason:
+    | "CREATE"
+    | "URL_CHANGE"
+    | "FILE_REPLACE"
+    | "REFRESH"
+    | "REPROCESS"
+    | "ENTITLEMENT_CHANGE";
   status: "PENDING" | "PROCESSING" | "ACTIVE" | "FAILED" | "SUPERSEDED";
   requestedUrl: string | null;
   resolvedUrl: string | null;
@@ -52,9 +65,20 @@ export interface MerchantKnowledgeSourceProjection {
   currentGeneration: number;
   currentlyPlanEntitled: boolean;
   processingEligible: boolean;
-  dormantReason: "NO_CURRENT_PLAN" | "SOURCE_TYPE" | "SOURCE_COUNT" | "MERCHANT_DISABLED" | null;
+  dormantReason:
+    | "NO_CURRENT_PLAN"
+    | "SOURCE_TYPE"
+    | "SOURCE_COUNT"
+    | "MERCHANT_DISABLED"
+    | null;
   revision: MerchantKnowledgeRevisionProjection | null;
-  activeRevision: { id: string; generation: number; contentUnits: number | null; truncated: boolean; fetchedAt: string | null } | null;
+  activeRevision: {
+    id: string;
+    generation: number;
+    contentUnits: number | null;
+    truncated: boolean;
+    fetchedAt: string | null;
+  } | null;
 }
 
 export interface MerchantKnowledgeReadResponse {

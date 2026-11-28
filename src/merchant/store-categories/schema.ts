@@ -7,8 +7,17 @@ export interface CategoryIdentity {
 }
 
 export interface StoreCategoryChoice extends CategoryIdentity {
-  mappings: Array<{ id: string; conditionKey: string; localizedDisplayName: string }>;
-  defaultTemplate: { id: string; key: string; displayName: string; editVersion: number };
+  mappings: Array<{
+    id: string;
+    conditionKey: string;
+    localizedDisplayName: string;
+  }>;
+  defaultTemplate: {
+    id: string;
+    key: string;
+    displayName: string;
+    editVersion: number;
+  };
 }
 
 export interface StoreCategoryProfile {

@@ -22,7 +22,11 @@ export function canonicalizeWooSiteUrl(
   input: string,
   mode: WooConnectionMode,
 ): CanonicalWooSite {
-  if (Buffer.byteLength(input, "utf8") > 512 || input.includes("?") || input.includes("#")) {
+  if (
+    Buffer.byteLength(input, "utf8") > 512 ||
+    input.includes("?") ||
+    input.includes("#")
+  ) {
     throw new InvalidWooSiteUrlError();
   }
 
@@ -34,9 +38,11 @@ export function canonicalizeWooSiteUrl(
   }
 
   const parsedHostname = url.hostname.toLowerCase();
-  const hostname = (parsedHostname.startsWith("[") && parsedHostname.endsWith("]")
-    ? parsedHostname.slice(1, -1)
-    : parsedHostname).replace(/\.$/, "");
+  const hostname = (
+    parsedHostname.startsWith("[") && parsedHostname.endsWith("]")
+      ? parsedHostname.slice(1, -1)
+      : parsedHostname
+  ).replace(/\.$/, "");
   const ipVersion = isIP(hostname);
   if (
     !hostname ||
@@ -44,9 +50,14 @@ export function canonicalizeWooSiteUrl(
     url.password ||
     url.search ||
     url.hash ||
-    (url.protocol !== "https:" && !(mode === "local-development" && url.protocol === "http:")) ||
-    (url.protocol === "https:" && url.port !== "" && mode !== "local-development") ||
-    (url.protocol === "http:" && url.port !== "" && mode !== "local-development")
+    (url.protocol !== "https:" &&
+      !(mode === "local-development" && url.protocol === "http:")) ||
+    (url.protocol === "https:" &&
+      url.port !== "" &&
+      mode !== "local-development") ||
+    (url.protocol === "http:" &&
+      url.port !== "" &&
+      mode !== "local-development")
   ) {
     throw new InvalidWooSiteUrlError();
   }
@@ -76,12 +87,19 @@ export function canonicalizeWooSiteUrl(
 }
 
 function isDnsHostname(hostname: string): boolean {
-  if (hostname.length > 253 || hostname.startsWith(".") || hostname.endsWith(".")) {
+  if (
+    hostname.length > 253 ||
+    hostname.startsWith(".") ||
+    hostname.endsWith(".")
+  ) {
     return false;
   }
-  return hostname.split(".").every((label) =>
-    label.length > 0 &&
-    label.length <= 63 &&
-    /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label),
-  );
+  return hostname
+    .split(".")
+    .every(
+      (label) =>
+        label.length > 0 &&
+        label.length <= 63 &&
+        /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/i.test(label),
+    );
 }

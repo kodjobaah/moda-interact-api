@@ -17,18 +17,21 @@ paths:
         - name: recoveryId
           in: path
           required: true
-          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
       responses:
-        '200':
+        "200":
           description: Same-shop recovery history; private, no-store. Maximum 100 physical attempts across both slots.
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/OutreachProjection' }
-        '400': { description: Invalid path, body or query }
-        '401': { description: Invalid installation authentication }
-        '404': { description: Missing or foreign recovery }
-        '409': { description: Invalid ownership evidence or history exceeds the bound }
-        '500': { description: Internal read failure }
+              schema: { $ref: "#/components/schemas/OutreachProjection" }
+        "400": { description: Invalid path, body or query }
+        "401": { description: Invalid installation authentication }
+        "404": { description: Missing or foreign recovery }
+        "409":
+          {
+            description: Invalid ownership evidence or history exceeds the bound,
+          }
+        "500": { description: Internal read failure }
 components:
   securitySchemes:
     installationBearer: { type: http, scheme: bearer }
@@ -40,9 +43,9 @@ components:
       required: [schemaVersion, recoveryId, initial, followUp]
       properties:
         schemaVersion: { type: integer, const: 1 }
-        recoveryId: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
-        initial: { $ref: '#/components/schemas/Slot' }
-        followUp: { $ref: '#/components/schemas/Slot' }
+        recoveryId: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
+        initial: { $ref: "#/components/schemas/Slot" }
+        followUp: { $ref: "#/components/schemas/Slot" }
     Slot:
       type: object
       additionalProperties: false
@@ -51,33 +54,85 @@ components:
         state: { type: string, enum: [MISSING, CURRENT, CONFLICT] }
         currentSequence:
           description: Physical sequence of the current valid lineage, null for missing or conflicting lineage.
-          type: [integer, 'null']
+          type: [integer, "null"]
           minimum: 1
           maximum: 2147483647
         history:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/Attempt' }
+          items: { $ref: "#/components/schemas/Attempt" }
     Attempt:
       type: object
       additionalProperties: false
-      required: [sequence, retry, initiatedBy, attemptStatus, deliveryState, sentAt, deliveredAt, readAt, failedAt, retryDecision, retryNotBeforeAt]
+      required:
+        [
+          sequence,
+          retry,
+          initiatedBy,
+          attemptStatus,
+          deliveryState,
+          sentAt,
+          deliveredAt,
+          readAt,
+          failedAt,
+          retryDecision,
+          retryNotBeforeAt,
+        ]
       properties:
         sequence: { type: integer, minimum: 1, maximum: 2147483647 }
-        retry: { type: boolean, description: Physical retry, never another logical outreach entitlement. }
-        initiatedBy: { type: [string, 'null'], enum: [HUMAN, AGENT, AUTOMATION, null] }
-        attemptStatus: { type: string, enum: [PENDING, WAITING_FOR_RESPONSE, ENGAGED, NO_RESPONSE, CAPACITY_BLOCKED, CANCELLED, FAILED] }
+        retry:
+          {
+            type: boolean,
+            description: Physical retry,
+            never another logical outreach entitlement.,
+          }
+        initiatedBy:
+          { type: [string, "null"], enum: [HUMAN, AGENT, AUTOMATION, null] }
+        attemptStatus:
+          {
+            type: string,
+            enum:
+              [
+                PENDING,
+                WAITING_FOR_RESPONSE,
+                ENGAGED,
+                NO_RESPONSE,
+                CAPACITY_BLOCKED,
+                CANCELLED,
+                FAILED,
+              ],
+          }
         deliveryState:
           type: string
-          enum: [NO_RECORDED_SUBMISSION, UNCONFIRMED, PROVIDER_ACCEPTED, DELIVERED, READ, FAILED]
-        sentAt: { type: [string, 'null'], format: date-time }
-        deliveredAt: { type: [string, 'null'], format: date-time }
-        readAt: { type: [string, 'null'], format: date-time }
-        failedAt: { type: [string, 'null'], format: date-time }
+          enum:
+            [
+              NO_RECORDED_SUBMISSION,
+              UNCONFIRMED,
+              PROVIDER_ACCEPTED,
+              DELIVERED,
+              READ,
+              FAILED,
+            ]
+        sentAt: { type: [string, "null"], format: date-time }
+        deliveredAt: { type: [string, "null"], format: date-time }
+        readAt: { type: [string, "null"], format: date-time }
+        failedAt: { type: [string, "null"], format: date-time }
         retryDecision:
           type: string
-          enum: [NONE, SUCCESSOR_CREATED, CANCELLED, STALE, UNKNOWN, AFTER_COOLDOWN, PROVIDER_POLICY_HOLD, REPAIR_REQUIRED, REVIEW_REQUIRED, DO_NOT_RETRY]
+          enum:
+            [
+              NONE,
+              SUCCESSOR_CREATED,
+              CANCELLED,
+              STALE,
+              UNKNOWN,
+              AFTER_COOLDOWN,
+              PROVIDER_POLICY_HOLD,
+              REPAIR_REQUIRED,
+              REVIEW_REQUIRED,
+              DO_NOT_RETRY,
+            ]
         retryNotBeforeAt:
           description: Recorded lower time bound, not guaranteed scheduling or send eligibility.
-          type: [string, 'null']
+          type: [string, "null"]
           format: date-time

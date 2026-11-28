@@ -34,16 +34,28 @@ function sendJson(
   response.end(JSON.stringify(body));
 }
 
-function readinessDiagnostic(error: unknown, depth = 0): Record<string, unknown> {
-  const redact = (value: string) => value.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]");
+function readinessDiagnostic(
+  error: unknown,
+  depth = 0,
+): Record<string, unknown> {
+  const redact = (value: string) =>
+    value.replace(/\b[a-z][a-z0-9+.-]*:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]");
   if (!(error instanceof Error)) {
-    return { errorMessage: typeof error === "string" ? redact(error) : undefined };
+    return {
+      errorMessage: typeof error === "string" ? redact(error) : undefined,
+    };
   }
   return {
     errorName: redact(error.name),
     errorMessage: redact(error.message),
-    errorCode: "code" in error && typeof error.code === "string" ? redact(error.code) : undefined,
-    errorCause: error.cause !== undefined && depth < 2 ? readinessDiagnostic(error.cause, depth + 1) : undefined,
+    errorCode:
+      "code" in error && typeof error.code === "string"
+        ? redact(error.code)
+        : undefined,
+    errorCause:
+      error.cause !== undefined && depth < 2
+        ? readinessDiagnostic(error.cause, depth + 1)
+        : undefined,
   };
 }
 
@@ -52,7 +64,10 @@ function probeWithinDeadline(
   timeoutMs: number,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("readiness_timeout")), timeoutMs);
+    const timeout = setTimeout(
+      () => reject(new Error("readiness_timeout")),
+      timeoutMs,
+    );
     Promise.resolve()
       .then(probe)
       .then(resolve, reject)
@@ -163,17 +178,19 @@ export function createApiRuntime(
         // Capture the close error as the Promise result so TypeScript can track its type.
         const closeError = server.listening
           ? await new Promise<Error | undefined>((resolve) => {
-            server.close((error) => resolve(error));
-          })
+              server.close((error) => resolve(error));
+            })
           : undefined;
 
         let resourceError = false;
         if (closeAdditionalResources) {
-          try { await closeAdditionalResources(); }
-          catch (error) {
+          try {
+            await closeAdditionalResources();
+          } catch (error) {
             logger.error("api.shutdown.additional_resource_failed", {
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -185,13 +202,15 @@ export function createApiRuntime(
         } catch (error) {
           logger.error("api.shutdown.database_disconnect_failed", {
             errorName: error instanceof Error ? error.name : typeof error,
-            errorMessage: error instanceof Error ? error.message : String(error),
+            errorMessage:
+              error instanceof Error ? error.message : String(error),
             errorStack: error instanceof Error ? error.stack : undefined,
             errorCause: error instanceof Error ? error.cause : undefined,
           });
           throw new Error("database disconnect failed", { cause: error });
         }
-        if (resourceError) throw new Error("additional resource disconnect failed");
+        if (resourceError)
+          throw new Error("additional resource disconnect failed");
 
         if (closeError) {
           logger.error("api.shutdown.server_close_failed", {

@@ -6,21 +6,37 @@ import type { ApiRouteHandler } from "../../http/route-handler.js";
 import { readBoundedBody, decodeStrictJsonBody } from "../../http/body.js";
 import { singleHeader } from "../../http/headers.js";
 import { sendNoStoreJson as sendJson } from "../../http/response.js";
-import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
-import { WooConnectionConflictError, WooInstallationConnectionService, WooSiteControlRejectedError } from "./connection-service.js";
+import {
+  WooInstallationAuthenticator,
+  WooUnauthenticatedError,
+} from "../../auth/woo-installation/authenticator.js";
+import {
+  WooConnectionConflictError,
+  WooInstallationConnectionService,
+  WooSiteControlRejectedError,
+} from "./connection-service.js";
 import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
 } from "../billing/initial-free-activation.service.js";
 import { decodeSecret } from "../../auth/woo-installation/credential.js";
-import { canonicalizeWooSiteUrl, InvalidWooSiteUrlError, type WooConnectionMode } from "./site-url.js";
+import {
+  canonicalizeWooSiteUrl,
+  InvalidWooSiteUrlError,
+  type WooConnectionMode,
+} from "./site-url.js";
 
 export const CONNECT_ROUTE_PATH = "/v1/woocommerce/installations/connect";
 export const AUTH_PROBE_ROUTE_PATH = "/v1/woocommerce/installation";
 export const MAX_CONNECT_BODY_BYTES = 8192;
 export const MAX_SITE_URL_BYTES = 512;
-export const CONNECT_REQUEST_FIELDS = ["siteUrl", "attemptId", "bootstrapSecret"] as const;
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const CONNECT_REQUEST_FIELDS = [
+  "siteUrl",
+  "attemptId",
+  "bootstrapSecret",
+] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type WooInstallationRouteHandler = ApiRouteHandler;
 
@@ -44,7 +60,10 @@ export function createWooInstallationRoutes({
   return {
     async handle(request, response) {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
-      if (requestUrl.pathname === CONNECT_ROUTE_PATH && request.method === "POST") {
+      if (
+        requestUrl.pathname === CONNECT_ROUTE_PATH &&
+        request.method === "POST"
+      ) {
         const startedAt = now();
         try {
           if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
@@ -59,16 +78,27 @@ export function createWooInstallationRoutes({
           // post-commit provisioning failure into a failed credential response.
           if (recoveryTemplates) {
             try {
-              await recoveryTemplates.provision({
-                installationId: result.installationId, shopId: result.shopId,
-                canonicalSiteUrl: result.canonicalSiteUrl, credentialVersion: result.credentialVersion,
-              }, Math.min(8_000, Math.max(0, 25_000 - (now() - startedAt))));
+              await recoveryTemplates.provision(
+                {
+                  installationId: result.installationId,
+                  shopId: result.shopId,
+                  canonicalSiteUrl: result.canonicalSiteUrl,
+                  credentialVersion: result.credentialVersion,
+                },
+                Math.min(8_000, Math.max(0, 25_000 - (now() - startedAt))),
+              );
             } catch (error) {
-              logger.error("woocommerce.onboarding.template_assignment.failed", {
-                shopId: result.shopId, reasonCode: "PROVISIONING_FAILED", error,
-                errorName: error instanceof Error ? error.name : typeof error,
-                errorMessage: error instanceof Error ? error.message : String(error),
-              });
+              logger.error(
+                "woocommerce.onboarding.template_assignment.failed",
+                {
+                  shopId: result.shopId,
+                  reasonCode: "PROVISIONING_FAILED",
+                  error,
+                  errorName: error instanceof Error ? error.name : typeof error,
+                  errorMessage:
+                    error instanceof Error ? error.message : String(error),
+                },
+              );
             }
           }
           logger.info("woocommerce.installation.connect", {
@@ -77,7 +107,11 @@ export function createWooInstallationRoutes({
             outcome: result.connection,
             durationMs: Math.max(0, now() - startedAt),
           });
-          sendJson(response, result.connection === "CREATED" ? 201 : 200, result);
+          sendJson(
+            response,
+            result.connection === "CREATED" ? 201 : 200,
+            result,
+          );
         } catch (error) {
           if (error instanceof HttpFailure) {
             sendError(response, error.statusCode, error.code);
@@ -92,7 +126,8 @@ export function createWooInstallationRoutes({
               configurationReason: error.reason,
               durationMs: Math.max(0, now() - startedAt),
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -105,9 +140,12 @@ export function createWooInstallationRoutes({
             logger.error("woocommerce.installation.connect.failed", {
               reason: "internal",
               errorName: error instanceof Error ? error.name : "unknown",
-              ...(error instanceof Prisma.PrismaClientKnownRequestError ? { prismaCode: error.code } : {}),
+              ...(error instanceof Prisma.PrismaClientKnownRequestError
+                ? { prismaCode: error.code }
+                : {}),
               durationMs: Math.max(0, now() - startedAt),
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -117,7 +155,10 @@ export function createWooInstallationRoutes({
         return true;
       }
 
-      if (requestUrl.pathname === AUTH_PROBE_ROUTE_PATH && request.method === "GET") {
+      if (
+        requestUrl.pathname === AUTH_PROBE_ROUTE_PATH &&
+        request.method === "GET"
+      ) {
         try {
           const principal = await authenticator.authenticate(request);
           sendJson(response, 200, principal);
@@ -125,9 +166,11 @@ export function createWooInstallationRoutes({
           if (error instanceof WooUnauthenticatedError) {
             sendError(response, 401, "unauthorized");
           } else {
-            logger.error("woocommerce.installation.authentication.failed", { reason: "internal",
+            logger.error("woocommerce.installation.authentication.failed", {
+              reason: "internal",
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -150,21 +193,32 @@ async function parseConnectRequest(
   const contentLength = singleHeader(request, "content-length");
   if (
     contentType.count !== 1 ||
-    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(contentType.value ?? "") ||
+    !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(
+      contentType.value ?? "",
+    ) ||
     contentEncoding.count > 1 ||
-    (contentEncoding.count === 1 && contentEncoding.value?.toLowerCase() !== "identity") ||
+    (contentEncoding.count === 1 &&
+      contentEncoding.value?.toLowerCase() !== "identity") ||
     contentLength.count > 1 ||
     (contentLength.count === 1 && !/^\d+$/.test(contentLength.value ?? ""))
   ) {
     throw new HttpFailure(400, "invalid_request");
   }
-  if (contentLength.value && Number(contentLength.value) > MAX_CONNECT_BODY_BYTES) {
+  if (
+    contentLength.value &&
+    Number(contentLength.value) > MAX_CONNECT_BODY_BYTES
+  ) {
     throw new HttpFailure(413, "request_too_large");
   }
 
-  const bytes = await readBoundedBody(request, MAX_CONNECT_BODY_BYTES, (reason) => reason === "oversized"
-    ? new HttpFailure(413, "request_too_large")
-    : new HttpFailure(400, "invalid_request"));
+  const bytes = await readBoundedBody(
+    request,
+    MAX_CONNECT_BODY_BYTES,
+    (reason) =>
+      reason === "oversized"
+        ? new HttpFailure(413, "request_too_large")
+        : new HttpFailure(400, "invalid_request"),
+  );
   let value: unknown;
   try {
     value = decodeStrictJsonBody(bytes);
@@ -178,7 +232,9 @@ async function parseConnectRequest(
   const body = value as Record<string, unknown>;
   if (
     Object.keys(body).length !== CONNECT_REQUEST_FIELDS.length ||
-    !Object.keys(body).every((key) => (CONNECT_REQUEST_FIELDS as readonly string[]).includes(key)) ||
+    !Object.keys(body).every((key) =>
+      (CONNECT_REQUEST_FIELDS as readonly string[]).includes(key),
+    ) ||
     typeof body.siteUrl !== "string" ||
     Buffer.byteLength(body.siteUrl, "utf8") > MAX_SITE_URL_BYTES ||
     typeof body.attemptId !== "string" ||
@@ -193,12 +249,19 @@ async function parseConnectRequest(
 }
 
 class HttpFailure extends Error {
-  constructor(readonly statusCode: number, readonly code: string) {
+  constructor(
+    readonly statusCode: number,
+    readonly code: string,
+  ) {
     super(code);
     this.name = "HttpFailure";
   }
 }
 
-function sendError(response: ServerResponse, statusCode: number, code: string): void {
+function sendError(
+  response: ServerResponse,
+  statusCode: number,
+  code: string,
+): void {
   sendJson(response, statusCode, { error: code });
 }

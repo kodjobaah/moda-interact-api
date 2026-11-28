@@ -114,7 +114,6 @@ Focused verification: `npm run test:arch035-woo-activity:unit`,
 `npm run test:arch035-woo-activity:redis` (disposable Docker Redis), `npm run
 typecheck`, `npm run lint`, `npm run build`.
 
-
 ### Deployment encryption keys
 
 All platform settings and provider credentials use the same deployment key map, `MODA_ENCRYPTION_KEYS_JSON`, and writer selector, `MODA_ENCRYPTION_ACTIVE_KEY_ID`. Before rollout, merge existing wrapping and commerce maps without changing key IDs or key material; stop if one ID refers to different keys. Keep historical keys until no stored records reference them. Stored ciphertext, authenticated data, and key IDs do not change during this naming migration. Configure each environment separately.

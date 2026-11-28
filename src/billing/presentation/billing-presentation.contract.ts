@@ -1,5 +1,6 @@
 // Stable v1 response and error identity shared by the reader, projector and routes.
-export type ExperienceState = "ACTIVE" | "NO_CONTRACT" | "FROZEN" | "BILLING_ATTENTION";
+export type ExperienceState =
+  "ACTIVE" | "NO_CONTRACT" | "FROZEN" | "BILLING_ATTENTION";
 
 export interface CapacityBalance {
   granted: number;
@@ -31,7 +32,12 @@ export interface PurchasePresentation {
   reservedAmount: number;
   createdAt: string;
   activatedAt: string | null;
-  operationState: "INITIATING" | "AWAITING_CONFIRMATION" | "OUTCOME_UNKNOWN" | "CONFIRMED" | "FAILED";
+  operationState:
+    | "INITIATING"
+    | "AWAITING_CONFIRMATION"
+    | "OUTCOME_UNKNOWN"
+    | "CONFIRMED"
+    | "FAILED";
 }
 
 export interface BillingPresentationResponse {
@@ -63,7 +69,8 @@ export interface BillingPresentationResponse {
     state: "INITIATING" | "AWAITING_CONFIRMATION" | "OUTCOME_UNKNOWN";
   };
   pendingCancellation: null | {
-    state: "INITIATING" | "AWAITING_CONFIRMATION" | "OUTCOME_UNKNOWN" | "CONFIRMED";
+    state:
+      "INITIATING" | "AWAITING_CONFIRMATION" | "OUTCOME_UNKNOWN" | "CONFIRMED";
   };
   capacity: {
     paidIncluded: PaidIncludedBalance | null;
@@ -89,11 +96,12 @@ export interface BillingPresentationResponse {
 }
 
 export class BillingPresentationError extends Error {
-  constructor(readonly code:
-    | "billing_not_initialized"
-    | "billing_integrity_invalid"
-    | "billing_catalogue_mapping_invalid"
-    | "billing_operation_conflict"
+  constructor(
+    readonly code:
+      | "billing_not_initialized"
+      | "billing_integrity_invalid"
+      | "billing_catalogue_mapping_invalid"
+      | "billing_operation_conflict",
   ) {
     super(code);
     this.name = "BillingPresentationError";

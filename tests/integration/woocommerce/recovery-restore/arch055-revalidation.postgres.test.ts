@@ -5,24 +5,40 @@ import { PrismaClient } from "@prisma/client";
 import { WooRecoveryRestoreService } from "../../../../src/woocommerce/recovery-restore/service.js";
 
 const databaseUrl = process.env.ARCH053_WOO_RESTORE_TEST_DATABASE_URL;
-if (!databaseUrl) throw new Error("ARCH053_WOO_RESTORE_TEST_DATABASE_URL is required");
+if (!databaseUrl)
+  throw new Error("ARCH053_WOO_RESTORE_TEST_DATABASE_URL is required");
 
-const database = (url: string) => new PrismaClient({ datasources: { db: { url } } });
+const database = (url: string) =>
+  new PrismaClient({ datasources: { db: { url } } });
 const reader = database(databaseUrl);
 const mutator = database(databaseUrl);
 const shopId = `arch055_restore_shop_${randomUUID()}`;
 const installationId = `arch055_restore_installation_${randomUUID()}`;
 const canonicalSiteUrl = `https://arch055-${randomUUID()}.example/store`;
 const token = Buffer.alloc(32, 0x53).toString("base64url");
-const snapshot = { schemaVersion: "woo.cart-restore.v1", kind: "supported", appliedCouponCodes: [], lines: [{ productId: "101", quantity: 1 }] };
-const principal = { shopId, installationId, canonicalSiteUrl, credentialVersion: 1 };
+const snapshot = {
+  schemaVersion: "woo.cart-restore.v1",
+  kind: "supported",
+  appliedCouponCodes: [],
+  lines: [{ productId: "101", quantity: 1 }],
+};
+const principal = {
+  shopId,
+  installationId,
+  canonicalSiteUrl,
+  credentialVersion: 1,
+};
 const noOffer = { kind: "NONE", reason: "NO_CONFIRMED_OFFER" } as const;
 
 after(async () => {
   await Promise.all([reader.$disconnect(), mutator.$disconnect()]);
 });
 
-async function insertRecovery(id: string, checkoutToken: string, generation = 1): Promise<void> {
+async function insertRecovery(
+  id: string,
+  checkoutToken: string,
+  generation = 1,
+): Promise<void> {
   const lastExternalActivityAt = new Date(Date.now() - 60_000);
   await reader.$executeRaw`
     INSERT INTO "commerce"."CheckoutRecovery"
@@ -89,7 +105,10 @@ test("restore revalidates completion, generation, lifetime, and credential rotat
       mutate: async () => {
         const rotated = await mutator.wooCommerceInstallation.update({
           where: { id: installationId },
-          data: { credentialDigest: Buffer.alloc(32, 0x54), credentialVersion: { increment: 1 } },
+          data: {
+            credentialDigest: Buffer.alloc(32, 0x54),
+            credentialVersion: { increment: 1 },
+          },
         });
         assert.equal(rotated.credentialVersion, 2);
       },
@@ -103,15 +122,17 @@ test("restore revalidates completion, generation, lifetime, and credential rotat
       WHERE "id" = 'default'
     `;
     await insertRecovery(scenario.recoveryId, scenario.checkoutToken);
-    const [fixtureState] = await reader.$queryRaw<Array<{
-      recoveryStatus: string | null;
-      generation: number | null;
-      shopStatus: string | null;
-      platform: string | null;
-      installationStatus: string | null;
-      credentialVersion: number | null;
-      lifetimeDays: number | null;
-    }>>`
+    const [fixtureState] = await reader.$queryRaw<
+      Array<{
+        recoveryStatus: string | null;
+        generation: number | null;
+        shopStatus: string | null;
+        platform: string | null;
+        installationStatus: string | null;
+        credentialVersion: number | null;
+        lifetimeDays: number | null;
+      }>
+    >`
       SELECT cr."status"::text AS "recoveryStatus", cr."generation", s."status"::text AS "shopStatus",
         s."platform"::text AS "platform", i."status"::text AS "installationStatus",
         i."credentialVersion", config."checkoutRecoveryLifetimeDays" AS "lifetimeDays"
@@ -122,8 +143,13 @@ test("restore revalidates completion, generation, lifetime, and credential rotat
       WHERE cr."id" = ${scenario.recoveryId}
     `;
     assert.deepEqual(fixtureState, {
-      recoveryStatus: "DETECTED", generation: 1, shopStatus: "ACTIVE", platform: "WOOCOMMERCE",
-      installationStatus: "ACTIVE", credentialVersion: 1, lifetimeDays: 21,
+      recoveryStatus: "DETECTED",
+      generation: 1,
+      shopStatus: "ACTIVE",
+      platform: "WOOCOMMERCE",
+      installationStatus: "ACTIVE",
+      credentialVersion: 1,
+      lifetimeDays: 21,
     });
     let offerResolutionReached = false;
     const service = new WooRecoveryRestoreService(reader, {
@@ -134,9 +160,19 @@ test("restore revalidates completion, generation, lifetime, and credential rotat
       },
     });
     const result = await service.resolve(principal, {
-      schemaVersion: "woo.restore.resolve.v1", recoveryId: scenario.recoveryId, token,
+      schemaVersion: "woo.restore.resolve.v1",
+      recoveryId: scenario.recoveryId,
+      token,
     });
-    assert.equal(offerResolutionReached, true, `${scenario.name}: first eligibility read must succeed`);
-    assert.equal(result, null, `${scenario.name}: second eligibility read must reject stale evidence`);
+    assert.equal(
+      offerResolutionReached,
+      true,
+      `${scenario.name}: first eligibility read must succeed`,
+    );
+    assert.equal(
+      result,
+      null,
+      `${scenario.name}: second eligibility read must reject stale evidence`,
+    );
   }
 });

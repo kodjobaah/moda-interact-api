@@ -19,9 +19,9 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/WooConsentStatusProbe'
+              $ref: "#/components/schemas/WooConsentStatusProbe"
       responses:
-        '200':
+        "200":
           description: Proof confirmed or not verified; never discloses reasons or recipient metadata
           headers:
             Cache-Control:
@@ -31,14 +31,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/WooConsentStatusResult'
-        '400':
+                $ref: "#/components/schemas/WooConsentStatusResult"
+        "400":
           description: Invalid payload or query parameters
-        '401':
+        "401":
           description: Installation credentials unauthorized, revoked or rotated
-        '413':
+        "413":
           description: Request body exceeds 512 bytes
-        '503':
+        "503":
           description: Operational failure; details only in redacted shared server logs
 components:
   securitySchemes:
@@ -59,11 +59,11 @@ components:
           const: woo.whatsapp-consent-status.v1
         canonicalPhone:
           type: string
-          pattern: '^[1-9][0-9]{1,14}$'
+          pattern: "^[1-9][0-9]{1,14}$"
           maxLength: 15
         grantEventId:
           type: string
-          pattern: '^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$'
+          pattern: "^[A-Za-z0-9][A-Za-z0-9._:~-]{0,127}$"
           maxLength: 128
     WooConsentStatusResult:
       type: object

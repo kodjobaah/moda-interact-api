@@ -1,20 +1,43 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import type { WooInstallationPrincipal } from "../../../auth/woo-installation/principal.js";
-import { SendHttpError, type ModerationStatus, type SendStatusResponse } from "./contract.js";
-import { ownedRecoveryConversation, requireCurrentWooShop } from "./admission.service.js";
-import { publicModerationDecision, publicModerationReason } from "../moderation/read-projection.js";
+import {
+  SendHttpError,
+  type ModerationStatus,
+  type SendStatusResponse,
+} from "./contract.js";
+import {
+  ownedRecoveryConversation,
+  requireCurrentWooShop,
+} from "./admission.service.js";
+import {
+  publicModerationDecision,
+  publicModerationReason,
+} from "../moderation/read-projection.js";
 
 const moderation: Record<string, ModerationStatus> = {
-  PENDING: "moderation_pending", CHECKING: "moderation_pending",
-  ALLOW: "moderation_allowed", BLOCK: "moderation_blocked",
-  REVIEW_REQUIRED: "moderation_review_required", RETRYABLE_ERROR: "moderation_retryable_error",
+  PENDING: "moderation_pending",
+  CHECKING: "moderation_pending",
+  ALLOW: "moderation_allowed",
+  BLOCK: "moderation_blocked",
+  REVIEW_REQUIRED: "moderation_review_required",
+  RETRYABLE_ERROR: "moderation_retryable_error",
 };
 const safeReasons = new Set([
-  "human_messaging_suspended", "human_rate_limited", "human_repeated_spam",
-  "human_content_invalid", "human_screening_unavailable", "moderation_unavailable",
-  "moderation_content_stale", "human_content_moderation_blocked", "human_content_moderation_review_required",
-  "provider_rejected", "follow_up_unavailable", "customer_window_closed",
-  "human_inactive", "stale_control_revision", "recipient_unavailable",
+  "human_messaging_suspended",
+  "human_rate_limited",
+  "human_repeated_spam",
+  "human_content_invalid",
+  "human_screening_unavailable",
+  "moderation_unavailable",
+  "moderation_content_stale",
+  "human_content_moderation_blocked",
+  "human_content_moderation_review_required",
+  "provider_rejected",
+  "follow_up_unavailable",
+  "customer_window_closed",
+  "human_inactive",
+  "stale_control_revision",
+  "recipient_unavailable",
 ]);
 
 /** Status is a projection over the original command and matching D005 assessment.
@@ -22,20 +45,44 @@ const safeReasons = new Set([
  */
 export class MerchantConversationSendStatusService {
   constructor(private readonly database: Pick<PrismaClient, "$transaction">) {}
-  async read(principal: WooInstallationPrincipal, conversationId: string,
-    commandId: string): Promise<SendStatusResponse> {
-    return this.database.$transaction(async (tx) => {
-      await requireCurrentWooShop(tx, principal, false);
-      await ownedRecoveryConversation(tx, principal.shopId, conversationId, false);
-      const cmd = await tx.merchantConversationSendCommand.findFirst({ where: {
-        id: commandId, shopId: principal.shopId, conversationId,
-      }, select: { id: true, conversationId: true, shopId: true, kind: true, state: true,
-        createdAt: true, updatedAt: true, outboundMessageId: true, failureCode: true,
-      } });
-      if (!cmd) throw new SendHttpError(404,"not_found");
-      // SQL computes the digest from the *persisted* command. The template
-      // renderer is DATABASE-005's authoritative v1 contract.
-      const assessments = await tx.$queryRaw<Array<{ decision: string; reasonCode: string | null }>>(Prisma.sql`
+  async read(
+    principal: WooInstallationPrincipal,
+    conversationId: string,
+    commandId: string,
+  ): Promise<SendStatusResponse> {
+    return this.database.$transaction(
+      async (tx) => {
+        await requireCurrentWooShop(tx, principal, false);
+        await ownedRecoveryConversation(
+          tx,
+          principal.shopId,
+          conversationId,
+          false,
+        );
+        const cmd = await tx.merchantConversationSendCommand.findFirst({
+          where: {
+            id: commandId,
+            shopId: principal.shopId,
+            conversationId,
+          },
+          select: {
+            id: true,
+            conversationId: true,
+            shopId: true,
+            kind: true,
+            state: true,
+            createdAt: true,
+            updatedAt: true,
+            outboundMessageId: true,
+            failureCode: true,
+          },
+        });
+        if (!cmd) throw new SendHttpError(404, "not_found");
+        // SQL computes the digest from the *persisted* command. The template
+        // renderer is DATABASE-005's authoritative v1 contract.
+        const assessments = await tx.$queryRaw<
+          Array<{ decision: string; reasonCode: string | null }>
+        >(Prisma.sql`
         SELECT "decision"::text AS "decision", "reasonCode"
         FROM "whatsapp"."ConversationModerationAssessment"
         WHERE "merchantSendCommandId"=${cmd.id} AND "shopId"=${principal.shopId}
@@ -51,20 +98,37 @@ export class MerchantConversationSendStatusService {
           )
         ORDER BY "createdAt" DESC, "id" DESC LIMIT 1
       `);
-      const lastDecision = assessments[0]?.decision ?? "PENDING";
-      const reasonCode = publicModerationReason(publicModerationDecision(lastDecision), assessments[0]?.reasonCode ?? null);
-      const moderationStatus = moderation[lastDecision];
-      if (!moderationStatus) throw new Error("Invalid persisted moderation state");
-      const safeFailure = cmd.failureCode && safeReasons.has(cmd.failureCode) ? cmd.failureCode : null;
-      const failureCode = moderationStatus === "moderation_blocked"
-        ? "HUMAN_CONTENT_MODERATION_BLOCKED"
-        : safeFailure;
-      return {
-        schemaVersion: 1, commandId: cmd.id, conversationId: cmd.conversationId,
-        kind: cmd.kind, state: cmd.state,
-        createdAt: cmd.createdAt.toISOString(), updatedAt: cmd.updatedAt.toISOString(),
-        messageId: cmd.outboundMessageId, failureCode, moderationStatus, moderationReasonCode: reasonCode,
-      };
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+        const lastDecision = assessments[0]?.decision ?? "PENDING";
+        const reasonCode = publicModerationReason(
+          publicModerationDecision(lastDecision),
+          assessments[0]?.reasonCode ?? null,
+        );
+        const moderationStatus = moderation[lastDecision];
+        if (!moderationStatus)
+          throw new Error("Invalid persisted moderation state");
+        const safeFailure =
+          cmd.failureCode && safeReasons.has(cmd.failureCode)
+            ? cmd.failureCode
+            : null;
+        const failureCode =
+          moderationStatus === "moderation_blocked"
+            ? "HUMAN_CONTENT_MODERATION_BLOCKED"
+            : safeFailure;
+        return {
+          schemaVersion: 1,
+          commandId: cmd.id,
+          conversationId: cmd.conversationId,
+          kind: cmd.kind,
+          state: cmd.state,
+          createdAt: cmd.createdAt.toISOString(),
+          updatedAt: cmd.updatedAt.toISOString(),
+          messageId: cmd.outboundMessageId,
+          failureCode,
+          moderationStatus,
+          moderationReasonCode: reasonCode,
+        };
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead },
+    );
   }
 }

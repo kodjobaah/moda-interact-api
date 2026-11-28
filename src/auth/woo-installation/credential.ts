@@ -13,7 +13,10 @@ export function encodeSecret(secret: Uint8Array): string {
 export function decodeSecret(encoded: string): Buffer | undefined {
   if (!/^[A-Za-z0-9_-]{43}$/.test(encoded)) return undefined;
   const decoded = Buffer.from(encoded, "base64url");
-  if (decoded.length !== CREDENTIAL_BYTES || decoded.toString("base64url") !== encoded) {
+  if (
+    decoded.length !== CREDENTIAL_BYTES ||
+    decoded.toString("base64url") !== encoded
+  ) {
     return undefined;
   }
   return decoded;
@@ -27,7 +30,9 @@ export function constantTimeDigestMatches(
   left: Uint8Array,
   right: Uint8Array,
 ): boolean {
-  return left.byteLength === CREDENTIAL_BYTES &&
+  return (
+    left.byteLength === CREDENTIAL_BYTES &&
     right.byteLength === CREDENTIAL_BYTES &&
-    timingSafeEqual(left, right);
+    timingSafeEqual(left, right)
+  );
 }

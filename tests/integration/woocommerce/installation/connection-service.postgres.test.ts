@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import test, { after, before } from "node:test";
-import { WooConnectionConflictError, WooInstallationConnectionService } from "../../../../src/woocommerce/installation/connection-service.js";
+import {
+  WooConnectionConflictError,
+  WooInstallationConnectionService,
+} from "../../../../src/woocommerce/installation/connection-service.js";
 import {
   FreePlanConfigurationUnavailableError,
   InitialFreeActivationConflictError,
@@ -17,21 +20,51 @@ const queryEvents: string[] = [];
 const freePlanHandle = `woo-free-${randomUUID()}`;
 let checkoutFeatureId: string | undefined;
 const catalogueLocales = [
-  "cs", "da", "de", "en", "es", "fi", "fr", "it", "ja", "ko", "nb", "nl", "pl",
-  "pt-BR", "pt-PT", "sv", "th", "tr", "zh-Hans", "zh-Hant",
+  "cs",
+  "da",
+  "de",
+  "en",
+  "es",
+  "fi",
+  "fr",
+  "it",
+  "ja",
+  "ko",
+  "nb",
+  "nl",
+  "pl",
+  "pt-BR",
+  "pt-PT",
+  "sv",
+  "th",
+  "tr",
+  "zh-Hans",
+  "zh-Hant",
 ] as const;
 
 function database(): PrismaClient {
-  if (!databaseUrl) throw new Error("WOO_INSTALLATION_TEST_DATABASE_URL is required");
+  if (!databaseUrl)
+    throw new Error("WOO_INSTALLATION_TEST_DATABASE_URL is required");
   if (!prisma) {
-    prisma = new PrismaClient({ datasources: { db: { url: databaseUrl } }, log: [{ emit: "event", level: "query" }] });
-    (prisma as unknown as { $on: (event: "query", callback: (event: { query: string }) => void) => void })
-      .$on("query", event => queryEvents.push(event.query));
+    prisma = new PrismaClient({
+      datasources: { db: { url: databaseUrl } },
+      log: [{ emit: "event", level: "query" }],
+    });
+    (
+      prisma as unknown as {
+        $on: (
+          event: "query",
+          callback: (event: { query: string }) => void,
+        ) => void;
+      }
+    ).$on("query", (event) => queryEvents.push(event.query));
   }
   return prisma;
 }
 
-function service(verify: () => Promise<void> = async () => {}): WooInstallationConnectionService {
+function service(
+  verify: () => Promise<void> = async () => {},
+): WooInstallationConnectionService {
   const verifier = new WooSiteVerifier({ mode: "public" });
   verifier.verify = verify;
   return new WooInstallationConnectionService(database(), verifier);
@@ -50,7 +83,12 @@ function uniqueSite(): string {
 }
 
 function statementsSince(offset: number): string[] {
-  return queryEvents.slice(offset).filter(query => !/^(BEGIN|COMMIT|ROLLBACK|SET TRANSACTION)\b/i.test(query.trim()));
+  return queryEvents
+    .slice(offset)
+    .filter(
+      (query) =>
+        !/^(BEGIN|COMMIT|ROLLBACK|SET TRANSACTION)\b/i.test(query.trim()),
+    );
 }
 
 async function removeSite(siteUrl: string): Promise<void> {
@@ -76,8 +114,10 @@ before(async () => {
   const feature = await database().feature.upsert({
     where: { key: "checkout_recovery" },
     create: {
-      key: "checkout_recovery", displayName: "Checkout recovery test feature",
-      activationMode: "ALWAYS_ENABLED", systemRequired: true,
+      key: "checkout_recovery",
+      displayName: "Checkout recovery test feature",
+      activationMode: "ALWAYS_ENABLED",
+      systemRequired: true,
     },
     update: {},
   });
@@ -99,7 +139,10 @@ before(async () => {
         create: { featureId: feature.id, configuration: {} },
       },
       translations: {
-        create: catalogueLocales.map((locale) => ({ locale, merchantDescription: "Integration fixture" })),
+        create: catalogueLocales.map((locale) => ({
+          locale,
+          merchantDescription: "Integration fixture",
+        })),
       },
     },
     update: { isActive: true, recurringAmountMinor: 0 },
@@ -109,7 +152,9 @@ before(async () => {
 
 async function twoPartyBarrier(): Promise<() => Promise<void>> {
   let release!: () => void;
-  const opened = new Promise<void>((resolve) => { release = resolve; });
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
   let arrivals = 0;
   return async () => {
     arrivals += 1;
@@ -118,587 +163,1058 @@ async function twoPartyBarrier(): Promise<() => Promise<void>> {
   };
 }
 
-test("PostgreSQL first connect atomically creates Shop, installation, ACTIVE Free Subscription, and lifetime counter", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  const input = makeInput(siteUrl);
-  try {
-    const result = await service().connect(input);
-    const [shop, installation, subscription, counter, billingPlan] = await Promise.all([
-      database().shop.findUniqueOrThrow({ where: { id: result.shopId }, include: { settings: true } }),
-      database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: result.installationId } }),
-      database().subscription.findUniqueOrThrow({ where: { shopId: result.shopId } }),
-      database().shopEntitlementCounter.findUniqueOrThrow({
-        where: { shopId_counter: { shopId: result.shopId, counter: "LIFETIME_FREE_RECOVERY_CREDITS" } },
-      }),
-      database().billingPlan.findUniqueOrThrow({ where: { shopifyPlanHandle: freePlanHandle } }),
-    ]);
-    assert.equal(result.connection, "CREATED");
-    assert.equal(result.credentialVersion, 1);
-    assert.equal(shop.platform, "WOOCOMMERCE");
-    assert.equal(shop.shopifyShopId, null);
-    assert.equal(shop.domain, siteUrl);
-    assert.equal(shop.status, "ACTIVE");
-    assert.equal(shop.onboardingCompleted, true);
-    assert.equal(shop.settings, null);
-    assert.equal(installation.shopId, shop.id);
-    assert.equal(subscription.status, "ACTIVE");
-    assert.equal(subscription.planId, billingPlan.id);
-    assert.equal(subscription.providerSubscriptionId, null);
-    assert.equal(subscription.providerCoverageEndAt, null);
-    assert.equal(subscription.observedShopifyPlanHandle, null);
-    assert.equal(subscription.billingPeriodId, null);
-    assert.equal(subscription.currentPeriodStart, null);
-    assert.equal(subscription.currentPeriodEnd, null);
-    assert.equal(subscription.trialEndsAt, null);
-    assert.equal(subscription.pendingPlanId, null);
-    assert.equal(subscription.lastProviderLifecycleState, null);
-    assert.equal(counter.grantedQuantity, 7);
-    assert.equal(counter.committedQuantity, 0);
-    assert.equal(counter.reservedQuantity, 0);
-    assert.equal(counter.refundingQuantity, 0);
-    assert.equal(await database().subscription.count({ where: { shopId: shop.id } }), 1);
-    assert.equal(await database().billingPeriod.count({ where: { shopId: shop.id } }), 0);
-    assert.equal(await database().billingPeriodEntitlementCounter.count({ where: { shopId: shop.id } }), 0);
-    const [operations, purchases, usageEvents, webhookReceipts] = await Promise.all([
-      database().billingOperation.count({ where: { shopId: shop.id } }),
-      database().recoveryCreditPurchase.count({ where: { shopId: shop.id } }),
-      database().usageEvent.count({ where: { shopId: shop.id } }),
-      database().wooCommerceBillingWebhookReceipt.count(),
-    ]);
-    assert.equal(operations, 0);
-    assert.equal(purchases, 0);
-    assert.equal(usageEvents, 0);
-    assert.equal(webhookReceipts, 0);
-    assert.ok(await database().merchantPricingPlan.findUniqueOrThrow({
-      where: { shopifyPlanHandle: freePlanHandle },
-      select: { materializedAt: true },
-    }).then((catalogue) => catalogue.materializedAt));
-    assert.equal(billingPlan.kind, "FREE");
-    assert.equal(billingPlan.active, true);
-    assert.deepEqual(Buffer.from(installation.credentialDigest), digestSecret(Buffer.from(result.credential, "base64url")));
-    assert.notDeepEqual(Buffer.from(installation.credentialDigest), digestSecret(input.bootstrapSecret));
-    assert.notEqual(Buffer.from(installation.credentialDigest).toString("base64url"), result.credential);
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+test(
+  "PostgreSQL first connect atomically creates Shop, installation, ACTIVE Free Subscription, and lifetime counter",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    const input = makeInput(siteUrl);
+    try {
+      const result = await service().connect(input);
+      const [shop, installation, subscription, counter, billingPlan] =
+        await Promise.all([
+          database().shop.findUniqueOrThrow({
+            where: { id: result.shopId },
+            include: { settings: true },
+          }),
+          database().wooCommerceInstallation.findUniqueOrThrow({
+            where: { id: result.installationId },
+          }),
+          database().subscription.findUniqueOrThrow({
+            where: { shopId: result.shopId },
+          }),
+          database().shopEntitlementCounter.findUniqueOrThrow({
+            where: {
+              shopId_counter: {
+                shopId: result.shopId,
+                counter: "LIFETIME_FREE_RECOVERY_CREDITS",
+              },
+            },
+          }),
+          database().billingPlan.findUniqueOrThrow({
+            where: { shopifyPlanHandle: freePlanHandle },
+          }),
+        ]);
+      assert.equal(result.connection, "CREATED");
+      assert.equal(result.credentialVersion, 1);
+      assert.equal(shop.platform, "WOOCOMMERCE");
+      assert.equal(shop.shopifyShopId, null);
+      assert.equal(shop.domain, siteUrl);
+      assert.equal(shop.status, "ACTIVE");
+      assert.equal(shop.onboardingCompleted, true);
+      assert.equal(shop.settings, null);
+      assert.equal(installation.shopId, shop.id);
+      assert.equal(subscription.status, "ACTIVE");
+      assert.equal(subscription.planId, billingPlan.id);
+      assert.equal(subscription.providerSubscriptionId, null);
+      assert.equal(subscription.providerCoverageEndAt, null);
+      assert.equal(subscription.observedShopifyPlanHandle, null);
+      assert.equal(subscription.billingPeriodId, null);
+      assert.equal(subscription.currentPeriodStart, null);
+      assert.equal(subscription.currentPeriodEnd, null);
+      assert.equal(subscription.trialEndsAt, null);
+      assert.equal(subscription.pendingPlanId, null);
+      assert.equal(subscription.lastProviderLifecycleState, null);
+      assert.equal(counter.grantedQuantity, 7);
+      assert.equal(counter.committedQuantity, 0);
+      assert.equal(counter.reservedQuantity, 0);
+      assert.equal(counter.refundingQuantity, 0);
+      assert.equal(
+        await database().subscription.count({ where: { shopId: shop.id } }),
+        1,
+      );
+      assert.equal(
+        await database().billingPeriod.count({ where: { shopId: shop.id } }),
+        0,
+      );
+      assert.equal(
+        await database().billingPeriodEntitlementCounter.count({
+          where: { shopId: shop.id },
+        }),
+        0,
+      );
+      const [operations, purchases, usageEvents, webhookReceipts] =
+        await Promise.all([
+          database().billingOperation.count({ where: { shopId: shop.id } }),
+          database().recoveryCreditPurchase.count({
+            where: { shopId: shop.id },
+          }),
+          database().usageEvent.count({ where: { shopId: shop.id } }),
+          database().wooCommerceBillingWebhookReceipt.count(),
+        ]);
+      assert.equal(operations, 0);
+      assert.equal(purchases, 0);
+      assert.equal(usageEvents, 0);
+      assert.equal(webhookReceipts, 0);
+      assert.ok(
+        await database()
+          .merchantPricingPlan.findUniqueOrThrow({
+            where: { shopifyPlanHandle: freePlanHandle },
+            select: { materializedAt: true },
+          })
+          .then((catalogue) => catalogue.materializedAt),
+      );
+      assert.equal(billingPlan.kind, "FREE");
+      assert.equal(billingPlan.active, true);
+      assert.deepEqual(
+        Buffer.from(installation.credentialDigest),
+        digestSecret(Buffer.from(result.credential, "base64url")),
+      );
+      assert.notDeepEqual(
+        Buffer.from(installation.credentialDigest),
+        digestSecret(input.bootstrapSecret),
+      );
+      assert.notEqual(
+        Buffer.from(installation.credentialDigest).toString("base64url"),
+        result.credential,
+      );
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-test("PostgreSQL reconnect preserves tenant state and rotates only the installation credential", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    const initial = await service().connect(makeInput(siteUrl));
-    const counterKey = {
-      shopId_counter: {
-        shopId: initial.shopId,
-        counter: "LIFETIME_FREE_RECOVERY_CREDITS" as const,
-      },
-    };
-    await database().shopEntitlementCounter.update({
-      where: counterKey,
-      data: { committedQuantity: 3, reservedQuantity: 2, refundingQuantity: 1 },
-    });
-    const subscriptionBefore = await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } });
-    const counterBefore = await database().shopEntitlementCounter.findUniqueOrThrow({ where: counterKey });
-    await database().shop.update({
-      where: { id: initial.shopId },
-      data: {
-        status: "UNINSTALLED",
-        uninstalledAt: new Date("2026-01-01T00:00:00Z"),
-        reinstallPendingAt: new Date("2026-01-02T00:00:00Z"),
-        onboardingCompleted: true,
-        wooCommerceInstallation: {
-          update: { status: "REVOKED", revokedAt: new Date("2026-01-03T00:00:00Z") },
+test(
+  "PostgreSQL reconnect preserves tenant state and rotates only the installation credential",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      const initial = await service().connect(makeInput(siteUrl));
+      const counterKey = {
+        shopId_counter: {
+          shopId: initial.shopId,
+          counter: "LIFETIME_FREE_RECOVERY_CREDITS" as const,
         },
-        settings: { create: { onboardingCompleted: true, plan: "fixture-plan" } },
-      },
-    });
-    const reconnect = await service().connect(makeInput(siteUrl));
-    const shop = await database().shop.findUniqueOrThrow({ where: { id: initial.shopId }, include: { settings: true } });
-    const installation = await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } });
-    const subscriptionAfter = await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } });
-    const counterAfter = await database().shopEntitlementCounter.findUniqueOrThrow({ where: counterKey });
-    assert.equal(reconnect.connection, "RECONNECTED");
-    assert.equal(reconnect.shopId, initial.shopId);
-    assert.equal(reconnect.installationId, initial.installationId);
-    assert.equal(reconnect.credentialVersion, initial.credentialVersion + 1);
-    assert.notEqual(reconnect.credential, initial.credential);
-    assert.equal(shop.status, "ACTIVE");
-    assert.equal(shop.uninstalledAt, null);
-    assert.equal(shop.reinstallPendingAt, null);
-    assert.equal(shop.onboardingCompleted, true);
-    assert.equal(shop.settings?.plan, "fixture-plan");
-    assert.equal(shop.settings?.onboardingCompleted, true);
-    assert.deepEqual(subscriptionAfter, subscriptionBefore);
-    assert.deepEqual(counterAfter, counterBefore);
-    assert.equal(counterAfter.grantedQuantity, 7);
-    assert.equal(counterAfter.committedQuantity, 3);
-    assert.equal(counterAfter.reservedQuantity, 2);
-    assert.equal(counterAfter.refundingQuantity, 1);
-    assert.equal(await database().shopEntitlementCounter.count({ where: { shopId: shop.id } }), 1);
-    assert.deepEqual(Buffer.from(installation.credentialDigest), digestSecret(Buffer.from(reconnect.credential, "base64url")));
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
-
-test("PostgreSQL captures baseline and current SQL for an already-onboarded ACTIVE reconnect", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  const originalDigest = Uint8Array.from(digestSecret(Buffer.alloc(32, 0x31)));
-  const baselineDigest = Uint8Array.from(digestSecret(Buffer.alloc(32, 0x32)));
-  try {
-    const shop = await database().shop.create({ data: {
-      domain: siteUrl, platform: "WOOCOMMERCE", status: "ACTIVE", onboardingCompleted: true,
-    } });
-    const installation = await database().wooCommerceInstallation.create({ data: {
-      shopId: shop.id, canonicalSiteUrl: siteUrl, credentialDigest: originalDigest,
-    } });
-
-    const baselineStart = queryEvents.length;
-    const observed = await database().wooCommerceInstallation.findUnique({
-      where: { canonicalSiteUrl: siteUrl },
-      select: {
-        id: true, shopId: true, credentialVersion: true,
-        shop: { select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true } },
-      },
-    });
-    assert.ok(observed);
-    const baselineRows = await database().$transaction(async tx => {
-      const currentShop = await tx.shop.findUnique({
-        where: { id: observed.shop.id },
-        select: { id: true, status: true, platform: true, shopifyShopId: true, onboardingCompleted: true },
+      };
+      await database().shopEntitlementCounter.update({
+        where: counterKey,
+        data: {
+          committedQuantity: 3,
+          reservedQuantity: 2,
+          refundingQuantity: 1,
+        },
       });
-      assert.equal(currentShop?.onboardingCompleted, true);
-      const activationShop = await tx.shop.findUnique({
-        where: { id: currentShop!.id }, select: { id: true, onboardingCompleted: true },
+      const subscriptionBefore =
+        await database().subscription.findUniqueOrThrow({
+          where: { shopId: initial.shopId },
+        });
+      const counterBefore =
+        await database().shopEntitlementCounter.findUniqueOrThrow({
+          where: counterKey,
+        });
+      await database().shop.update({
+        where: { id: initial.shopId },
+        data: {
+          status: "UNINSTALLED",
+          uninstalledAt: new Date("2026-01-01T00:00:00Z"),
+          reinstallPendingAt: new Date("2026-01-02T00:00:00Z"),
+          onboardingCompleted: true,
+          wooCommerceInstallation: {
+            update: {
+              status: "REVOKED",
+              revokedAt: new Date("2026-01-03T00:00:00Z"),
+            },
+          },
+          settings: {
+            create: { onboardingCompleted: true, plan: "fixture-plan" },
+          },
+        },
       });
-      assert.equal(activationShop?.onboardingCompleted, true);
-      const updated = await tx.wooCommerceInstallation.updateMany({
-        where: { id: installation.id, shopId: shop.id, credentialVersion: installation.credentialVersion },
-        data: { credentialDigest: baselineDigest, credentialVersion: { increment: 1 }, status: "ACTIVE", revokedAt: null },
+      const reconnect = await service().connect(makeInput(siteUrl));
+      const shop = await database().shop.findUniqueOrThrow({
+        where: { id: initial.shopId },
+        include: { settings: true },
       });
-      const returned = await tx.wooCommerceInstallation.findUniqueOrThrow({
-        where: { id: installation.id, shopId: shop.id, credentialVersion: installation.credentialVersion + 1 },
-        select: { id: true, shopId: true, credentialVersion: true },
+      const installation =
+        await database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        });
+      const subscriptionAfter = await database().subscription.findUniqueOrThrow(
+        { where: { shopId: initial.shopId } },
+      );
+      const counterAfter =
+        await database().shopEntitlementCounter.findUniqueOrThrow({
+          where: counterKey,
+        });
+      assert.equal(reconnect.connection, "RECONNECTED");
+      assert.equal(reconnect.shopId, initial.shopId);
+      assert.equal(reconnect.installationId, initial.installationId);
+      assert.equal(reconnect.credentialVersion, initial.credentialVersion + 1);
+      assert.notEqual(reconnect.credential, initial.credential);
+      assert.equal(shop.status, "ACTIVE");
+      assert.equal(shop.uninstalledAt, null);
+      assert.equal(shop.reinstallPendingAt, null);
+      assert.equal(shop.onboardingCompleted, true);
+      assert.equal(shop.settings?.plan, "fixture-plan");
+      assert.equal(shop.settings?.onboardingCompleted, true);
+      assert.deepEqual(subscriptionAfter, subscriptionBefore);
+      assert.deepEqual(counterAfter, counterBefore);
+      assert.equal(counterAfter.grantedQuantity, 7);
+      assert.equal(counterAfter.committedQuantity, 3);
+      assert.equal(counterAfter.reservedQuantity, 2);
+      assert.equal(counterAfter.refundingQuantity, 1);
+      assert.equal(
+        await database().shopEntitlementCounter.count({
+          where: { shopId: shop.id },
+        }),
+        1,
+      );
+      assert.deepEqual(
+        Buffer.from(installation.credentialDigest),
+        digestSecret(Buffer.from(reconnect.credential, "base64url")),
+      );
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
+
+test(
+  "PostgreSQL captures baseline and current SQL for an already-onboarded ACTIVE reconnect",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    const originalDigest = Uint8Array.from(
+      digestSecret(Buffer.alloc(32, 0x31)),
+    );
+    const baselineDigest = Uint8Array.from(
+      digestSecret(Buffer.alloc(32, 0x32)),
+    );
+    try {
+      const shop = await database().shop.create({
+        data: {
+          domain: siteUrl,
+          platform: "WOOCOMMERCE",
+          status: "ACTIVE",
+          onboardingCompleted: true,
+        },
       });
-      return { changed: updated.count, returned: returned ? 1 : 0 };
-    });
-    const baselineSql = statementsSince(baselineStart);
-    await database().wooCommerceInstallation.update({ where: { id: installation.id }, data: {
-      credentialDigest: originalDigest, credentialVersion: installation.credentialVersion,
-    } });
+      const installation = await database().wooCommerceInstallation.create({
+        data: {
+          shopId: shop.id,
+          canonicalSiteUrl: siteUrl,
+          credentialDigest: originalDigest,
+        },
+      });
 
-    const currentStart = queryEvents.length;
-    const result = await service(async () => undefined).connect(makeInput(siteUrl));
-    const currentSql = statementsSince(currentStart);
-    assert.equal(result.credentialVersion, installation.credentialVersion + 1);
-    assert.equal(baselineRows.changed, 1);
-    assert.equal(baselineRows.returned, 1);
-    assert.equal((await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: installation.id } })).credentialVersion,
-      installation.credentialVersion + 1);
-    console.info(`ARCH-055 reconnect SQL capture baseline statements=${baselineSql.length}, update affected=${baselineRows.changed}, follow-up rows=${baselineRows.returned}`);
-    baselineSql.forEach((query, index) => console.info(`BASELINE SQL ${index + 1}: ${query}`));
-    console.info(`ARCH-055 reconnect SQL capture current statements=${currentSql.length}, returning rows=${result.credentialVersion === installation.credentialVersion + 1 ? 1 : 0}`);
-    currentSql.forEach((query, index) => console.info(`CURRENT SQL ${index + 1}: ${query}`));
-    assert.equal(baselineSql.length, 6);
-    assert.equal(currentSql.length, 4);
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+      const baselineStart = queryEvents.length;
+      const observed = await database().wooCommerceInstallation.findUnique({
+        where: { canonicalSiteUrl: siteUrl },
+        select: {
+          id: true,
+          shopId: true,
+          credentialVersion: true,
+          shop: {
+            select: {
+              id: true,
+              status: true,
+              platform: true,
+              shopifyShopId: true,
+              onboardingCompleted: true,
+            },
+          },
+        },
+      });
+      assert.ok(observed);
+      const baselineRows = await database().$transaction(async (tx) => {
+        const currentShop = await tx.shop.findUnique({
+          where: { id: observed.shop.id },
+          select: {
+            id: true,
+            status: true,
+            platform: true,
+            shopifyShopId: true,
+            onboardingCompleted: true,
+          },
+        });
+        assert.equal(currentShop?.onboardingCompleted, true);
+        const activationShop = await tx.shop.findUnique({
+          where: { id: currentShop!.id },
+          select: { id: true, onboardingCompleted: true },
+        });
+        assert.equal(activationShop?.onboardingCompleted, true);
+        const updated = await tx.wooCommerceInstallation.updateMany({
+          where: {
+            id: installation.id,
+            shopId: shop.id,
+            credentialVersion: installation.credentialVersion,
+          },
+          data: {
+            credentialDigest: baselineDigest,
+            credentialVersion: { increment: 1 },
+            status: "ACTIVE",
+            revokedAt: null,
+          },
+        });
+        const returned = await tx.wooCommerceInstallation.findUniqueOrThrow({
+          where: {
+            id: installation.id,
+            shopId: shop.id,
+            credentialVersion: installation.credentialVersion + 1,
+          },
+          select: { id: true, shopId: true, credentialVersion: true },
+        });
+        return { changed: updated.count, returned: returned ? 1 : 0 };
+      });
+      const baselineSql = statementsSince(baselineStart);
+      await database().wooCommerceInstallation.update({
+        where: { id: installation.id },
+        data: {
+          credentialDigest: originalDigest,
+          credentialVersion: installation.credentialVersion,
+        },
+      });
 
-test("PostgreSQL concurrent first connects leave one tenant and one bounded loser", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  const barrier = await twoPartyBarrier();
-  try {
-    const attempts = await Promise.allSettled([
-      service(barrier).connect(makeInput(siteUrl)),
-      service(barrier).connect(makeInput(siteUrl)),
-    ]);
-    const winners = attempts.filter((attempt) => attempt.status === "fulfilled");
-    const losers = attempts.filter((attempt) => attempt.status === "rejected");
-    assert.equal(winners.length, 1);
-    assert.equal(losers.length, 1);
-    assert.ok(losers[0]?.status === "rejected" && losers[0].reason instanceof WooConnectionConflictError);
-    assert.equal(await database().shop.count({ where: { domain: siteUrl } }), 1);
-    assert.equal(await database().wooCommerceInstallation.count({ where: { canonicalSiteUrl: siteUrl } }), 1);
-    const winner = winners[0];
-    assert.ok(winner?.status === "fulfilled");
-    assert.equal(await database().subscription.count({ where: { shopId: winner.value.shopId } }), 1);
-    assert.equal(await database().shopEntitlementCounter.count({ where: { shopId: winner.value.shopId } }), 1);
-    const counter = await database().shopEntitlementCounter.findUniqueOrThrow({
-      where: { shopId_counter: { shopId: winner.value.shopId, counter: "LIFETIME_FREE_RECOVERY_CREDITS" } },
-    });
-    assert.equal(counter.grantedQuantity, 7);
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+      const currentStart = queryEvents.length;
+      const result = await service(async () => undefined).connect(
+        makeInput(siteUrl),
+      );
+      const currentSql = statementsSince(currentStart);
+      assert.equal(
+        result.credentialVersion,
+        installation.credentialVersion + 1,
+      );
+      assert.equal(baselineRows.changed, 1);
+      assert.equal(baselineRows.returned, 1);
+      assert.equal(
+        (
+          await database().wooCommerceInstallation.findUniqueOrThrow({
+            where: { id: installation.id },
+          })
+        ).credentialVersion,
+        installation.credentialVersion + 1,
+      );
+      console.info(
+        `ARCH-055 reconnect SQL capture baseline statements=${baselineSql.length}, update affected=${baselineRows.changed}, follow-up rows=${baselineRows.returned}`,
+      );
+      baselineSql.forEach((query, index) =>
+        console.info(`BASELINE SQL ${index + 1}: ${query}`),
+      );
+      console.info(
+        `ARCH-055 reconnect SQL capture current statements=${currentSql.length}, returning rows=${result.credentialVersion === installation.credentialVersion + 1 ? 1 : 0}`,
+      );
+      currentSql.forEach((query, index) =>
+        console.info(`CURRENT SQL ${index + 1}: ${query}`),
+      );
+      assert.equal(baselineSql.length, 6);
+      assert.equal(currentSql.length, 4);
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-test("PostgreSQL concurrent reconnects use credential-version CAS so one returned credential wins", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    const initial = await service().connect(makeInput(siteUrl));
+test(
+  "PostgreSQL concurrent first connects leave one tenant and one bounded loser",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
     const barrier = await twoPartyBarrier();
-    const attempts = await Promise.allSettled([
-      service(barrier).connect(makeInput(siteUrl)),
-      service(barrier).connect(makeInput(siteUrl)),
-    ]);
-    const winners = attempts.filter((attempt) => attempt.status === "fulfilled");
-    const losers = attempts.filter((attempt) => attempt.status === "rejected");
-    assert.equal(winners.length, 1);
-    assert.equal(losers.length, 1);
-    assert.ok(losers[0]?.status === "rejected" && losers[0].reason instanceof WooConnectionConflictError);
-    const winner = winners[0];
-    assert.ok(winner?.status === "fulfilled");
-    const installation = await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } });
-    assert.equal(installation.credentialVersion, initial.credentialVersion + 1);
-    assert.deepEqual(Buffer.from(installation.credentialDigest), digestSecret(Buffer.from(winner.value.credential, "base64url")));
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+    try {
+      const attempts = await Promise.allSettled([
+        service(barrier).connect(makeInput(siteUrl)),
+        service(barrier).connect(makeInput(siteUrl)),
+      ]);
+      const winners = attempts.filter(
+        (attempt) => attempt.status === "fulfilled",
+      );
+      const losers = attempts.filter(
+        (attempt) => attempt.status === "rejected",
+      );
+      assert.equal(winners.length, 1);
+      assert.equal(losers.length, 1);
+      assert.ok(
+        losers[0]?.status === "rejected" &&
+          losers[0].reason instanceof WooConnectionConflictError,
+      );
+      assert.equal(
+        await database().shop.count({ where: { domain: siteUrl } }),
+        1,
+      );
+      assert.equal(
+        await database().wooCommerceInstallation.count({
+          where: { canonicalSiteUrl: siteUrl },
+        }),
+        1,
+      );
+      const winner = winners[0];
+      assert.ok(winner?.status === "fulfilled");
+      assert.equal(
+        await database().subscription.count({
+          where: { shopId: winner.value.shopId },
+        }),
+        1,
+      );
+      assert.equal(
+        await database().shopEntitlementCounter.count({
+          where: { shopId: winner.value.shopId },
+        }),
+        1,
+      );
+      const counter = await database().shopEntitlementCounter.findUniqueOrThrow(
+        {
+          where: {
+            shopId_counter: {
+              shopId: winner.value.shopId,
+              counter: "LIFETIME_FREE_RECOVERY_CREDITS",
+            },
+          },
+        },
+      );
+      assert.equal(counter.grantedQuantity, 7);
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-test("PostgreSQL suspended Shop reconnect is rejected without changing installation state", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    const initial = await service().connect(makeInput(siteUrl));
-    await database().shop.update({ where: { id: initial.shopId }, data: { status: "SUSPENDED" } });
-    const before = await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } });
-    await assert.rejects(service().connect(makeInput(siteUrl)), WooConnectionConflictError);
-    const after = await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } });
-    assert.deepEqual(after, before);
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+test(
+  "PostgreSQL concurrent reconnects use credential-version CAS so one returned credential wins",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      const initial = await service().connect(makeInput(siteUrl));
+      const barrier = await twoPartyBarrier();
+      const attempts = await Promise.allSettled([
+        service(barrier).connect(makeInput(siteUrl)),
+        service(barrier).connect(makeInput(siteUrl)),
+      ]);
+      const winners = attempts.filter(
+        (attempt) => attempt.status === "fulfilled",
+      );
+      const losers = attempts.filter(
+        (attempt) => attempt.status === "rejected",
+      );
+      assert.equal(winners.length, 1);
+      assert.equal(losers.length, 1);
+      assert.ok(
+        losers[0]?.status === "rejected" &&
+          losers[0].reason instanceof WooConnectionConflictError,
+      );
+      const winner = winners[0];
+      assert.ok(winner?.status === "fulfilled");
+      const installation =
+        await database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        });
+      assert.equal(
+        installation.credentialVersion,
+        initial.credentialVersion + 1,
+      );
+      assert.deepEqual(
+        Buffer.from(installation.credentialDigest),
+        digestSecret(Buffer.from(winner.value.credential, "base64url")),
+      );
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-test("PostgreSQL different Shops concurrently materialize and reuse one operational Free plan", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrls = [uniqueSite(), uniqueSite()];
-  const barrier = await twoPartyBarrier();
-  try {
-    await database().billingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { materializedAt: null },
-    });
-    const results = await Promise.all(siteUrls.map((siteUrl) => service(barrier).connect(makeInput(siteUrl))));
-    const plans = await database().billingPlan.findMany({ where: { shopifyPlanHandle: freePlanHandle } });
-    const subscriptions = await database().subscription.findMany({ where: { shopId: { in: results.map((result) => result.shopId) } } });
-    assert.equal(plans.length, 1);
-    assert.equal(subscriptions.length, 2);
-    assert.deepEqual(new Set(subscriptions.map((subscription) => subscription.planId)), new Set([plans[0]?.id]));
-    assert.equal(await database().merchantPricingPlan.findUniqueOrThrow({
-      where: { shopifyPlanHandle: freePlanHandle },
-      select: { materializedAt: true },
-    }).then((catalogue) => catalogue.materializedAt !== null), true);
-  } finally {
-    await Promise.all(siteUrls.map(removeSite));
-  }
-});
+test(
+  "PostgreSQL suspended Shop reconnect is rejected without changing installation state",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      const initial = await service().connect(makeInput(siteUrl));
+      await database().shop.update({
+        where: { id: initial.shopId },
+        data: { status: "SUSPENDED" },
+      });
+      const before = await database().wooCommerceInstallation.findUniqueOrThrow(
+        { where: { id: initial.installationId } },
+      );
+      await assert.rejects(
+        service().connect(makeInput(siteUrl)),
+        WooConnectionConflictError,
+      );
+      const after = await database().wooCommerceInstallation.findUniqueOrThrow({
+        where: { id: initial.installationId },
+      });
+      assert.deepEqual(after, before);
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-test("PostgreSQL onboarded reconnect does not recreate a missing lifetime counter", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    const initial = await service().connect(makeInput(siteUrl));
-    await database().shopEntitlementCounter.deleteMany({ where: { shopId: initial.shopId } });
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { recurringAmountMinor: 1 },
-    });
-    const reconnect = await service().connect(makeInput(siteUrl));
-    assert.equal(reconnect.shopId, initial.shopId);
-    assert.equal(await database().shopEntitlementCounter.count({ where: { shopId: initial.shopId } }), 0);
-  } finally {
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { recurringAmountMinor: 0 },
-    });
-    await removeSite(siteUrl);
-  }
-});
+test(
+  "PostgreSQL different Shops concurrently materialize and reuse one operational Free plan",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrls = [uniqueSite(), uniqueSite()];
+    const barrier = await twoPartyBarrier();
+    try {
+      await database().billingPlan.deleteMany({
+        where: { shopifyPlanHandle: freePlanHandle },
+      });
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { materializedAt: null },
+      });
+      const results = await Promise.all(
+        siteUrls.map((siteUrl) => service(barrier).connect(makeInput(siteUrl))),
+      );
+      const plans = await database().billingPlan.findMany({
+        where: { shopifyPlanHandle: freePlanHandle },
+      });
+      const subscriptions = await database().subscription.findMany({
+        where: { shopId: { in: results.map((result) => result.shopId) } },
+      });
+      assert.equal(plans.length, 1);
+      assert.equal(subscriptions.length, 2);
+      assert.deepEqual(
+        new Set(subscriptions.map((subscription) => subscription.planId)),
+        new Set([plans[0]?.id]),
+      );
+      assert.equal(
+        await database()
+          .merchantPricingPlan.findUniqueOrThrow({
+            where: { shopifyPlanHandle: freePlanHandle },
+            select: { materializedAt: true },
+          })
+          .then((catalogue) => catalogue.materializedAt !== null),
+        true,
+      );
+    } finally {
+      await Promise.all(siteUrls.map(removeSite));
+    }
+  },
+);
 
-test("PostgreSQL onboarded paid Shop reconnect preserves paid state when Free catalogue is invalid", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  const paidPlanHandle = `woo-paid-${randomUUID()}`;
-  try {
-    const initial = await service().connect(makeInput(siteUrl));
-    const paidPlan = await database().billingPlan.create({
-      data: {
-        shopifyPlanHandle: paidPlanHandle,
-        name: "Existing paid plan",
-        kind: "PAID_METERED",
-        active: true,
-      },
-    });
-    await database().subscription.update({
-      where: { shopId: initial.shopId },
-      data: {
-        planId: paidPlan.id,
-        status: "ACTIVE",
-        observedShopifyPlanHandle: paidPlanHandle,
-        providerSubscriptionId: "existing-provider-contract",
-      },
-    });
-    await database().shop.update({
-      where: { id: initial.shopId },
-      data: { status: "UNINSTALLED", onboardingCompleted: true },
-    });
-    await database().shopEntitlementCounter.create({
-      data: {
-        shopId: initial.shopId,
-        counter: "PURCHASED_RECOVERY_CREDITS",
-        grantedQuantity: 12,
-        committedQuantity: 4,
-        reservedQuantity: 3,
-        refundingQuantity: 2,
-      },
-    });
-    const subscriptionBefore = await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } });
-    const countersBefore = await database().shopEntitlementCounter.findMany({ where: { shopId: initial.shopId }, orderBy: { counter: "asc" } });
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { isActive: false },
-    });
+test(
+  "PostgreSQL onboarded reconnect does not recreate a missing lifetime counter",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      const initial = await service().connect(makeInput(siteUrl));
+      await database().shopEntitlementCounter.deleteMany({
+        where: { shopId: initial.shopId },
+      });
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { recurringAmountMinor: 1 },
+      });
+      const reconnect = await service().connect(makeInput(siteUrl));
+      assert.equal(reconnect.shopId, initial.shopId);
+      assert.equal(
+        await database().shopEntitlementCounter.count({
+          where: { shopId: initial.shopId },
+        }),
+        0,
+      );
+    } finally {
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { recurringAmountMinor: 0 },
+      });
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-    const reconnect = await service().connect(makeInput(siteUrl));
+test(
+  "PostgreSQL onboarded paid Shop reconnect preserves paid state when Free catalogue is invalid",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    const paidPlanHandle = `woo-paid-${randomUUID()}`;
+    try {
+      const initial = await service().connect(makeInput(siteUrl));
+      const paidPlan = await database().billingPlan.create({
+        data: {
+          shopifyPlanHandle: paidPlanHandle,
+          name: "Existing paid plan",
+          kind: "PAID_METERED",
+          active: true,
+        },
+      });
+      await database().subscription.update({
+        where: { shopId: initial.shopId },
+        data: {
+          planId: paidPlan.id,
+          status: "ACTIVE",
+          observedShopifyPlanHandle: paidPlanHandle,
+          providerSubscriptionId: "existing-provider-contract",
+        },
+      });
+      await database().shop.update({
+        where: { id: initial.shopId },
+        data: { status: "UNINSTALLED", onboardingCompleted: true },
+      });
+      await database().shopEntitlementCounter.create({
+        data: {
+          shopId: initial.shopId,
+          counter: "PURCHASED_RECOVERY_CREDITS",
+          grantedQuantity: 12,
+          committedQuantity: 4,
+          reservedQuantity: 3,
+          refundingQuantity: 2,
+        },
+      });
+      const subscriptionBefore =
+        await database().subscription.findUniqueOrThrow({
+          where: { shopId: initial.shopId },
+        });
+      const countersBefore = await database().shopEntitlementCounter.findMany({
+        where: { shopId: initial.shopId },
+        orderBy: { counter: "asc" },
+      });
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { isActive: false },
+      });
 
-    assert.equal(reconnect.shopId, initial.shopId);
-    assert.deepEqual(await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } }), subscriptionBefore);
-    assert.deepEqual(
-      await database().shopEntitlementCounter.findMany({ where: { shopId: initial.shopId }, orderBy: { counter: "asc" } }),
-      countersBefore,
-    );
-    assert.equal((await database().shop.findUniqueOrThrow({ where: { id: initial.shopId } })).onboardingCompleted, true);
-  } finally {
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { isActive: true },
-    });
-    await removeSite(siteUrl);
-    await database().billingPlan.deleteMany({ where: { shopifyPlanHandle: paidPlanHandle } });
-  }
-});
+      const reconnect = await service().connect(makeInput(siteUrl));
 
-test("PostgreSQL never-onboarded subscription conflict preserves billing and credential state", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    const initial = await service().connect(makeInput(siteUrl));
-    await database().shop.update({ where: { id: initial.shopId }, data: { onboardingCompleted: false } });
-    await database().subscription.update({
-      where: { shopId: initial.shopId },
-      data: { providerSubscriptionId: "legacy-provider-contract" },
-    });
-    const installationBefore = await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } });
-    const subscriptionBefore = await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } });
-    await assert.rejects(service().connect(makeInput(siteUrl)), InitialFreeActivationConflictError);
-    assert.deepEqual(
-      await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } }),
-      installationBefore,
-    );
-    assert.deepEqual(await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } }), subscriptionBefore);
-    assert.equal((await database().shop.findUniqueOrThrow({ where: { id: initial.shopId } })).onboardingCompleted, false);
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+      assert.equal(reconnect.shopId, initial.shopId);
+      assert.deepEqual(
+        await database().subscription.findUniqueOrThrow({
+          where: { shopId: initial.shopId },
+        }),
+        subscriptionBefore,
+      );
+      assert.deepEqual(
+        await database().shopEntitlementCounter.findMany({
+          where: { shopId: initial.shopId },
+          orderBy: { counter: "asc" },
+        }),
+        countersBefore,
+      );
+      assert.equal(
+        (
+          await database().shop.findUniqueOrThrow({
+            where: { id: initial.shopId },
+          })
+        ).onboardingCompleted,
+        true,
+      );
+    } finally {
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { isActive: true },
+      });
+      await removeSite(siteUrl);
+      await database().billingPlan.deleteMany({
+        where: { shopifyPlanHandle: paidPlanHandle },
+      });
+    }
+  },
+);
 
-test("PostgreSQL provider-coverage-only shell conflicts and rolls back reconnect state", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    const initial = await service().connect(makeInput(siteUrl));
-    await database().shop.update({
-      where: { id: initial.shopId },
-      data: { onboardingCompleted: false, status: "UNINSTALLED" },
-    });
-    await database().subscription.update({
-      where: { shopId: initial.shopId },
-      data: {
-        status: "NO_CONTRACT",
-        planId: null,
-        observedShopifyPlanHandle: null,
-        billingPeriodId: null,
-        currentPeriodStart: null,
-        currentPeriodEnd: null,
-        trialEndsAt: null,
-        cancelAtPeriodEnd: false,
-        providerSubscriptionId: null,
-        providerCoverageEndAt: new Date("2026-10-01T00:00:00.000Z"),
-        lastSyncedAt: null,
-        lastSyncErrorCode: null,
-        lastSyncErrorAt: null,
-        pendingShopifyPlanHandle: null,
-        pendingPlanId: null,
-        pendingEffectiveAt: null,
-        nextReconcileAt: null,
-        lastProviderLifecycleState: null,
-        lastProviderLifecycleEventId: null,
-        lastProviderLifecycleEventAt: null,
-      },
-    });
-    const counterKey = {
-      shopId_counter: {
-        shopId: initial.shopId,
-        counter: "LIFETIME_FREE_RECOVERY_CREDITS" as const,
-      },
-    };
-    await database().shopEntitlementCounter.update({
-      where: counterKey,
-      data: { committedQuantity: 2, reservedQuantity: 1, refundingQuantity: 3 },
-    });
+test(
+  "PostgreSQL never-onboarded subscription conflict preserves billing and credential state",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      const initial = await service().connect(makeInput(siteUrl));
+      await database().shop.update({
+        where: { id: initial.shopId },
+        data: { onboardingCompleted: false },
+      });
+      await database().subscription.update({
+        where: { shopId: initial.shopId },
+        data: { providerSubscriptionId: "legacy-provider-contract" },
+      });
+      const installationBefore =
+        await database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        });
+      const subscriptionBefore =
+        await database().subscription.findUniqueOrThrow({
+          where: { shopId: initial.shopId },
+        });
+      await assert.rejects(
+        service().connect(makeInput(siteUrl)),
+        InitialFreeActivationConflictError,
+      );
+      assert.deepEqual(
+        await database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        }),
+        installationBefore,
+      );
+      assert.deepEqual(
+        await database().subscription.findUniqueOrThrow({
+          where: { shopId: initial.shopId },
+        }),
+        subscriptionBefore,
+      );
+      assert.equal(
+        (
+          await database().shop.findUniqueOrThrow({
+            where: { id: initial.shopId },
+          })
+        ).onboardingCompleted,
+        false,
+      );
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-    const [shopBefore, installationBefore, subscriptionBefore, counterBefore] = await Promise.all([
-      database().shop.findUniqueOrThrow({ where: { id: initial.shopId } }),
-      database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } }),
-      database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } }),
-      database().shopEntitlementCounter.findUniqueOrThrow({ where: counterKey }),
-    ]);
+test(
+  "PostgreSQL provider-coverage-only shell conflicts and rolls back reconnect state",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      const initial = await service().connect(makeInput(siteUrl));
+      await database().shop.update({
+        where: { id: initial.shopId },
+        data: { onboardingCompleted: false, status: "UNINSTALLED" },
+      });
+      await database().subscription.update({
+        where: { shopId: initial.shopId },
+        data: {
+          status: "NO_CONTRACT",
+          planId: null,
+          observedShopifyPlanHandle: null,
+          billingPeriodId: null,
+          currentPeriodStart: null,
+          currentPeriodEnd: null,
+          trialEndsAt: null,
+          cancelAtPeriodEnd: false,
+          providerSubscriptionId: null,
+          providerCoverageEndAt: new Date("2026-10-01T00:00:00.000Z"),
+          lastSyncedAt: null,
+          lastSyncErrorCode: null,
+          lastSyncErrorAt: null,
+          pendingShopifyPlanHandle: null,
+          pendingPlanId: null,
+          pendingEffectiveAt: null,
+          nextReconcileAt: null,
+          lastProviderLifecycleState: null,
+          lastProviderLifecycleEventId: null,
+          lastProviderLifecycleEventAt: null,
+        },
+      });
+      const counterKey = {
+        shopId_counter: {
+          shopId: initial.shopId,
+          counter: "LIFETIME_FREE_RECOVERY_CREDITS" as const,
+        },
+      };
+      await database().shopEntitlementCounter.update({
+        where: counterKey,
+        data: {
+          committedQuantity: 2,
+          reservedQuantity: 1,
+          refundingQuantity: 3,
+        },
+      });
 
-    await assert.rejects(service().connect(makeInput(siteUrl)), InitialFreeActivationConflictError);
+      const [
+        shopBefore,
+        installationBefore,
+        subscriptionBefore,
+        counterBefore,
+      ] = await Promise.all([
+        database().shop.findUniqueOrThrow({ where: { id: initial.shopId } }),
+        database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        }),
+        database().subscription.findUniqueOrThrow({
+          where: { shopId: initial.shopId },
+        }),
+        database().shopEntitlementCounter.findUniqueOrThrow({
+          where: counterKey,
+        }),
+      ]);
 
-    assert.deepEqual(await database().shop.findUniqueOrThrow({ where: { id: initial.shopId } }), shopBefore);
-    assert.deepEqual(
-      await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } }),
-      installationBefore,
-    );
-    assert.deepEqual(await database().subscription.findUniqueOrThrow({ where: { shopId: initial.shopId } }), subscriptionBefore);
-    assert.deepEqual(await database().shopEntitlementCounter.findUniqueOrThrow({ where: counterKey }), counterBefore);
-    assert.equal(subscriptionBefore.providerCoverageEndAt?.toISOString(), "2026-10-01T00:00:00.000Z");
-    assert.equal(await database().subscription.count({ where: { shopId: initial.shopId } }), 1);
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+      await assert.rejects(
+        service().connect(makeInput(siteUrl)),
+        InitialFreeActivationConflictError,
+      );
 
-test("PostgreSQL invalid Free catalogue rolls back first connect and reconnect credential rotation", {
-  skip: !databaseUrl,
-}, async () => {
-  const firstSite = uniqueSite();
-  const reconnectSite = uniqueSite();
-  try {
-    await database().billingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { recurringAmountMinor: 1, materializedAt: null },
-    });
-    await assert.rejects(service().connect(makeInput(firstSite)), FreePlanConfigurationUnavailableError);
-    assert.equal(await database().shop.count({ where: { domain: firstSite } }), 0);
-    assert.equal(await database().wooCommerceInstallation.count({ where: { canonicalSiteUrl: firstSite } }), 0);
-    assert.equal(await database().billingPlan.count({ where: { shopifyPlanHandle: freePlanHandle } }), 0);
-    assert.equal(await database().merchantPricingPlan.findUniqueOrThrow({
-      where: { shopifyPlanHandle: freePlanHandle },
-      select: { materializedAt: true },
-    }).then((catalogue) => catalogue.materializedAt), null);
+      assert.deepEqual(
+        await database().shop.findUniqueOrThrow({
+          where: { id: initial.shopId },
+        }),
+        shopBefore,
+      );
+      assert.deepEqual(
+        await database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        }),
+        installationBefore,
+      );
+      assert.deepEqual(
+        await database().subscription.findUniqueOrThrow({
+          where: { shopId: initial.shopId },
+        }),
+        subscriptionBefore,
+      );
+      assert.deepEqual(
+        await database().shopEntitlementCounter.findUniqueOrThrow({
+          where: counterKey,
+        }),
+        counterBefore,
+      );
+      assert.equal(
+        subscriptionBefore.providerCoverageEndAt?.toISOString(),
+        "2026-10-01T00:00:00.000Z",
+      );
+      assert.equal(
+        await database().subscription.count({
+          where: { shopId: initial.shopId },
+        }),
+        1,
+      );
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { recurringAmountMinor: 0 },
-    });
-    const initial = await service().connect(makeInput(reconnectSite));
-    await database().shop.update({
-      where: { id: initial.shopId },
-      data: { onboardingCompleted: false, status: "UNINSTALLED" },
-    });
-    await database().subscription.delete({ where: { shopId: initial.shopId } });
-    const installationBefore = await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } });
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { recurringAmountMinor: 1 },
-    });
-    await assert.rejects(service().connect(makeInput(reconnectSite)), FreePlanConfigurationUnavailableError);
-    assert.deepEqual(
-      await database().wooCommerceInstallation.findUniqueOrThrow({ where: { id: initial.installationId } }),
-      installationBefore,
-    );
-    const shop = await database().shop.findUniqueOrThrow({ where: { id: initial.shopId } });
-    assert.equal(shop.status, "UNINSTALLED");
-    assert.equal(shop.onboardingCompleted, false);
-  } finally {
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { recurringAmountMinor: 0 },
-    });
-    await Promise.all([removeSite(firstSite), removeSite(reconnectSite)]);
-  }
-});
+test(
+  "PostgreSQL invalid Free catalogue rolls back first connect and reconnect credential rotation",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const firstSite = uniqueSite();
+    const reconnectSite = uniqueSite();
+    try {
+      await database().billingPlan.deleteMany({
+        where: { shopifyPlanHandle: freePlanHandle },
+      });
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { recurringAmountMinor: 1, materializedAt: null },
+      });
+      await assert.rejects(
+        service().connect(makeInput(firstSite)),
+        FreePlanConfigurationUnavailableError,
+      );
+      assert.equal(
+        await database().shop.count({ where: { domain: firstSite } }),
+        0,
+      );
+      assert.equal(
+        await database().wooCommerceInstallation.count({
+          where: { canonicalSiteUrl: firstSite },
+        }),
+        0,
+      );
+      assert.equal(
+        await database().billingPlan.count({
+          where: { shopifyPlanHandle: freePlanHandle },
+        }),
+        0,
+      );
+      assert.equal(
+        await database()
+          .merchantPricingPlan.findUniqueOrThrow({
+            where: { shopifyPlanHandle: freePlanHandle },
+            select: { materializedAt: true },
+          })
+          .then((catalogue) => catalogue.materializedAt),
+        null,
+      );
 
-test("PostgreSQL missing first-grant policy rolls back Shop and installation creation", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    await database().billingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { materializedAt: null },
-    });
-    await database().platformBillingPolicy.delete({ where: { id: "default" } });
-    await assert.rejects(service().connect(makeInput(siteUrl)), FreePlanConfigurationUnavailableError);
-    assert.equal(await database().shop.count({ where: { domain: siteUrl } }), 0);
-    assert.equal(await database().wooCommerceInstallation.count({ where: { canonicalSiteUrl: siteUrl } }), 0);
-    assert.equal(await database().billingPlan.count({ where: { shopifyPlanHandle: freePlanHandle } }), 0);
-    assert.equal(await database().merchantPricingPlan.findUniqueOrThrow({
-      where: { shopifyPlanHandle: freePlanHandle },
-      select: { materializedAt: true },
-    }).then((catalogue) => catalogue.materializedAt), null);
-  } finally {
-    await restorePlatformBillingPolicy();
-    await removeSite(siteUrl);
-  }
-});
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { recurringAmountMinor: 0 },
+      });
+      const initial = await service().connect(makeInput(reconnectSite));
+      await database().shop.update({
+        where: { id: initial.shopId },
+        data: { onboardingCompleted: false, status: "UNINSTALLED" },
+      });
+      await database().subscription.delete({
+        where: { shopId: initial.shopId },
+      });
+      const installationBefore =
+        await database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        });
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { recurringAmountMinor: 1 },
+      });
+      await assert.rejects(
+        service().connect(makeInput(reconnectSite)),
+        FreePlanConfigurationUnavailableError,
+      );
+      assert.deepEqual(
+        await database().wooCommerceInstallation.findUniqueOrThrow({
+          where: { id: initial.installationId },
+        }),
+        installationBefore,
+      );
+      const shop = await database().shop.findUniqueOrThrow({
+        where: { id: initial.shopId },
+      });
+      assert.equal(shop.status, "UNINSTALLED");
+      assert.equal(shop.onboardingCompleted, false);
+    } finally {
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { recurringAmountMinor: 0 },
+      });
+      await Promise.all([removeSite(firstSite), removeSite(reconnectSite)]);
+    }
+  },
+);
 
-test("PostgreSQL failed Shop transaction does not undo independently prepared global Free plan", {
-  skip: !databaseUrl,
-}, async () => {
-  const siteUrl = uniqueSite();
-  try {
-    await database().billingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });
-    await database().merchantPricingPlan.update({
-      where: { shopifyPlanHandle: freePlanHandle },
-      data: { materializedAt: null },
-    });
-    // Force Shop creation to fail after preflight has successfully materialised the global plan.
-    await database().shop.create({
-      data: { domain: siteUrl, platform: "WOOCOMMERCE", shopifyShopId: null, status: "ACTIVE" },
-    });
-    await assert.rejects(service().connect(makeInput(siteUrl)), WooConnectionConflictError);
-    assert.equal(await database().shop.count({ where: { domain: siteUrl } }), 1);
-    assert.equal(await database().wooCommerceInstallation.count({ where: { canonicalSiteUrl: siteUrl } }), 0);
-    const existingShop = await database().shop.findUniqueOrThrow({ where: { domain: siteUrl } });
-    assert.equal(await database().subscription.count({ where: { shopId: existingShop.id } }), 0);
-    assert.equal(await database().shopEntitlementCounter.count({ where: { shopId: existingShop.id } }), 0);
-    assert.equal(await database().billingPlan.count({ where: { shopifyPlanHandle: freePlanHandle } }), 1);
-  } finally {
-    await removeSite(siteUrl);
-  }
-});
+test(
+  "PostgreSQL missing first-grant policy rolls back Shop and installation creation",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      await database().billingPlan.deleteMany({
+        where: { shopifyPlanHandle: freePlanHandle },
+      });
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { materializedAt: null },
+      });
+      await database().platformBillingPolicy.delete({
+        where: { id: "default" },
+      });
+      await assert.rejects(
+        service().connect(makeInput(siteUrl)),
+        FreePlanConfigurationUnavailableError,
+      );
+      assert.equal(
+        await database().shop.count({ where: { domain: siteUrl } }),
+        0,
+      );
+      assert.equal(
+        await database().wooCommerceInstallation.count({
+          where: { canonicalSiteUrl: siteUrl },
+        }),
+        0,
+      );
+      assert.equal(
+        await database().billingPlan.count({
+          where: { shopifyPlanHandle: freePlanHandle },
+        }),
+        0,
+      );
+      assert.equal(
+        await database()
+          .merchantPricingPlan.findUniqueOrThrow({
+            where: { shopifyPlanHandle: freePlanHandle },
+            select: { materializedAt: true },
+          })
+          .then((catalogue) => catalogue.materializedAt),
+        null,
+      );
+    } finally {
+      await restorePlatformBillingPolicy();
+      await removeSite(siteUrl);
+    }
+  },
+);
+
+test(
+  "PostgreSQL failed Shop transaction does not undo independently prepared global Free plan",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    const siteUrl = uniqueSite();
+    try {
+      await database().billingPlan.deleteMany({
+        where: { shopifyPlanHandle: freePlanHandle },
+      });
+      await database().merchantPricingPlan.update({
+        where: { shopifyPlanHandle: freePlanHandle },
+        data: { materializedAt: null },
+      });
+      // Force Shop creation to fail after preflight has successfully materialised the global plan.
+      await database().shop.create({
+        data: {
+          domain: siteUrl,
+          platform: "WOOCOMMERCE",
+          shopifyShopId: null,
+          status: "ACTIVE",
+        },
+      });
+      await assert.rejects(
+        service().connect(makeInput(siteUrl)),
+        WooConnectionConflictError,
+      );
+      assert.equal(
+        await database().shop.count({ where: { domain: siteUrl } }),
+        1,
+      );
+      assert.equal(
+        await database().wooCommerceInstallation.count({
+          where: { canonicalSiteUrl: siteUrl },
+        }),
+        0,
+      );
+      const existingShop = await database().shop.findUniqueOrThrow({
+        where: { domain: siteUrl },
+      });
+      assert.equal(
+        await database().subscription.count({
+          where: { shopId: existingShop.id },
+        }),
+        0,
+      );
+      assert.equal(
+        await database().shopEntitlementCounter.count({
+          where: { shopId: existingShop.id },
+        }),
+        0,
+      );
+      assert.equal(
+        await database().billingPlan.count({
+          where: { shopifyPlanHandle: freePlanHandle },
+        }),
+        1,
+      );
+    } finally {
+      await removeSite(siteUrl);
+    }
+  },
+);
 
 after(async () => {
   if (prisma && databaseUrl) {
-    await prisma.billingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });
-    await prisma.merchantPricingPlan.deleteMany({ where: { shopifyPlanHandle: freePlanHandle } });
-    if (checkoutFeatureId) await prisma.feature.deleteMany({ where: { id: checkoutFeatureId } });
+    await prisma.billingPlan.deleteMany({
+      where: { shopifyPlanHandle: freePlanHandle },
+    });
+    await prisma.merchantPricingPlan.deleteMany({
+      where: { shopifyPlanHandle: freePlanHandle },
+    });
+    if (checkoutFeatureId)
+      await prisma.feature.deleteMany({ where: { id: checkoutFeatureId } });
   }
   await prisma?.$disconnect();
 });

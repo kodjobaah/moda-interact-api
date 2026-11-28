@@ -4,139 +4,237 @@ import { PrismaClient } from "@prisma/client";
 import test from "node:test";
 import { MerchantRecoveryPolicyService } from "../../../../src/merchant/recovery-policy/service.js";
 import { MerchantRecoverySummaryService } from "../../../../src/merchant/recovery-summary/recovery-summary.service.js";
-import { RecoveryPolicyConflictError, RecoveryPolicyIntegrityError } from "../../../../src/merchant/recovery-policy/contract.js";
+import {
+  RecoveryPolicyConflictError,
+  RecoveryPolicyIntegrityError,
+} from "../../../../src/merchant/recovery-policy/contract.js";
 import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
 
 const databaseUrl = process.env.WOO_INSTALLATION_TEST_DATABASE_URL;
 
 /** Integration proof is opt-in: use only a disposable migration-current PostgreSQL test database. */
-test("PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override precedence", {
-  skip: !databaseUrl,
-}, async () => {
-  if (!databaseUrl) return;
-  const db = new PrismaClient({ datasources: { db: { url: databaseUrl } }, log: [{ emit: "event", level: "query" }] });
-  const summaryStatements: string[] = [];
-  db.$on("query", (event) => {
-    if (/^\s*SELECT/i.test(event.query) && event.query.includes('"ShopSettings"') &&
-      event.query.includes('"ShopRecoveryPolicyOverride"')) summaryStatements.push(event.query);
-  });
-  const domain = `https://${randomUUID()}.woo-policy.invalid`;
-  const adminEmail = `${randomUUID()}@woo-policy.invalid`;
-  let shopId: string | undefined;
-  let adminId: string | undefined;
-  try {
-    const shop = await db.shop.create({ data: {
-      domain, platform: "WOOCOMMERCE", status: "ACTIVE", onboardingCompleted: true,
-    } });
-    shopId = shop.id;
-    const persistedShopId: string = shop.id;
-    const installation = await db.wooCommerceInstallation.create({ data: {
-      shopId: persistedShopId, canonicalSiteUrl: domain, credentialDigest: Buffer.alloc(32),
-    } });
-    const principal: WooInstallationPrincipal = {
-      shopId: persistedShopId, canonicalSiteUrl: domain, installationId: installation.id, credentialVersion: installation.credentialVersion,
-    };
-    const service = new MerchantRecoveryPolicyService(db);
-    const summaryService = new MerchantRecoverySummaryService(db);
-    const initial = await service.read(principal);
-    assert.equal(initial.revision, "UNCONFIGURED");
-    assert.equal(initial.merchant.recoveryDelayMinutes, 30);
-    assert.equal(initial.schemaVersion, 2);
-    assert.equal(initial.notifyOnInitialRecoveryOutreach, false);
-    assert.equal(await db.shopSettings.count({ where: { shopId: persistedShopId } }), 0);
-    const emptySummary = await summaryService.read(principal);
-    assert.equal(emptySummary.recoveryDelayMinutes, 30);
-    assert.equal(summaryStatements.length, 1);
-    assert.match(summaryStatements[0]!, /LEFT JOIN/);
-    assert.match(summaryStatements[0]!, /WHERE s\."id" = \$2/);
-
-    const first = await service.update(principal, {
-      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,
-      followUpDelayMinutes: 50, notifyOnInitialRecoveryOutreach: true,
+test(
+  "PostgreSQL recovery-policy GET/PUT locks the Shop and preserves override precedence",
+  {
+    skip: !databaseUrl,
+  },
+  async () => {
+    if (!databaseUrl) return;
+    const db = new PrismaClient({
+      datasources: { db: { url: databaseUrl } },
+      log: [{ emit: "event", level: "query" }],
     });
-    const row = await db.shopSettings.findUniqueOrThrow({ where: { shopId: persistedShopId } });
-    assert.equal(row.recoveryOfferMode, "NONE");
-    assert.equal(row.fixedShopifyDiscountId, null);
-    assert.equal(row.recoveryDelayMinutes, 45);
-    assert.equal(row.followUpEnabled, true);
-    assert.equal(row.followUpDelayMinutes, 50);
-    assert.equal(row.notifyOnInitialRecoveryOutreach, true);
-    assert.equal(first.merchant.recoveryDelayMinutes, 45);
-    assert.equal(first.effective.recoveryDelayMinutes, 45);
-    assert.equal(first.notifyOnInitialRecoveryOutreach, true);
-
-    // The identical request is an idempotent replay and must not create a new revision.
-    const replay = await service.update(principal, {
-      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,
-      followUpDelayMinutes: 50, notifyOnInitialRecoveryOutreach: true,
+    const summaryStatements: string[] = [];
+    db.$on("query", (event) => {
+      if (
+        /^\s*SELECT/i.test(event.query) &&
+        event.query.includes('"ShopSettings"') &&
+        event.query.includes('"ShopRecoveryPolicyOverride"')
+      )
+        summaryStatements.push(event.query);
     });
-    assert.equal(replay.revision, first.revision);
+    const domain = `https://${randomUUID()}.woo-policy.invalid`;
+    const adminEmail = `${randomUUID()}@woo-policy.invalid`;
+    let shopId: string | undefined;
+    let adminId: string | undefined;
+    try {
+      const shop = await db.shop.create({
+        data: {
+          domain,
+          platform: "WOOCOMMERCE",
+          status: "ACTIVE",
+          onboardingCompleted: true,
+        },
+      });
+      shopId = shop.id;
+      const persistedShopId: string = shop.id;
+      const installation = await db.wooCommerceInstallation.create({
+        data: {
+          shopId: persistedShopId,
+          canonicalSiteUrl: domain,
+          credentialDigest: Buffer.alloc(32),
+        },
+      });
+      const principal: WooInstallationPrincipal = {
+        shopId: persistedShopId,
+        canonicalSiteUrl: domain,
+        installationId: installation.id,
+        credentialVersion: installation.credentialVersion,
+      };
+      const service = new MerchantRecoveryPolicyService(db);
+      const summaryService = new MerchantRecoverySummaryService(db);
+      const initial = await service.read(principal);
+      assert.equal(initial.revision, "UNCONFIGURED");
+      assert.equal(initial.merchant.recoveryDelayMinutes, 30);
+      assert.equal(initial.schemaVersion, 2);
+      assert.equal(initial.notifyOnInitialRecoveryOutreach, false);
+      assert.equal(
+        await db.shopSettings.count({ where: { shopId: persistedShopId } }),
+        0,
+      );
+      const emptySummary = await summaryService.read(principal);
+      assert.equal(emptySummary.recoveryDelayMinutes, 30);
+      assert.equal(summaryStatements.length, 1);
+      assert.match(summaryStatements[0]!, /LEFT JOIN/);
+      assert.match(summaryStatements[0]!, /WHERE s\."id" = \$2/);
 
-    await assert.rejects(() => service.update(principal, {
-      expectedRevision: "UNCONFIGURED", recoveryDelayMinutes: 45, followUpEnabled: true,
-      followUpDelayMinutes: 50, notifyOnInitialRecoveryOutreach: false,
-    }), (error: unknown) => error instanceof RecoveryPolicyConflictError && error.code === "recovery_policy_conflict");
+      const first = await service.update(principal, {
+        expectedRevision: "UNCONFIGURED",
+        recoveryDelayMinutes: 45,
+        followUpEnabled: true,
+        followUpDelayMinutes: 50,
+        notifyOnInitialRecoveryOutreach: true,
+      });
+      const row = await db.shopSettings.findUniqueOrThrow({
+        where: { shopId: persistedShopId },
+      });
+      assert.equal(row.recoveryOfferMode, "NONE");
+      assert.equal(row.fixedShopifyDiscountId, null);
+      assert.equal(row.recoveryDelayMinutes, 45);
+      assert.equal(row.followUpEnabled, true);
+      assert.equal(row.followUpDelayMinutes, 50);
+      assert.equal(row.notifyOnInitialRecoveryOutreach, true);
+      assert.equal(first.merchant.recoveryDelayMinutes, 45);
+      assert.equal(first.effective.recoveryDelayMinutes, 45);
+      assert.equal(first.notifyOnInitialRecoveryOutreach, true);
 
-    const [one, two] = await Promise.allSettled([
-      service.update(principal, { expectedRevision: first.revision, recoveryDelayMinutes: 55,
-        followUpEnabled: true, followUpDelayMinutes: 90, notifyOnInitialRecoveryOutreach: true }),
-      service.update(principal, { expectedRevision: first.revision, recoveryDelayMinutes: 65,
-        followUpEnabled: true, followUpDelayMinutes: 120, notifyOnInitialRecoveryOutreach: true }),
-    ]);
-    assert.equal([one, two].filter((result) => result.status === "fulfilled").length, 1);
-    const loser = [one, two].find((result) => result.status === "rejected");
-    assert.ok(loser && loser.status === "rejected");
-    assert.ok(loser.reason instanceof RecoveryPolicyConflictError);
-    assert.equal(loser.reason.code, "recovery_policy_conflict");
+      // The identical request is an idempotent replay and must not create a new revision.
+      const replay = await service.update(principal, {
+        expectedRevision: "UNCONFIGURED",
+        recoveryDelayMinutes: 45,
+        followUpEnabled: true,
+        followUpDelayMinutes: 50,
+        notifyOnInitialRecoveryOutreach: true,
+      });
+      assert.equal(replay.revision, first.revision);
 
-    const admin = await db.platformAdmin.create({ data: { email: adminEmail } });
-    adminId = admin.id;
-    await db.shopRecoveryPolicyOverride.create({ data: {
-      shopId: persistedShopId, reason: "API-002 integration proof", updatedByPlatformAdminId: admin.id,
-      recoveryDelayMinutes: 90, recoveryOfferMode: "NONE", fixedShopifyDiscountId: null,
-      followUpEnabled: false, followUpDelayMinutes: null,
-    } });
-    const override = await service.read(principal);
-    assert.equal(override.source, "ADMIN_OVERRIDE");
-    assert.equal(override.effective.recoveryDelayMinutes, 90);
-    assert.notEqual(override.merchant.recoveryDelayMinutes, 90);
-    const changed = await service.update(principal, { expectedRevision: override.revision, recoveryDelayMinutes: 20,
-      followUpEnabled: false, followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: false });
-    assert.equal(changed.merchant.recoveryDelayMinutes, 20);
-    assert.equal(changed.effective.recoveryDelayMinutes, 90);
-    assert.equal(changed.notifyOnInitialRecoveryOutreach, false);
-    assert.equal(await db.shopRecoveryPolicyOverride.count({ where: { shopId: persistedShopId } }), 1);
-    const activeOverrideSummary = await summaryService.read(principal);
-    assert.equal(activeOverrideSummary.source, "ADMIN_OVERRIDE");
-    assert.equal(activeOverrideSummary.recoveryDelayMinutes, 90);
-    assert.equal(summaryStatements.length, 2);
+      await assert.rejects(
+        () =>
+          service.update(principal, {
+            expectedRevision: "UNCONFIGURED",
+            recoveryDelayMinutes: 45,
+            followUpEnabled: true,
+            followUpDelayMinutes: 50,
+            notifyOnInitialRecoveryOutreach: false,
+          }),
+        (error: unknown) =>
+          error instanceof RecoveryPolicyConflictError &&
+          error.code === "recovery_policy_conflict",
+      );
 
-    const notificationOnly = await service.update(principal, {
-      expectedRevision: changed.revision, recoveryDelayMinutes: 20, followUpEnabled: false,
-      followUpDelayMinutes: null, notifyOnInitialRecoveryOutreach: true,
-    });
-    assert.equal(notificationOnly.notifyOnInitialRecoveryOutreach, true);
-    assert.notEqual(notificationOnly.revision, changed.revision);
-    assert.equal(notificationOnly.effective.recoveryDelayMinutes, 90);
+      const [one, two] = await Promise.allSettled([
+        service.update(principal, {
+          expectedRevision: first.revision,
+          recoveryDelayMinutes: 55,
+          followUpEnabled: true,
+          followUpDelayMinutes: 90,
+          notifyOnInitialRecoveryOutreach: true,
+        }),
+        service.update(principal, {
+          expectedRevision: first.revision,
+          recoveryDelayMinutes: 65,
+          followUpEnabled: true,
+          followUpDelayMinutes: 120,
+          notifyOnInitialRecoveryOutreach: true,
+        }),
+      ]);
+      assert.equal(
+        [one, two].filter((result) => result.status === "fulfilled").length,
+        1,
+      );
+      const loser = [one, two].find((result) => result.status === "rejected");
+      assert.ok(loser && loser.status === "rejected");
+      assert.ok(loser.reason instanceof RecoveryPolicyConflictError);
+      assert.equal(loser.reason.code, "recovery_policy_conflict");
 
-    await db.shopRecoveryPolicyOverride.update({ where: { shopId: persistedShopId }, data: { expiresAt: new Date("2000-01-01T00:00:00.000Z") } });
-    const expired = await service.read(principal);
-    assert.equal(expired.source, "MERCHANT");
-    assert.equal(expired.effective.recoveryDelayMinutes, 20);
-    assert.equal(expired.notifyOnInitialRecoveryOutreach, true);
-    const expiredOverrideSummary = await summaryService.read(principal);
-    assert.equal(expiredOverrideSummary.source, "MERCHANT");
-    assert.equal(expiredOverrideSummary.recoveryDelayMinutes, 20);
-    assert.equal(summaryStatements.length, 3);
+      const admin = await db.platformAdmin.create({
+        data: { email: adminEmail },
+      });
+      adminId = admin.id;
+      await db.shopRecoveryPolicyOverride.create({
+        data: {
+          shopId: persistedShopId,
+          reason: "API-002 integration proof",
+          updatedByPlatformAdminId: admin.id,
+          recoveryDelayMinutes: 90,
+          recoveryOfferMode: "NONE",
+          fixedShopifyDiscountId: null,
+          followUpEnabled: false,
+          followUpDelayMinutes: null,
+        },
+      });
+      const override = await service.read(principal);
+      assert.equal(override.source, "ADMIN_OVERRIDE");
+      assert.equal(override.effective.recoveryDelayMinutes, 90);
+      assert.notEqual(override.merchant.recoveryDelayMinutes, 90);
+      const changed = await service.update(principal, {
+        expectedRevision: override.revision,
+        recoveryDelayMinutes: 20,
+        followUpEnabled: false,
+        followUpDelayMinutes: null,
+        notifyOnInitialRecoveryOutreach: false,
+      });
+      assert.equal(changed.merchant.recoveryDelayMinutes, 20);
+      assert.equal(changed.effective.recoveryDelayMinutes, 90);
+      assert.equal(changed.notifyOnInitialRecoveryOutreach, false);
+      assert.equal(
+        await db.shopRecoveryPolicyOverride.count({
+          where: { shopId: persistedShopId },
+        }),
+        1,
+      );
+      const activeOverrideSummary = await summaryService.read(principal);
+      assert.equal(activeOverrideSummary.source, "ADMIN_OVERRIDE");
+      assert.equal(activeOverrideSummary.recoveryDelayMinutes, 90);
+      assert.equal(summaryStatements.length, 2);
 
-    await db.wooCommerceInstallation.update({ where: { id: installation.id }, data: { credentialVersion: { increment: 1 } } });
-    await assert.rejects(() => service.update(principal, { expectedRevision: expired.revision,
-      recoveryDelayMinutes: 20, followUpEnabled: false, followUpDelayMinutes: null,
-      notifyOnInitialRecoveryOutreach: true }), RecoveryPolicyIntegrityError);
-    await assert.rejects(() => service.read({ ...principal, shopId: randomUUID() }), RecoveryPolicyIntegrityError);
-  } finally {
-    if (shopId) await db.shop.delete({ where: { id: shopId } });
-    if (adminId) await db.platformAdmin.delete({ where: { id: adminId } });
-    await db.$disconnect();
-  }
-});
+      const notificationOnly = await service.update(principal, {
+        expectedRevision: changed.revision,
+        recoveryDelayMinutes: 20,
+        followUpEnabled: false,
+        followUpDelayMinutes: null,
+        notifyOnInitialRecoveryOutreach: true,
+      });
+      assert.equal(notificationOnly.notifyOnInitialRecoveryOutreach, true);
+      assert.notEqual(notificationOnly.revision, changed.revision);
+      assert.equal(notificationOnly.effective.recoveryDelayMinutes, 90);
+
+      await db.shopRecoveryPolicyOverride.update({
+        where: { shopId: persistedShopId },
+        data: { expiresAt: new Date("2000-01-01T00:00:00.000Z") },
+      });
+      const expired = await service.read(principal);
+      assert.equal(expired.source, "MERCHANT");
+      assert.equal(expired.effective.recoveryDelayMinutes, 20);
+      assert.equal(expired.notifyOnInitialRecoveryOutreach, true);
+      const expiredOverrideSummary = await summaryService.read(principal);
+      assert.equal(expiredOverrideSummary.source, "MERCHANT");
+      assert.equal(expiredOverrideSummary.recoveryDelayMinutes, 20);
+      assert.equal(summaryStatements.length, 3);
+
+      await db.wooCommerceInstallation.update({
+        where: { id: installation.id },
+        data: { credentialVersion: { increment: 1 } },
+      });
+      await assert.rejects(
+        () =>
+          service.update(principal, {
+            expectedRevision: expired.revision,
+            recoveryDelayMinutes: 20,
+            followUpEnabled: false,
+            followUpDelayMinutes: null,
+            notifyOnInitialRecoveryOutreach: true,
+          }),
+        RecoveryPolicyIntegrityError,
+      );
+      await assert.rejects(
+        () => service.read({ ...principal, shopId: randomUUID() }),
+        RecoveryPolicyIntegrityError,
+      );
+    } finally {
+      if (shopId) await db.shop.delete({ where: { id: shopId } });
+      if (adminId) await db.platformAdmin.delete({ where: { id: adminId } });
+      await db.$disconnect();
+    }
+  },
+);

@@ -18,7 +18,10 @@ import { MerchantRecoveryDetailService } from "../merchant/recoveries/detail/rea
 import { createMerchantRecoveryDetailRoute } from "../merchant/recoveries/detail/routes.js";
 import { MerchantDiscountOffersService } from "../merchant/discount-offers/service.js";
 import { createMerchantDiscountOffersRoutes } from "../merchant/discount-offers/routes.js";
-import { StoreCategoriesReadService, commerceEnvironmentForApi } from "../merchant/store-categories/store-categories-read.service.js";
+import {
+  StoreCategoriesReadService,
+  commerceEnvironmentForApi,
+} from "../merchant/store-categories/store-categories-read.service.js";
 import { createStoreCategoriesRoute } from "../merchant/store-categories/routes.js";
 import { StoreCategorySelectionService } from "../merchant/store-categories/store-category-selection.service.js";
 import { createStoreCategorySelectionRoute } from "../merchant/store-categories/selection-routes.js";
@@ -37,7 +40,10 @@ import { MerchantConversationFollowUpService } from "../merchant/conversations/m
 import { MerchantConversationSendStatusService } from "../merchant/conversations/messages/status.service.js";
 import { createMerchantConversationMessageRoutes } from "../merchant/conversations/messages/routes.js";
 import { MerchantSupportReadService } from "../merchant/support/read.service.js";
-import { MerchantSupportCommandService, type SupportTranslationDispatch } from "../merchant/support/commands.service.js";
+import {
+  MerchantSupportCommandService,
+  type SupportTranslationDispatch,
+} from "../merchant/support/commands.service.js";
 import { createMerchantSupportRoutes } from "../merchant/support/routes.js";
 import { createMerchantUsageHistoryRoute } from "../merchant/usage-history/routes.js";
 import { MerchantUsageHistoryService } from "../merchant/usage-history/history.service.js";
@@ -57,72 +63,133 @@ export function createMerchantRoutes(options: {
 }): readonly ApiRouteHandler[] {
   const { prisma, authenticator, logger, environment } = options;
   const commerceEnvironment = commerceEnvironmentForApi(environment);
-  const transactionSenderFactory = createTransactionMessagingSenderFactory({ environment, logger });
-  const knowledgeRead = new MerchantKnowledgeReadService(prisma, undefined, options.platformConfiguration);
+  const transactionSenderFactory = createTransactionMessagingSenderFactory({
+    environment,
+    logger,
+  });
+  const knowledgeRead = new MerchantKnowledgeReadService(
+    prisma,
+    undefined,
+    options.platformConfiguration,
+  );
   return [
     createMerchantUsageHistoryRoute({
-      service: new MerchantUsageHistoryService(prisma), authenticator, logger,
+      service: new MerchantUsageHistoryService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantPromotionsRoutes({
-      service: new MerchantPromotionsService(prisma), authenticator, logger,
+      service: new MerchantPromotionsService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantSupportRoutes({
       read: new MerchantSupportReadService(prisma),
-      commands: new MerchantSupportCommandService(prisma,
-        options.supportTranslationDispatch ?? { async enqueue() { throw new Error("queue_unconfigured"); } },logger),
-      authenticator,logger,
+      commands: new MerchantSupportCommandService(
+        prisma,
+        options.supportTranslationDispatch ?? {
+          async enqueue() {
+            throw new Error("queue_unconfigured");
+          },
+        },
+        logger,
+      ),
+      authenticator,
+      logger,
     }),
     createMerchantConversationMessageRoutes({
-      admission: new MerchantConversationMessageAdmissionService(prisma, undefined, transactionSenderFactory),
+      admission: new MerchantConversationMessageAdmissionService(
+        prisma,
+        undefined,
+        transactionSenderFactory,
+      ),
       status: new MerchantConversationSendStatusService(prisma),
-      followUp: new MerchantConversationFollowUpService(prisma, transactionSenderFactory),
-      authenticator, logger,
+      followUp: new MerchantConversationFollowUpService(
+        prisma,
+        transactionSenderFactory,
+      ),
+      authenticator,
+      logger,
     }),
     createMerchantConversationControlRoute({
-      service: new MerchantConversationControlService(prisma), authenticator, logger,
+      service: new MerchantConversationControlService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantKnowledgeCommandRoute({
-      service: new MerchantKnowledgeCommandService(prisma, knowledgeRead), authenticator, logger,
+      service: new MerchantKnowledgeCommandService(prisma, knowledgeRead),
+      authenticator,
+      logger,
     }),
     createMerchantKnowledgeRoute({
       service: knowledgeRead,
-      authenticator, logger,
+      authenticator,
+      logger,
     }),
     createMerchantFeaturePreferencesRoute({
-      service: new MerchantFeaturePreferencesService(prisma), authenticator, logger,
+      service: new MerchantFeaturePreferencesService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantAiResponseDelayRoutes({
-      service: new MerchantAiResponseDelayService(prisma), authenticator, logger,
+      service: new MerchantAiResponseDelayService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantRecoverySummaryRoute({
-      service: new MerchantRecoverySummaryService(prisma), authenticator, logger,
+      service: new MerchantRecoverySummaryService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantRecoveryPolicyRoute({
-      service: new MerchantRecoveryPolicyService(prisma), authenticator, logger,
+      service: new MerchantRecoveryPolicyService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantRecoveriesRoute({
-      service: new MerchantRecoveryListService(prisma), authenticator, logger,
+      service: new MerchantRecoveryListService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantRecoveryDetailRoute({
-      service: new MerchantRecoveryDetailService(prisma), authenticator, logger,
+      service: new MerchantRecoveryDetailService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantDiscountOffersRoutes({
-      service: new MerchantDiscountOffersService(prisma), authenticator, logger,
+      service: new MerchantDiscountOffersService(prisma),
+      authenticator,
+      logger,
     }),
     createStoreCategoriesRoute({
-      service: new StoreCategoriesReadService(prisma, commerceEnvironment), authenticator, logger,
+      service: new StoreCategoriesReadService(prisma, commerceEnvironment),
+      authenticator,
+      logger,
     }),
     createStoreCategorySelectionRoute({
-      service: new StoreCategorySelectionService(prisma, commerceEnvironment), authenticator, logger,
+      service: new StoreCategorySelectionService(prisma, commerceEnvironment),
+      authenticator,
+      logger,
     }),
     createMerchantBootstrapRoute({
-      service: new MerchantBootstrapReadService(prisma), authenticator, logger,
+      service: new MerchantBootstrapReadService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantStoreContextRoute({
-      service: new MerchantStoreContextService(prisma), authenticator, logger,
+      service: new MerchantStoreContextService(prisma),
+      authenticator,
+      logger,
     }),
     createMerchantKnowledgeUploadRoutes({
-      service: new MerchantKnowledgeUploadService(prisma, { environment, ...(options.platformConfiguration ? { configuration: options.platformConfiguration } : {}) }), authenticator, logger,
+      service: new MerchantKnowledgeUploadService(prisma, {
+        environment,
+        ...(options.platformConfiguration
+          ? { configuration: options.platformConfiguration }
+          : {}),
+      }),
+      authenticator,
+      logger,
     }),
   ];
 }

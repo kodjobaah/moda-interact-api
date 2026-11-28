@@ -28,36 +28,51 @@ paths:
           schema: { type: string, maxLength: 64 }
       requestBody: { required: false }
       responses:
-        '201':
+        "201":
           description: Returns a short-lived WooCommerce consent URL; do not log it.
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-          content: { application/json: { schema: { $ref: '#/components/schemas/StartResponse' } } }
-        '400': { $ref: '#/components/responses/Error' }
-        '401': { $ref: '#/components/responses/Error' }
-        '409': { $ref: '#/components/responses/Error' }
-        '500': { $ref: '#/components/responses/Error' }
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/StartResponse" } },
+            }
+        "400": { $ref: "#/components/responses/Error" }
+        "401": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
   /v1/woocommerce/read-authorization:
     get:
       operationId: readWooAuthorizationStatus
       security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
       responses:
-        '200':
+        "200":
           description: Server-side grant state; no raw keys or callback material.
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-          content: { application/json: { schema: { $ref: '#/components/schemas/StatusResponse' } } }
-        '401': { $ref: '#/components/responses/Error' }
-        '500': { $ref: '#/components/responses/Error' }
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/StatusResponse" } },
+            }
+        "401": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
     delete:
       operationId: revokeWooLocalReadAuthorization
       description: Revoke Moda's stored grant; the merchant must separately revoke the provider key.
       security: [{ WooInstallationId: [], WooInstallationCredential: [] }]
       responses:
-        '200':
-          headers: { Cache-Control: { schema: { type: string, const: no-store } } }
+        "200":
+          headers:
+            { Cache-Control: { schema: { type: string, const: no-store } } }
           description: Local grant and pending consents have been disabled.
-          content: { application/json: { schema: { $ref: '#/components/schemas/RevokeResponse' } } }
-        '401': { $ref: '#/components/responses/Error' }
-        '500': { $ref: '#/components/responses/Error' }
+          content:
+            {
+              application/json:
+                { schema: { $ref: "#/components/schemas/RevokeResponse" } },
+            }
+        "401": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
   /v1/woocommerce/read-authorizations/callback/{opaqueAttemptToken}:
     post:
       operationId: acceptWooServerReadCredentialCallback
@@ -69,36 +84,64 @@ paths:
         - name: opaqueAttemptToken
           in: path
           required: true
-          schema: { type: string, pattern: '^[A-Za-z0-9_-]{43}$' }
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{43}$" }
       requestBody:
         required: true
         x-max-body-bytes: 4096
-        content: { application/json: { schema: { $ref: '#/components/schemas/CallbackPayload' } } }
+        content:
+          {
+            application/json:
+              { schema: { $ref: "#/components/schemas/CallbackPayload" } },
+          }
       responses:
-        '200': { description: WooCommerce-compatible acknowledgement; grant committed or identical callback safely replayed. }
-        '400': { $ref: '#/components/responses/Error' }
-        '404': { $ref: '#/components/responses/Error' }
-        '409': { $ref: '#/components/responses/Error' }
-        '410': { $ref: '#/components/responses/Error' }
-        '413': { $ref: '#/components/responses/Error' }
-        '422': { $ref: '#/components/responses/Error' }
-        '500': { $ref: '#/components/responses/Error' }
-        '503': { $ref: '#/components/responses/Error' }
+        "200":
+          {
+            description: WooCommerce-compatible acknowledgement; grant committed or identical callback safely replayed.,
+          }
+        "400": { $ref: "#/components/responses/Error" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "410": { $ref: "#/components/responses/Error" }
+        "413": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        "500": { $ref: "#/components/responses/Error" }
+        "503": { $ref: "#/components/responses/Error" }
   /v1/woocommerce/read-authorizations/return:
     get:
       operationId: showWooReadAuthorizationAdvisoryReturn
       summary: Informational browser return; never commits or claims credential status
       parameters:
-        - { name: success, in: query, schema: { type: string, enum: ['0', '1'] } }
+        - {
+            name: success,
+            in: query,
+            schema: { type: string, enum: ["0", "1"] },
+          }
         - { name: user_id, in: query, schema: { type: string } }
-        - { name: display_locale, in: query, schema: { type: string }, description: Signed presentation locale, never trusted alone. }
-        - { name: display_proof, in: query, schema: { type: string }, description: Attempt-bound HMAC proof of the presentation locale. }
+        - {
+            name: display_locale,
+            in: query,
+            schema: { type: string },
+            description: Signed presentation locale,
+            never trusted alone.,
+          }
+        - {
+            name: display_proof,
+            in: query,
+            schema: { type: string },
+            description: Attempt-bound HMAC proof of the presentation locale.,
+          }
       responses:
-        '200': { description: No-store, branded HTML advisory response with Content-Language and no user-supplied reflection. }
+        "200":
+          {
+            description: No-store,
+            branded HTML advisory response with Content-Language and no user-supplied reflection.,
+          }
 components:
   securitySchemes:
-    WooInstallationId: { type: apiKey, in: header, name: X-Moda-Installation-Id }
-    WooInstallationCredential: { type: http, scheme: bearer, bearerFormat: Moda installation credential }
+    WooInstallationId:
+      { type: apiKey, in: header, name: X-Moda-Installation-Id }
+    WooInstallationCredential:
+      { type: http, scheme: bearer, bearerFormat: Moda installation credential }
   schemas:
     StartResponse:
       type: object
@@ -106,7 +149,12 @@ components:
       required: [schemaVersion, authorizationUrl, expiresAt]
       properties:
         schemaVersion: { type: integer, const: 1 }
-        authorizationUrl: { type: string, format: uri, description: Contains short-lived callback material; never log. }
+        authorizationUrl:
+          {
+            type: string,
+            format: uri,
+            description: Contains short-lived callback material; never log.,
+          }
         expiresAt: { type: string, format: date-time }
     StatusResponse:
       type: object
@@ -114,7 +162,11 @@ components:
       required: [schemaVersion, status, providerRevocationRequired]
       properties:
         schemaVersion: { type: integer, const: 1 }
-        status: { type: string, enum: [CONNECTED, PENDING, NOT_CONNECTED, REAUTHORIZATION_REQUIRED] }
+        status:
+          {
+            type: string,
+            enum: [CONNECTED, PENDING, NOT_CONNECTED, REAUTHORIZATION_REQUIRED],
+          }
         providerRevocationRequired: { type: boolean }
     RevokeResponse:
       type: object
@@ -127,12 +179,13 @@ components:
     CallbackPayload:
       type: object
       additionalProperties: false
-      required: [key_id, user_id, consumer_key, consumer_secret, key_permissions]
+      required:
+        [key_id, user_id, consumer_key, consumer_secret, key_permissions]
       properties:
         key_id: { type: integer, minimum: 1 }
         user_id: { type: string, minLength: 1, maxLength: 128 }
-        consumer_key: { type: string, pattern: '^ck_[A-Za-z0-9]{40}$' }
-        consumer_secret: { type: string, pattern: '^cs_[A-Za-z0-9]{40}$' }
+        consumer_key: { type: string, pattern: "^ck_[A-Za-z0-9]{40}$" }
+        consumer_secret: { type: string, pattern: "^cs_[A-Za-z0-9]{40}$" }
         key_permissions: { type: string, const: read }
     Error:
       type: object
@@ -143,4 +196,5 @@ components:
     Error:
       description: Bounded error without provider secrets, store responses or callback tokens.
       headers: { Cache-Control: { schema: { type: string, const: no-store } } }
-      content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+      content:
+        { application/json: { schema: { $ref: "#/components/schemas/Error" } } }

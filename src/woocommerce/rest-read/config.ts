@@ -11,7 +11,6 @@ export interface WooRestReadAuthorizationConfig {
   publicOrigin: string;
   activeKeyId: string;
   keyring: CredentialKeyring;
-
 }
 
 /** Isolated config helper. Production resolves deployment encryption keys lazily through API-001. */
@@ -35,14 +34,28 @@ export function loadWooRestReadAuthorizationConfig(
     throw new Error("Woo REST read authorization origin is invalid");
   }
   const host = origin.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const isLocalName = host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || isIP(host) !== 0;
+  const isLocalName =
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    isIP(host) !== 0;
   if (
-    origin.username || origin.password || origin.search || origin.hash || origin.pathname !== "/" ||
-    (origin.protocol !== "https:" && !(connectionMode === "local-development" && origin.protocol === "http:")) ||
+    origin.username ||
+    origin.password ||
+    origin.search ||
+    origin.hash ||
+    origin.pathname !== "/" ||
+    (origin.protocol !== "https:" &&
+      !(
+        connectionMode === "local-development" && origin.protocol === "http:"
+      )) ||
     (connectionMode === "public" && (isLocalName || origin.port !== "")) ||
-    (origin.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(host))
+    (origin.protocol === "http:" &&
+      !["localhost", "127.0.0.1", "::1"].includes(host))
   ) {
-    throw new Error("Woo REST read authorization origin must be an approved API origin");
+    throw new Error(
+      "Woo REST read authorization origin must be an approved API origin",
+    );
   }
 
   let keyring: CredentialKeyring;
@@ -53,14 +66,19 @@ export function loadWooRestReadAuthorizationConfig(
     keyring = parseCredentialKeyring(rawKeyring);
     activeKeyId = resolveActiveCredentialKey(keyring, activeKeyIdRaw);
   } catch {
-    throw new Error("Woo REST read authorization credential configuration is invalid");
+    throw new Error(
+      "Woo REST read authorization credential configuration is invalid",
+    );
   }
 
   return { publicOrigin: origin.origin, activeKeyId, keyring };
 }
 
 /** Deployment routing only. Encryption keys are resolved lazily from the unified deployment configuration. */
-export function loadWooRestReadPublicOrigin(environment: RuntimeEnvironment, connectionMode: WooConnectionMode): string | null {
+export function loadWooRestReadPublicOrigin(
+  environment: RuntimeEnvironment,
+  connectionMode: WooConnectionMode,
+): string | null {
   const originValue = environment.MODA_WOO_REST_READ_PUBLIC_ORIGIN?.trim();
   if (!originValue) return null;
   let origin: URL;
@@ -70,14 +88,28 @@ export function loadWooRestReadPublicOrigin(environment: RuntimeEnvironment, con
     throw new Error("Woo REST read authorization origin is invalid");
   }
   const host = origin.hostname.toLowerCase().replace(/^\[|\]$/g, "");
-  const isLocalName = host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || isIP(host) !== 0;
+  const isLocalName =
+    host === "localhost" ||
+    host.endsWith(".localhost") ||
+    host.endsWith(".local") ||
+    isIP(host) !== 0;
   if (
-    origin.username || origin.password || origin.search || origin.hash || origin.pathname !== "/" ||
-    (origin.protocol !== "https:" && !(connectionMode === "local-development" && origin.protocol === "http:")) ||
+    origin.username ||
+    origin.password ||
+    origin.search ||
+    origin.hash ||
+    origin.pathname !== "/" ||
+    (origin.protocol !== "https:" &&
+      !(
+        connectionMode === "local-development" && origin.protocol === "http:"
+      )) ||
     (connectionMode === "public" && (isLocalName || origin.port !== "")) ||
-    (origin.protocol === "http:" && !["localhost", "127.0.0.1", "::1"].includes(host))
+    (origin.protocol === "http:" &&
+      !["localhost", "127.0.0.1", "::1"].includes(host))
   ) {
-    throw new Error("Woo REST read authorization origin must be an approved API origin");
+    throw new Error(
+      "Woo REST read authorization origin must be an approved API origin",
+    );
   }
 
   return origin.origin;

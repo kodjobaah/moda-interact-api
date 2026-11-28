@@ -2,9 +2,18 @@ import { WooBillingProviderError } from "../../woocommerce/billing/woo-billing-c
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
 import { validateIdempotencyKey } from "./recurring-command-primitives.js";
-import { RecurringBillingCommandError, type RecurringSubscriptionCommandService } from "./recurring-subscription-command.service.js";
-import { RecoveryCreditPurchaseCommandError, type RecoveryCreditPurchaseCommandService } from "./recovery-credit-purchase-command.service.js";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
+import {
+  RecurringBillingCommandError,
+  type RecurringSubscriptionCommandService,
+} from "./recurring-subscription-command.service.js";
+import {
+  RecoveryCreditPurchaseCommandError,
+  type RecoveryCreditPurchaseCommandService,
+} from "./recovery-credit-purchase-command.service.js";
+import {
+  WooUnauthenticatedError,
+  type WooInstallationAuthenticator,
+} from "../../auth/woo-installation/authenticator.js";
 import {
   HttpFailure,
   parseRecurringPlanRequest,
@@ -16,8 +25,10 @@ import {
 } from "./command-http.js";
 
 export const BILLING_SUBSCRIPTION_ROUTE_PATH = "/v1/billing/subscription";
-export const BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH = "/v1/billing/subscription/switch";
-export const BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH = "/v1/billing/recovery-credit-purchases";
+export const BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH =
+  "/v1/billing/subscription/switch";
+export const BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH =
+  "/v1/billing/recovery-credit-purchases";
 
 interface BillingCommandRouteOptions {
   recurringSubscriptionCommandService?: RecurringSubscriptionCommandService;
@@ -34,23 +45,34 @@ export function createBillingCommandRoutes({
   authenticator,
   logger,
   now = Date.now,
-}: BillingCommandRouteOptions): { handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> } {
+}: BillingCommandRouteOptions): {
+  handle(request: IncomingMessage, response: ServerResponse): Promise<boolean>;
+} {
   return {
     async handle(request, response) {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
       if (
-        requestUrl.pathname === BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH && request.method === "POST"
+        requestUrl.pathname === BILLING_RECOVERY_CREDIT_PURCHASES_ROUTE_PATH &&
+        request.method === "POST"
       ) {
         const startedAt = now();
         try {
           const principal = await authenticator.authenticate(request);
           const idempotencyHeader = singleHeader(request, "idempotency-key");
-          const requestKey = idempotencyHeader.count === 1 ? validateIdempotencyKey(idempotencyHeader.value) : null;
-          if (!requestKey) throw new HttpFailure(400, "invalid_idempotency_key");
+          const requestKey =
+            idempotencyHeader.count === 1
+              ? validateIdempotencyKey(idempotencyHeader.value)
+              : null;
+          if (!requestKey)
+            throw new HttpFailure(400, "invalid_idempotency_key");
           if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
-          const merchantPricingUsageEventId = await parseRecoveryCreditPurchaseRequest(request);
+          const merchantPricingUsageEventId =
+            await parseRecoveryCreditPurchaseRequest(request);
           if (!recoveryCreditPurchaseCommandService) {
-            throw new RecoveryCreditPurchaseCommandError(503, "billing_provider_unavailable");
+            throw new RecoveryCreditPurchaseCommandError(
+              503,
+              "billing_provider_unavailable",
+            );
           }
           const result = await recoveryCreditPurchaseCommandService.initiate(
             principal,
@@ -78,7 +100,8 @@ export function createBillingCommandRoutes({
               operationId: error.operationId ?? null,
               durationMs: Math.max(0, now() - startedAt),
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -91,9 +114,11 @@ export function createBillingCommandRoutes({
               error.purchaseId,
             );
           } else {
-            logger.error("billing.recovery_credit_purchase.command.failed", { reason: "internal",
+            logger.error("billing.recovery_credit_purchase.command.failed", {
+              reason: "internal",
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -104,33 +129,60 @@ export function createBillingCommandRoutes({
       }
 
       if (
-        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH && request.method === "POST") ||
-        (requestUrl.pathname === BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH && request.method === "POST") ||
-        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH && request.method === "DELETE")
+        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH &&
+          request.method === "POST") ||
+        (requestUrl.pathname === BILLING_SUBSCRIPTION_SWITCH_ROUTE_PATH &&
+          request.method === "POST") ||
+        (requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH &&
+          request.method === "DELETE")
       ) {
         const startedAt = now();
         try {
           const principal = await authenticator.authenticate(request);
           const idempotencyHeader = singleHeader(request, "idempotency-key");
-          const requestKey = idempotencyHeader.count === 1 ? validateIdempotencyKey(idempotencyHeader.value) : null;
-          if (!requestKey) throw new HttpFailure(400, "invalid_idempotency_key");
+          const requestKey =
+            idempotencyHeader.count === 1
+              ? validateIdempotencyKey(idempotencyHeader.value)
+              : null;
+          if (!requestKey)
+            throw new HttpFailure(400, "invalid_idempotency_key");
           if (requestUrl.search) throw new HttpFailure(400, "invalid_request");
 
           let result;
           if (request.method === "DELETE") {
-            if (requestHasBody(request)) throw new HttpFailure(400, "invalid_request");
+            if (requestHasBody(request))
+              throw new HttpFailure(400, "invalid_request");
             if (!recurringSubscriptionCommandService) {
-              throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
+              throw new RecurringBillingCommandError(
+                503,
+                "billing_provider_unavailable",
+              );
             }
-            result = await recurringSubscriptionCommandService.cancel(principal, requestKey);
+            result = await recurringSubscriptionCommandService.cancel(
+              principal,
+              requestKey,
+            );
           } else {
-            const merchantPricingPlanId = await parseRecurringPlanRequest(request);
+            const merchantPricingPlanId =
+              await parseRecurringPlanRequest(request);
             if (!recurringSubscriptionCommandService) {
-              throw new RecurringBillingCommandError(503, "billing_provider_unavailable");
+              throw new RecurringBillingCommandError(
+                503,
+                "billing_provider_unavailable",
+              );
             }
-            result = requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH
-              ? await recurringSubscriptionCommandService.create(principal, requestKey, merchantPricingPlanId)
-              : await recurringSubscriptionCommandService.switchPlan(principal, requestKey, merchantPricingPlanId);
+            result =
+              requestUrl.pathname === BILLING_SUBSCRIPTION_ROUTE_PATH
+                ? await recurringSubscriptionCommandService.create(
+                    principal,
+                    requestKey,
+                    merchantPricingPlanId,
+                  )
+                : await recurringSubscriptionCommandService.switchPlan(
+                    principal,
+                    requestKey,
+                    merchantPricingPlanId,
+                  );
           }
           logger.info("billing.recurring.command", {
             shopId: principal.shopId,
@@ -153,15 +205,24 @@ export function createBillingCommandRoutes({
               operationId: error.operationId ?? null,
               durationMs: Math.max(0, now() - startedAt),
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
-            sendError(response, error.statusCode, error.code, error.operationId, error.safeProviderCode);
+            sendError(
+              response,
+              error.statusCode,
+              error.code,
+              error.operationId,
+              error.safeProviderCode,
+            );
           } else {
-            logger.error("billing.recurring.command.failed", { reason: "internal",
+            logger.error("billing.recurring.command.failed", {
+              reason: "internal",
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -177,8 +238,14 @@ export function createBillingCommandRoutes({
 }
 
 // Domain-specific provider evidence; shared logging owns serialization/redaction.
-function providerDiagnostics(error: Error): { providerError?: Readonly<Record<string, unknown>> } {
-  const provider = error instanceof WooBillingProviderError ? error :
-    error.cause instanceof WooBillingProviderError ? error.cause : undefined;
+function providerDiagnostics(error: Error): {
+  providerError?: Readonly<Record<string, unknown>>;
+} {
+  const provider =
+    error instanceof WooBillingProviderError
+      ? error
+      : error.cause instanceof WooBillingProviderError
+        ? error.cause
+        : undefined;
   return provider?.diagnostics ? { providerError: provider.diagnostics } : {};
 }

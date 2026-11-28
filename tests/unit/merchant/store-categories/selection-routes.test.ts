@@ -6,13 +6,31 @@ import { createApiRuntime } from "../../../../src/server.js";
 import { loadRuntimeConfig } from "../../../../src/runtime-config.js";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 import { StoreCategorySelectionError } from "../../../../src/merchant/store-categories/selection-errors.js";
-import { createStoreCategorySelectionRoute, MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH } from "../../../../src/merchant/store-categories/selection-routes.js";
+import {
+  createStoreCategorySelectionRoute,
+  MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH,
+} from "../../../../src/merchant/store-categories/selection-routes.js";
 
-const auth = { "x-moda-installation-id": "install_1", authorization: `Bearer ${"A".repeat(43)}` };
-const valid = { schemaVersion: 1, categoryId: "cat_1", selectedMappingIds: ["map_1"], expectedPendingSelectionGeneration: 0 };
-const success = { schemaVersion: 1, activeCategoryId: "cat_1", activePromptRevisionId: "rev_1", activeMappingIds: ["map_1"], pendingSelectionGeneration: 1 };
+const auth = {
+  "x-moda-installation-id": "install_1",
+  authorization: `Bearer ${"A".repeat(43)}`,
+};
+const valid = {
+  schemaVersion: 1,
+  categoryId: "cat_1",
+  selectedMappingIds: ["map_1"],
+  expectedPendingSelectionGeneration: 0,
+};
+const success = {
+  schemaVersion: 1,
+  activeCategoryId: "cat_1",
+  activePromptRevisionId: "rev_1",
+  activeMappingIds: ["map_1"],
+  pendingSelectionGeneration: 1,
+};
 
-type Failure = "auth" | "unavailable" | "conflict" | "inactive" | "revoked" | "internal";
+type Failure =
+  "auth" | "unavailable" | "conflict" | "inactive" | "revoked" | "internal";
 
 async function withRuntime(
   run: (baseUrl: string, calls: string[], logs: string[]) => Promise<void>,
@@ -20,30 +38,53 @@ async function withRuntime(
 ): Promise<void> {
   const calls: string[] = [];
   const logs: string[] = [];
-  const logger = createLogger({ serviceName: "category-select-test", environment: "test", sink: (line) => logs.push(JSON.stringify(line)) });
+  const logger = createLogger({
+    serviceName: "category-select-test",
+    environment: "test",
+    sink: (line) => logs.push(JSON.stringify(line)),
+  });
   const authenticator = {
     authenticate: async (request: IncomingMessage) => {
       calls.push("authenticate");
-      if (failure === "auth" || !request.headers.authorization) throw new WooUnauthenticatedError();
-      return { shopId: "shop_1", installationId: "install_1", canonicalSiteUrl: "https://woo.example", credentialVersion: 1 };
+      if (failure === "auth" || !request.headers.authorization)
+        throw new WooUnauthenticatedError();
+      return {
+        shopId: "shop_1",
+        installationId: "install_1",
+        canonicalSiteUrl: "https://woo.example",
+        credentialVersion: 1,
+      };
     },
   };
   const selection = createStoreCategorySelectionRoute({
     authenticator: authenticator as never,
-    service: { select: async (principal: { shopId: string }, input: unknown) => {
-      calls.push(`select:${principal.shopId}`);
-      assert.deepEqual(input, valid);
-      if (failure === "unavailable") throw new StoreCategorySelectionError("category_unavailable");
-      if (failure === "conflict" || failure === "revoked") throw new StoreCategorySelectionError("store_category_conflict");
-      if (failure === "inactive") throw new StoreCategorySelectionError("subscription_not_active");
-      if (failure === "internal") throw new Error("secret connection details");
-      return success;
-    } } as never,
+    service: {
+      select: async (principal: { shopId: string }, input: unknown) => {
+        calls.push(`select:${principal.shopId}`);
+        assert.deepEqual(input, valid);
+        if (failure === "unavailable")
+          throw new StoreCategorySelectionError("category_unavailable");
+        if (failure === "conflict" || failure === "revoked")
+          throw new StoreCategorySelectionError("store_category_conflict");
+        if (failure === "inactive")
+          throw new StoreCategorySelectionError("subscription_not_active");
+        if (failure === "internal")
+          throw new Error("secret connection details");
+        return success;
+      },
+    } as never,
     logger,
   });
   const runtime = createApiRuntime(
-    { ...loadRuntimeConfig({ DATABASE_URL: "postgresql://user:pass@127.0.0.1/moda" }), port: 0 },
-    { probe: async () => undefined, disconnect: async () => undefined }, logger, [selection],
+    {
+      ...loadRuntimeConfig({
+        DATABASE_URL: "postgresql://user:pass@127.0.0.1/moda",
+      }),
+      port: 0,
+    },
+    { probe: async () => undefined, disconnect: async () => undefined },
+    logger,
+    [selection],
   );
   await runtime.start();
   const address = runtime.server.address();
@@ -55,12 +96,27 @@ async function withRuntime(
   }
 }
 
-function post(base: string, value: unknown = valid, extras: { path?: string; headers?: Record<string, string>; raw?: string } = {}) {
-  return fetch(`${base}${MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH}${extras.path ?? ""}`, {
-    method: "POST",
-    headers: { ...auth, "content-type": "application/json", ...extras.headers },
-    body: extras.raw ?? JSON.stringify(value),
-  });
+function post(
+  base: string,
+  value: unknown = valid,
+  extras: {
+    path?: string;
+    headers?: Record<string, string>;
+    raw?: string;
+  } = {},
+) {
+  return fetch(
+    `${base}${MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH}${extras.path ?? ""}`,
+    {
+      method: "POST",
+      headers: {
+        ...auth,
+        "content-type": "application/json",
+        ...extras.headers,
+      },
+      body: extras.raw ?? JSON.stringify(value),
+    },
+  );
 }
 
 test("API-006 POST authenticates, routes, logs metadata and returns authoritative generation", async () => {
@@ -70,9 +126,16 @@ test("API-006 POST authenticates, routes, logs metadata and returns authoritativ
     assert.deepEqual(await response.json(), success);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(calls, ["authenticate", "select:shop_1"]);
-    assert.ok(logs.some((line) => line.includes('"event":"merchant.store_category.select"')));
+    assert.ok(
+      logs.some((line) =>
+        line.includes('"event":"merchant.store_category.select"'),
+      ),
+    );
     assert.equal(logs.join(" ").includes(auth.authorization), false);
-    const read = await fetch(`${base}${MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH}`, { headers: auth });
+    const read = await fetch(
+      `${base}${MERCHANT_STORE_CATEGORY_SELECTION_ROUTE_PATH}`,
+      { headers: auth },
+    );
     assert.equal(read.status, 404);
     assert.deepEqual(calls, ["authenticate", "select:shop_1"]);
   });
@@ -90,7 +153,8 @@ test("unauthorized request never parses or publishes", async () => {
 test("invalid, oversized and tampered bodies never call the selection service", async () => {
   await withRuntime(async (base, calls) => {
     for (const payload of [
-      { ...valid, shopId: "other" }, { ...valid, selectedMappingIds: ["map_1", "map_1"] },
+      { ...valid, shopId: "other" },
+      { ...valid, selectedMappingIds: ["map_1", "map_1"] },
       { ...valid, expectedPendingSelectionGeneration: -1 },
       { ...valid, schemaVersion: 2 },
     ]) {
@@ -105,7 +169,9 @@ test("invalid, oversized and tampered bodies never call the selection service", 
       const result = await post(base, valid, extra);
       assert.equal(result.status, 400);
     }
-    const large = await post(base, valid, { raw: JSON.stringify({ ...valid, extra: "X".repeat(5000) }) });
+    const large = await post(base, valid, {
+      raw: JSON.stringify({ ...valid, extra: "X".repeat(5000) }),
+    });
     assert.equal(large.status, 413);
     assert.equal(calls.filter((call) => call.startsWith("select:")).length, 0);
   });
@@ -113,17 +179,25 @@ test("invalid, oversized and tampered bodies never call the selection service", 
 
 test("category, generation and billing failures retain stable HTTP codes and include underlying diagnostics", async () => {
   for (const [kind, status, code] of [
-    ["unavailable", 422, "category_unavailable"], ["conflict", 409, "store_category_conflict"],
-    ["inactive", 409, "subscription_not_active"], ["revoked", 409, "store_category_conflict"],
+    ["unavailable", 422, "category_unavailable"],
+    ["conflict", 409, "store_category_conflict"],
+    ["inactive", 409, "subscription_not_active"],
+    ["revoked", 409, "store_category_conflict"],
     ["internal", 500, "internal_error"],
   ] as const) {
     await withRuntime(async (base, calls, logs) => {
       const response = await post(base);
       assert.equal(response.status, status);
       assert.deepEqual(await response.json(), { error: code });
-      assert.equal(calls.filter((call) => call.startsWith("select:")).length, 1);
+      assert.equal(
+        calls.filter((call) => call.startsWith("select:")).length,
+        1,
+      );
       if (kind === "internal") {
-        assert.equal(logs.join(" ").includes("secret connection details"), true);
+        assert.equal(
+          logs.join(" ").includes("secret connection details"),
+          true,
+        );
       }
     }, kind);
   }

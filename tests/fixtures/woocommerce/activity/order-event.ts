@@ -1,4 +1,7 @@
-import { WOO_ACTIVITY_VERSION, type WooOrderEvent } from "../../../../src/woocommerce/activity/contract.js";
+import {
+  WOO_ACTIVITY_VERSION,
+  type WooOrderEvent,
+} from "../../../../src/woocommerce/activity/contract.js";
 
 export const orderPlaced: WooOrderEvent = {
   schemaVersion: WOO_ACTIVITY_VERSION,
@@ -9,10 +12,16 @@ export const orderPlaced: WooOrderEvent = {
   order: { orderId: "42", checkoutKey: "cart-001", status: "processing" },
 };
 export const orderPaid: WooOrderEvent = {
-  ...orderPlaced, eventId: "woo-order-42-paid", eventType: "ORDER_PAID",
-  occurredAt: "2026-10-20T12:02:00.000Z", order: { ...orderPlaced.order, status: "completed" },
+  ...orderPlaced,
+  eventId: "woo-order-42-paid",
+  eventType: "ORDER_PAID",
+  occurredAt: "2026-10-20T12:02:00.000Z",
+  order: { ...orderPlaced.order, status: "completed" },
 };
 export const orderCancelled: WooOrderEvent = {
-  ...orderPlaced, eventId: "woo-order-42-cancelled", eventType: "ORDER_CANCELLED",
-  occurredAt: "2026-10-20T12:03:00.000Z", order: { ...orderPlaced.order, status: "cancelled" },
+  ...orderPlaced,
+  eventId: "woo-order-42-cancelled",
+  eventType: "ORDER_CANCELLED",
+  occurredAt: "2026-10-20T12:03:00.000Z",
+  order: { ...orderPlaced.order, status: "cancelled" },
 };

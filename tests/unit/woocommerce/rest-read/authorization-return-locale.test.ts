@@ -5,47 +5,81 @@ import { signWooReturnLocale } from "../../../../src/woocommerce/rest-read/retur
 import { loadWooRestReadAuthorizationConfig } from "../../../../src/woocommerce/rest-read/config.js";
 
 function config() {
-  return loadWooRestReadAuthorizationConfig({
-    MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.invalid",
-    MODA_ENCRYPTION_ACTIVE_KEY_ID: "v1",
-    MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({ v1: Buffer.alloc(32, 3).toString("base64") }),
-  }, "public") ?? (() => { throw new Error("Woo read test configuration must be enabled"); })();
+  return (
+    loadWooRestReadAuthorizationConfig(
+      {
+        MODA_WOO_REST_READ_PUBLIC_ORIGIN: "https://api.invalid",
+        MODA_ENCRYPTION_ACTIVE_KEY_ID: "v1",
+        MODA_ENCRYPTION_KEYS_JSON: JSON.stringify({
+          v1: Buffer.alloc(32, 3).toString("base64"),
+        }),
+      },
+      "public",
+    ) ??
+    (() => {
+      throw new Error("Woo read test configuration must be enabled");
+    })()
+  );
 }
 
-function serviceWithShop(storeLocale: string | null, defaultLanguageTag: string | null) {
+function serviceWithShop(
+  storeLocale: string | null,
+  defaultLanguageTag: string | null,
+) {
   const calls: unknown[] = [];
-  const service = new WooReadAuthorizationService({
-    wooCommerceRestReadAttempt: {
-      findUnique: async (args: unknown) => {
-        calls.push(args);
-        return {
-          shopId: "shop-one",
-          installation: {
+  const service = new WooReadAuthorizationService(
+    {
+      wooCommerceRestReadAttempt: {
+        findUnique: async (args: unknown) => {
+          calls.push(args);
+          return {
             shopId: "shop-one",
-            shop: { storeLocale, defaultLanguageTag },
-          },
-        };
+            installation: {
+              shopId: "shop-one",
+              shop: { storeLocale, defaultLanguageTag },
+            },
+          };
+        },
       },
-    },
-  } as never, config(), "local-development", {} as never);
+    } as never,
+    config(),
+    "local-development",
+    {} as never,
+  );
   return { service, calls };
 }
 
 test("browser return resolves the stored Woo shop locale using the canonical 20-language mapping", async () => {
   const examples: ReadonlyArray<readonly [string, string]> = [
-    ["de_DE", "de"], ["en_US", "en"], ["pt_BR", "pt-BR"], ["pt_PT", "pt-PT"],
-    ["zh_Hans_CN", "zh-Hans"], ["zh_Hant_TW", "zh-Hant"], ["fr_FR", "fr"],
-    ["nb_NO", "nb"], ["ja", "ja"], ["zz_UNSUPPORTED", "en"],
+    ["de_DE", "de"],
+    ["en_US", "en"],
+    ["pt_BR", "pt-BR"],
+    ["pt_PT", "pt-PT"],
+    ["zh_Hans_CN", "zh-Hans"],
+    ["zh_Hant_TW", "zh-Hant"],
+    ["fr_FR", "fr"],
+    ["nb_NO", "nb"],
+    ["ja", "ja"],
+    ["zz_UNSUPPORTED", "en"],
   ];
   for (const [stored, expected] of examples) {
     const { service, calls } = serviceWithShop(stored, "it-IT");
-    assert.equal(await service.returnLocale("opaque-attempt-id"), expected, stored ?? "missing");
+    assert.equal(
+      await service.returnLocale("opaque-attempt-id"),
+      expected,
+      stored ?? "missing",
+    );
     assert.equal(calls.length, 1);
     assert.deepEqual(calls[0], {
       where: { id: "opaque-attempt-id" },
       select: {
         shopId: true,
-        installation: { select: { shopId: true, shop: { select: { storeLocale: true, defaultLanguageTag: true } } } },
+        installation: {
+          select: {
+            shopId: true,
+            shop: { select: { storeLocale: true, defaultLanguageTag: true } },
+          },
+        },
       },
     });
   }
@@ -65,24 +99,47 @@ test("browser return falls back to English without querying when attempt id is i
 });
 
 test("browser return does not resolve language from an installation belonging to a different shop", async () => {
-  const service = new WooReadAuthorizationService({
-    wooCommerceRestReadAttempt: {
-      findUnique: async () => ({
-        shopId: "shop-one",
-        installation: { shopId: "shop-two", shop: { storeLocale: "de_DE", defaultLanguageTag: "de-DE" } },
-      }),
-    },
-  } as never, config(), "local-development", {} as never);
+  const service = new WooReadAuthorizationService(
+    {
+      wooCommerceRestReadAttempt: {
+        findUnique: async () => ({
+          shopId: "shop-one",
+          installation: {
+            shopId: "shop-two",
+            shop: { storeLocale: "de_DE", defaultLanguageTag: "de-DE" },
+          },
+        }),
+      },
+    } as never,
+    config(),
+    "local-development",
+    {} as never,
+  );
   assert.equal(await service.returnLocale("opaque-attempt-id"), "en");
 });
 
-
 test("valid administrator preference overrides shop language; tampering falls back to shop", async () => {
   const { service } = serviceWithShop("de_DE", "de-DE");
-  const proof = signWooReturnLocale(config(),
-    "opaque-attempt-id", "shop-one", "en");
-  assert.equal(await service.returnLocale("opaque-attempt-id", "en", proof), "en");
-  assert.equal(await service.returnLocale("opaque-attempt-id", "fr", proof), "de");
-  assert.equal(await service.returnLocale("opaque-attempt-id", "en", "wrong-proof"), "de");
-  assert.equal(await service.returnLocale("opaque-attempt-id", "en", null), "de");
+  const proof = signWooReturnLocale(
+    config(),
+    "opaque-attempt-id",
+    "shop-one",
+    "en",
+  );
+  assert.equal(
+    await service.returnLocale("opaque-attempt-id", "en", proof),
+    "en",
+  );
+  assert.equal(
+    await service.returnLocale("opaque-attempt-id", "fr", proof),
+    "de",
+  );
+  assert.equal(
+    await service.returnLocale("opaque-attempt-id", "en", "wrong-proof"),
+    "de",
+  );
+  assert.equal(
+    await service.returnLocale("opaque-attempt-id", "en", null),
+    "de",
+  );
 });

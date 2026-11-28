@@ -1,8 +1,11 @@
 import { Prisma, type PrismaClient } from "@prisma/client";
 import { normalizeRecipientPhone } from "@modainteract/moda-interact-shared/identity";
 import type { WooInstallationPrincipal } from "../../auth/woo-installation/principal.js";
-import { WOO_CONSENT_STATUS_VERSION, type WooConsentStatusProbe,
-  type WooConsentStatusResult } from "./contract.js";
+import {
+  WOO_CONSENT_STATUS_VERSION,
+  type WooConsentStatusProbe,
+  type WooConsentStatusResult,
+} from "./contract.js";
 
 type ReadDatabase = Pick<PrismaClient, "$queryRaw">;
 type Match = { matched: number };
@@ -17,7 +20,10 @@ type Match = { matched: number };
 export class WooConsentStatusService {
   constructor(private readonly database: ReadDatabase) {}
 
-  async read(principal: WooInstallationPrincipal, probe: WooConsentStatusProbe): Promise<WooConsentStatusResult> {
+  async read(
+    principal: WooInstallationPrincipal,
+    probe: WooConsentStatusProbe,
+  ): Promise<WooConsentStatusResult> {
     const normalized = normalizeRecipientPhone(`+${probe.canonicalPhone}`);
     if (!normalized.ok || normalized.e164.slice(1) !== probe.canonicalPhone) {
       return { schemaVersion: WOO_CONSENT_STATUS_VERSION, state: "UNVERIFIED" };
@@ -59,7 +65,9 @@ export class WooConsentStatusService {
         AND cp."whatsappConsentProviderObservedAt" = e."decisionAt"
       LIMIT 1
     `);
-    return { schemaVersion: WOO_CONSENT_STATUS_VERSION,
-      state: rows.length === 1 ? "CONFIRMED_GRANTED" : "UNVERIFIED" };
+    return {
+      schemaVersion: WOO_CONSENT_STATUS_VERSION,
+      state: rows.length === 1 ? "CONFIRMED_GRANTED" : "UNVERIFIED",
+    };
   }
 }

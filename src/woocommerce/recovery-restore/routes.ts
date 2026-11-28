@@ -4,7 +4,11 @@ import type { WooInstallationAuthenticator } from "../../auth/woo-installation/a
 import { WooUnauthenticatedError } from "../../auth/woo-installation/authenticator.js";
 import { sendNoStoreJson } from "../../http/response.js";
 import type { ApiRouteHandler } from "../../http/route-handler.js";
-import { readWooRestoreResolveRequest, WOO_RESTORE_RESOLVE_PATH, WooRestoreResolveRequestError } from "./contract.js";
+import {
+  readWooRestoreResolveRequest,
+  WOO_RESTORE_RESOLVE_PATH,
+  WooRestoreResolveRequestError,
+} from "./contract.js";
 import type { WooRecoveryRestoreService } from "./service.js";
 
 export function createWooRecoveryRestoreRoute(options: {
@@ -13,9 +17,16 @@ export function createWooRecoveryRestoreRoute(options: {
   logger: StructuredLogger;
 }): ApiRouteHandler {
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const url = new URL(request.url ?? "/", "http://localhost");
-      if (url.pathname !== WOO_RESTORE_RESOLVE_PATH || request.method !== "POST") return false;
+      if (
+        url.pathname !== WOO_RESTORE_RESOLVE_PATH ||
+        request.method !== "POST"
+      )
+        return false;
       let submittedToken: string | undefined;
       try {
         const principal = await options.authenticator.authenticate(request);
@@ -25,13 +36,17 @@ export function createWooRecoveryRestoreRoute(options: {
         const result = await options.service.resolve(principal, payload);
         if (!result) {
           options.logger.info("woocommerce.recovery_restore.resolve.denied", {
-            shopId: principal.shopId, recoveryId: payload.recoveryId, outcome: "unavailable",
+            shopId: principal.shopId,
+            recoveryId: payload.recoveryId,
+            outcome: "unavailable",
           });
           sendNoStoreJson(response, 404, { error: "restore_unavailable" });
           return true;
         }
         options.logger.info("woocommerce.recovery_restore.resolve.eligible", {
-          shopId: principal.shopId, recoveryId: payload.recoveryId, outcome: "eligible",
+          shopId: principal.shopId,
+          recoveryId: payload.recoveryId,
+          outcome: "eligible",
         });
         sendNoStoreJson(response, 200, result);
       } catch (error) {
@@ -40,10 +55,13 @@ export function createWooRecoveryRestoreRoute(options: {
         } else if (error instanceof WooRestoreResolveRequestError) {
           sendNoStoreJson(response, 400, { error: "invalid_request" });
         } else {
-          options.logger.error("woocommerce.recovery_restore.resolve.unavailable", {
-            reason: "dependency_unavailable",
-            error: safeErrorDetails(error, submittedToken),
-          });
+          options.logger.error(
+            "woocommerce.recovery_restore.resolve.unavailable",
+            {
+              reason: "dependency_unavailable",
+              error: safeErrorDetails(error, submittedToken),
+            },
+          );
           sendNoStoreJson(response, 503, { error: "restore_unavailable" });
         }
       }
@@ -52,14 +70,24 @@ export function createWooRecoveryRestoreRoute(options: {
   };
 }
 
-function safeErrorDetails(error: unknown, submittedToken: string | undefined, depth = 0) {
+function safeErrorDetails(
+  error: unknown,
+  submittedToken: string | undefined,
+  depth = 0,
+) {
   if (!(error instanceof Error)) {
-    return { name: typeof error, message: "[REDACTED]", redactionApplied: true, truncated: false };
+    return {
+      name: typeof error,
+      message: "[REDACTED]",
+      redactionApplied: true,
+      truncated: false,
+    };
   }
 
   const originalMessage = error.message;
   let message = originalMessage;
-  if (submittedToken) message = message.replaceAll(submittedToken, "[REDACTED]");
+  if (submittedToken)
+    message = message.replaceAll(submittedToken, "[REDACTED]");
   message = message
     .replace(/https?:\/\/[^\s"'<>]+/gi, "[REDACTED_URL]")
     .replace(/\b[\w.+-]+@[\w.-]+\.[A-Z]{2,}\b/gi, "[REDACTED]")
@@ -73,13 +101,23 @@ function safeErrorDetails(error: unknown, submittedToken: string | undefined, de
     truncated,
   };
   const code = (error as Error & { code?: unknown }).code;
-  if (typeof code === "string" && /^[A-Z][A-Z0-9]{1,9}$/.test(code)) details.code = code;
+  if (typeof code === "string" && /^[A-Z][A-Z0-9]{1,9}$/.test(code))
+    details.code = code;
   const meta = (error as Error & { meta?: unknown }).meta;
   if (meta && typeof meta === "object" && !Array.isArray(meta)) {
     const safeMeta: Record<string, string> = {};
-    for (const key of ["code", "constraint", "modelName", "table", "column"] as const) {
+    for (const key of [
+      "code",
+      "constraint",
+      "modelName",
+      "table",
+      "column",
+    ] as const) {
       const value = (meta as Record<string, unknown>)[key];
-      if (typeof value === "string" && /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/.test(value)) {
+      if (
+        typeof value === "string" &&
+        /^[A-Za-z_][A-Za-z0-9_.]{0,127}$/.test(value)
+      ) {
         safeMeta[key] = value;
       }
     }

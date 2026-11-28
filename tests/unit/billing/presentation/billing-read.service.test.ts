@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { WooInstallationPrincipal } from "../../../../src/auth/woo-installation/principal.js";
-import { BillingPresentationError, BillingPresentationReadService } from "../../../../src/billing/presentation/billing-read.service.js";
+import {
+  BillingPresentationError,
+  BillingPresentationReadService,
+} from "../../../../src/billing/presentation/billing-read.service.js";
 
 const principal: WooInstallationPrincipal = {
   installationId: "install_1",
@@ -13,7 +16,10 @@ const principal: WooInstallationPrincipal = {
 function makeService(row: unknown) {
   const calls: unknown[] = [];
   const service = new BillingPresentationReadService({
-    $transaction: async (callback: (transaction: unknown) => Promise<unknown>, options: unknown) => {
+    $transaction: async (
+      callback: (transaction: unknown) => Promise<unknown>,
+      options: unknown,
+    ) => {
       calls.push({ options });
       const transaction = {
         shop: {
@@ -26,7 +32,10 @@ function makeService(row: unknown) {
         shopEntitlementCounter: { findMany: async () => [] },
         merchantPromotionSelection: { findUnique: async () => null },
         billingOperation: { findMany: async () => [] },
-        recoveryCreditPurchase: { findFirst: async () => null, findMany: async () => [] },
+        recoveryCreditPurchase: {
+          findFirst: async () => null,
+          findMany: async () => [],
+        },
         merchantPricingPlan: { findUnique: async () => null },
       };
       return callback(transaction);
@@ -54,7 +63,14 @@ test("billing read anchors its only Shop lookup to the authenticated principal",
   assert.deepEqual(calls[0], { options: { isolationLevel: "RepeatableRead" } });
   assert.deepEqual(calls[1], {
     where: { id: principal.shopId },
-    select: { id: true, domain: true, platform: true, shopifyShopId: true, status: true, onboardingCompleted: true },
+    select: {
+      id: true,
+      domain: true,
+      platform: true,
+      shopifyShopId: true,
+      status: true,
+      onboardingCompleted: true,
+    },
   });
 });
 
@@ -68,14 +84,20 @@ test("billing read fails closed for Shop mismatches and incomplete onboarding", 
     activeShop({ status: "SUSPENDED" }),
   ]) {
     const { service } = makeService(row);
-    await assert.rejects(service.read(principal), (error: unknown) =>
-      error instanceof BillingPresentationError && error.code === "billing_integrity_invalid",
+    await assert.rejects(
+      service.read(principal),
+      (error: unknown) =>
+        error instanceof BillingPresentationError &&
+        error.code === "billing_integrity_invalid",
     );
   }
 
   const { service } = makeService(activeShop({ onboardingCompleted: false }));
-  await assert.rejects(service.read(principal), (error: unknown) =>
-    error instanceof BillingPresentationError && error.code === "billing_not_initialized",
+  await assert.rejects(
+    service.read(principal),
+    (error: unknown) =>
+      error instanceof BillingPresentationError &&
+      error.code === "billing_not_initialized",
   );
 });
 
@@ -94,7 +116,12 @@ function projectionService(overrides: Record<string, unknown> = {}) {
     providerCoverageEndAt: null,
     pendingPlanId: null,
     pendingEffectiveAt: null,
-    plan: { id: "billing_free", shopifyPlanHandle: "internal_free", kind: "FREE", active: true },
+    plan: {
+      id: "billing_free",
+      shopifyPlanHandle: "internal_free",
+      kind: "FREE",
+      active: true,
+    },
     pendingPlan: null,
     billingPeriod: null,
   };
@@ -120,14 +147,40 @@ function projectionService(overrides: Record<string, unknown> = {}) {
     billingPeriod: "EVERY_30_DAYS",
     usageEvents: [
       freeOffer,
-      { ...freeOffer, id: "usage_silver", adminLabel: "Silver", position: 1, fixedUnitAmountMinor: 2500 },
-      { ...freeOffer, id: "usage_tiered", position: 2, pricingMode: "GRADUATED", fixedUnitAmountMinor: null },
+      {
+        ...freeOffer,
+        id: "usage_silver",
+        adminLabel: "Silver",
+        position: 1,
+        fixedUnitAmountMinor: 2500,
+      },
+      {
+        ...freeOffer,
+        id: "usage_tiered",
+        position: 2,
+        pricingMode: "GRADUATED",
+        fixedUnitAmountMinor: null,
+      },
     ],
   };
   const selection = null;
   const counters = [
-    { shopId: principal.shopId, counter: "LIFETIME_FREE_RECOVERY_CREDITS", grantedQuantity: 7, committedQuantity: 2, reservedQuantity: 1, refundingQuantity: 0 },
-    { shopId: principal.shopId, counter: "PURCHASED_RECOVERY_CREDITS", grantedQuantity: 10, committedQuantity: 1, reservedQuantity: 2, refundingQuantity: 3 },
+    {
+      shopId: principal.shopId,
+      counter: "LIFETIME_FREE_RECOVERY_CREDITS",
+      grantedQuantity: 7,
+      committedQuantity: 2,
+      reservedQuantity: 1,
+      refundingQuantity: 0,
+    },
+    {
+      shopId: principal.shopId,
+      counter: "PURCHASED_RECOVERY_CREDITS",
+      grantedQuantity: 10,
+      committedQuantity: 1,
+      reservedQuantity: 2,
+      refundingQuantity: 3,
+    },
   ];
   const operations: unknown[] = [];
   const latestPurchase = null;
@@ -146,14 +199,20 @@ function projectionService(overrides: Record<string, unknown> = {}) {
   } as Record<string, unknown>;
   const queries: unknown[] = [];
   const transaction = {
-    shop: { findUnique: async (query: unknown) => { queries.push(query); return state.shopRow; } },
+    shop: {
+      findUnique: async (query: unknown) => {
+        queries.push(query);
+        return state.shopRow;
+      },
+    },
     subscription: { findUnique: async () => state.subscription },
     shopEntitlementCounter: { findMany: async () => state.counters },
     merchantPromotionSelection: { findUnique: async () => state.selection },
     billingOperation: {
       findMany: async (query: unknown) => {
         const where = (query as { where?: { state?: string } }).where;
-        if (where?.state === "CONFIRMED") return state.confirmedCancellations ?? [];
+        if (where?.state === "CONFIRMED")
+          return state.confirmedCancellations ?? [];
         return state.operations;
       },
     },
@@ -163,9 +222,14 @@ function projectionService(overrides: Record<string, unknown> = {}) {
     },
     merchantPricingPlan: {
       findUnique: async (query: unknown) => {
-        const where = (query as { where: { id?: string; shopifyPlanHandle?: string } }).where;
+        const where = (
+          query as { where: { id?: string; shopifyPlanHandle?: string } }
+        ).where;
         if (where.id) return state.pendingCataloguePlan ?? null;
-        if (where.shopifyPlanHandle !== (state.freePlan as { shopifyPlanHandle: string }).shopifyPlanHandle) {
+        if (
+          where.shopifyPlanHandle !==
+          (state.freePlan as { shopifyPlanHandle: string }).shopifyPlanHandle
+        ) {
           return state.durablePendingCataloguePlan ?? null;
         }
         return state.currentCataloguePlan ?? state.freePlan;
@@ -173,7 +237,10 @@ function projectionService(overrides: Record<string, unknown> = {}) {
     },
   };
   const service = new BillingPresentationReadService({
-    $transaction: async (callback: (transaction: unknown) => Promise<unknown>, options: unknown) => {
+    $transaction: async (
+      callback: (transaction: unknown) => Promise<unknown>,
+      options: unknown,
+    ) => {
       queries.push({ options });
       return callback(transaction);
     },
@@ -183,7 +250,10 @@ function projectionService(overrides: Record<string, unknown> = {}) {
 
 test("Free billing presentation is provider-independent and never mutates capacity", async () => {
   const { service, queries } = projectionService();
-  const response = await service.read(principal, new Date("2026-10-08T00:00:00.000Z"));
+  const response = await service.read(
+    principal,
+    new Date("2026-10-08T00:00:00.000Z"),
+  );
   assert.equal(response.experienceState, "ACTIVE");
   assert.deepEqual(response.currentPlan, {
     merchantPricingPlanId: "mp_free",
@@ -196,15 +266,36 @@ test("Free billing presentation is provider-independent and never mutates capaci
     cancelAtPeriodEnd: false,
     cancellationEffectiveAt: null,
   });
-  assert.deepEqual(response.capacity.freeLifetime, { granted: 7, committed: 2, reserved: 1, remaining: 4 });
-  assert.deepEqual(response.capacity.purchased, { granted: 10, committed: 1, reserved: 2, refunding: 3, available: 4 });
-  assert.deepEqual(response.topUps.offers.map(({ merchantPricingUsageEventId, label }) => ({ merchantPricingUsageEventId, label })), [
-    { merchantPricingUsageEventId: "usage_bronze", label: "Bronze" },
-    { merchantPricingUsageEventId: "usage_silver", label: "Silver" },
-  ]);
+  assert.deepEqual(response.capacity.freeLifetime, {
+    granted: 7,
+    committed: 2,
+    reserved: 1,
+    remaining: 4,
+  });
+  assert.deepEqual(response.capacity.purchased, {
+    granted: 10,
+    committed: 1,
+    reserved: 2,
+    refunding: 3,
+    available: 4,
+  });
+  assert.deepEqual(
+    response.topUps.offers.map(({ merchantPricingUsageEventId, label }) => ({
+      merchantPricingUsageEventId,
+      label,
+    })),
+    [
+      { merchantPricingUsageEventId: "usage_bronze", label: "Bronze" },
+      { merchantPricingUsageEventId: "usage_silver", label: "Silver" },
+    ],
+  );
   assert.equal(response.topUps.purchaseEligible, true);
-  assert.deepEqual(queries[0], { options: { isolationLevel: "RepeatableRead" } });
-  assert.deepEqual((queries[1] as { where: unknown }).where, { id: principal.shopId });
+  assert.deepEqual(queries[0], {
+    options: { isolationLevel: "RepeatableRead" },
+  });
+  assert.deepEqual((queries[1] as { where: unknown }).where, {
+    id: principal.shopId,
+  });
 });
 
 test("one unresolved top-up purchase disables only its own predefined bundle", async () => {
@@ -231,17 +322,26 @@ test("one unresolved top-up purchase disables only its own predefined bundle", a
       },
     },
   };
-  const { service } = projectionService({ latestPurchase: purchase, requestedPurchases: [purchase] });
+  const { service } = projectionService({
+    latestPurchase: purchase,
+    requestedPurchases: [purchase],
+  });
   const response = await service.read(principal);
-  assert.deepEqual(response.topUps.offers.map((offer) => [
-    offer.merchantPricingUsageEventId,
-    offer.purchaseEligible,
-    offer.unavailableReason,
-  ]), [
-    ["usage_bronze", false, "PENDING_PURCHASE"],
-    ["usage_silver", true, null],
-  ]);
-  assert.equal(response.topUps.unresolvedPurchases[0]?.merchantPricingUsageEventId, "usage_bronze");
+  assert.deepEqual(
+    response.topUps.offers.map((offer) => [
+      offer.merchantPricingUsageEventId,
+      offer.purchaseEligible,
+      offer.unavailableReason,
+    ]),
+    [
+      ["usage_bronze", false, "PENDING_PURCHASE"],
+      ["usage_silver", true, null],
+    ],
+  );
+  assert.equal(
+    response.topUps.unresolvedPurchases[0]?.merchantPricingUsageEventId,
+    "usage_bronze",
+  );
   assert.equal(JSON.stringify(response).includes("internal_free"), false);
   assert.equal(JSON.stringify(response).includes("providerReference"), false);
 });
@@ -270,7 +370,10 @@ test("a FAILED one-time operation remains historical but does not block its bund
       },
     },
   };
-  const { service } = projectionService({ latestPurchase: failedPurchase, requestedPurchases: [failedPurchase] });
+  const { service } = projectionService({
+    latestPurchase: failedPurchase,
+    requestedPurchases: [failedPurchase],
+  });
   const response = await service.read(principal);
   assert.equal(response.topUps.offers[0]?.purchaseEligible, true);
   assert.equal(response.topUps.offers[0]?.unavailableReason, null);
@@ -294,7 +397,12 @@ test("paid downgrade uses current allowance without rejecting historical overage
     providerCoverageEndAt: new Date("2026-12-01T00:00:00.000Z"),
     pendingPlanId: null,
     pendingEffectiveAt: null,
-    plan: { id: "billing_paid", shopifyPlanHandle: "internal_paid", kind: "PAID_METERED", active: true },
+    plan: {
+      id: "billing_paid",
+      shopifyPlanHandle: "internal_paid",
+      kind: "PAID_METERED",
+      active: true,
+    },
     pendingPlan: null,
     billingPeriod: {
       id: "period_1",
@@ -307,16 +415,18 @@ test("paid downgrade uses current allowance without rejecting historical overage
       periodStart,
       periodEnd,
       status: "OPEN",
-      entitlementCounters: [{
-        shopId: principal.shopId,
-        billingPeriodId: "period_1",
-        counter: "INCLUDED_RECOVERY_CREDITS",
-        grantedQuantity: 10,
-        currentAllowanceQuantity: 5,
-        committedQuantity: 6,
-        reservedQuantity: 1,
-        forfeitedQuantity: 0,
-      }],
+      entitlementCounters: [
+        {
+          shopId: principal.shopId,
+          billingPeriodId: "period_1",
+          counter: "INCLUDED_RECOVERY_CREDITS",
+          grantedQuantity: 10,
+          currentAllowanceQuantity: 5,
+          committedQuantity: 6,
+          reservedQuantity: 1,
+          forfeitedQuantity: 0,
+        },
+      ],
     },
   };
   const paidPlan = {
@@ -335,7 +445,10 @@ test("paid downgrade uses current allowance without rejecting historical overage
     freePlan: paidPlan,
     counters: [],
   });
-  const response = await service.read(principal, new Date("2026-10-08T00:00:00.000Z"));
+  const response = await service.read(
+    principal,
+    new Date("2026-10-08T00:00:00.000Z"),
+  );
   assert.deepEqual(response.capacity.paidIncluded, {
     granted: 10,
     currentAllowance: 5,
@@ -345,7 +458,10 @@ test("paid downgrade uses current allowance without rejecting historical overage
     remaining: 0,
   });
   assert.equal(response.currentPlan?.currentPeriodEnd, periodEnd.toISOString());
-  assert.equal(JSON.stringify(response).includes("provider-contract-secret"), false);
+  assert.equal(
+    JSON.stringify(response).includes("provider-contract-secret"),
+    false,
+  );
 });
 
 test("FROZEN and scheduled cancellation preserve the Moda period boundary and cancellation boundary", async () => {
@@ -365,7 +481,12 @@ test("FROZEN and scheduled cancellation preserve the Moda period boundary and ca
     providerCoverageEndAt,
     pendingPlanId: null,
     pendingEffectiveAt: null,
-    plan: { id: "billing_paid", shopifyPlanHandle: "internal_paid", kind: "PAID_METERED", active: true },
+    plan: {
+      id: "billing_paid",
+      shopifyPlanHandle: "internal_paid",
+      kind: "PAID_METERED",
+      active: true,
+    },
     pendingPlan: null,
     billingPeriod: {
       id: "period_1",
@@ -378,16 +499,18 @@ test("FROZEN and scheduled cancellation preserve the Moda period boundary and ca
       periodStart,
       periodEnd,
       status: "OPEN",
-      entitlementCounters: [{
-        shopId: principal.shopId,
-        billingPeriodId: "period_1",
-        counter: "INCLUDED_RECOVERY_CREDITS",
-        grantedQuantity: 10,
-        currentAllowanceQuantity: null,
-        committedQuantity: 2,
-        reservedQuantity: 1,
-        forfeitedQuantity: 0,
-      }],
+      entitlementCounters: [
+        {
+          shopId: principal.shopId,
+          billingPeriodId: "period_1",
+          counter: "INCLUDED_RECOVERY_CREDITS",
+          grantedQuantity: 10,
+          currentAllowanceQuantity: null,
+          committedQuantity: 2,
+          reservedQuantity: 1,
+          forfeitedQuantity: 0,
+        },
+      ],
     },
   };
   const paidPlan = {
@@ -401,13 +524,23 @@ test("FROZEN and scheduled cancellation preserve the Moda period boundary and ca
     billingPeriod: "EVERY_30_DAYS",
     usageEvents: [],
   };
-  const { service } = projectionService({ subscription, freePlan: paidPlan, counters: [] });
-  const response = await service.read(principal, new Date("2026-10-08T00:00:00.000Z"));
+  const { service } = projectionService({
+    subscription,
+    freePlan: paidPlan,
+    counters: [],
+  });
+  const response = await service.read(
+    principal,
+    new Date("2026-10-08T00:00:00.000Z"),
+  );
   assert.equal(response.experienceState, "FROZEN");
   assert.equal(response.capacity.paidIncluded?.remaining, 0);
   assert.equal(response.capacity.paidIncluded?.currentAllowance, 10);
   assert.equal(response.currentPlan?.currentPeriodEnd, periodEnd.toISOString());
-  assert.equal(response.currentPlan?.cancellationEffectiveAt, providerCoverageEndAt.toISOString());
+  assert.equal(
+    response.currentPlan?.cancellationEffectiveAt,
+    providerCoverageEndAt.toISOString(),
+  );
   assert.equal(response.surfaces.managePlansAllowed, false);
   assert.equal(response.surfaces.cancelSubscriptionAllowed, false);
 });
@@ -433,30 +566,49 @@ test("selected active promotion is projected only for a matching target and camp
     },
   };
   const { service } = projectionService({ selection });
-  const active = await service.read(principal, new Date("2026-10-08T00:00:00.000Z"));
-  assert.deepEqual(active.capacity.promotional, { granted: 12, committed: 3, reserved: 2, remaining: 7 });
-  const expiredSelection = structuredClone(selection);
-  expiredSelection.promotionalCreditGrant.campaign.expiresAt = new Date("2026-10-07T00:00:00.000Z");
-  const expired = await projectionService({ selection: expiredSelection }).service.read(
+  const active = await service.read(
     principal,
     new Date("2026-10-08T00:00:00.000Z"),
   );
-  assert.deepEqual(expired.capacity.promotional, { granted: 0, committed: 0, reserved: 0, remaining: 0 });
+  assert.deepEqual(active.capacity.promotional, {
+    granted: 12,
+    committed: 3,
+    reserved: 2,
+    remaining: 7,
+  });
+  const expiredSelection = structuredClone(selection);
+  expiredSelection.promotionalCreditGrant.campaign.expiresAt = new Date(
+    "2026-10-07T00:00:00.000Z",
+  );
+  const expired = await projectionService({
+    selection: expiredSelection,
+  }).service.read(principal, new Date("2026-10-08T00:00:00.000Z"));
+  assert.deepEqual(expired.capacity.promotional, {
+    granted: 0,
+    committed: 0,
+    reserved: 0,
+    remaining: 0,
+  });
 });
 
 test("active Free without its API-001 lifetime grant fails closed", async () => {
   const { service } = projectionService({
-    counters: [{
-      shopId: principal.shopId,
-      counter: "PURCHASED_RECOVERY_CREDITS",
-      grantedQuantity: 0,
-      committedQuantity: 0,
-      reservedQuantity: 0,
-      refundingQuantity: 0,
-    }],
+    counters: [
+      {
+        shopId: principal.shopId,
+        counter: "PURCHASED_RECOVERY_CREDITS",
+        grantedQuantity: 0,
+        committedQuantity: 0,
+        reservedQuantity: 0,
+        refundingQuantity: 0,
+      },
+    ],
   });
-  await assert.rejects(service.read(principal), (error: unknown) =>
-    error instanceof BillingPresentationError && error.code === "billing_integrity_invalid",
+  await assert.rejects(
+    service.read(principal),
+    (error: unknown) =>
+      error instanceof BillingPresentationError &&
+      error.code === "billing_integrity_invalid",
   );
 });
 
@@ -470,9 +622,14 @@ test("multiple recurring operations and confirmed cancellation lag fail closed o
     providerReference: "provider-secret",
     createdAt: new Date("2026-10-08T00:00:00.000Z"),
   };
-  const { service } = projectionService({ operations: [operation, { ...operation, id: "operation_extra" }] });
-  await assert.rejects(service.read(principal), (error: unknown) =>
-    error instanceof BillingPresentationError && error.code === "billing_operation_conflict",
+  const { service } = projectionService({
+    operations: [operation, { ...operation, id: "operation_extra" }],
+  });
+  await assert.rejects(
+    service.read(principal),
+    (error: unknown) =>
+      error instanceof BillingPresentationError &&
+      error.code === "billing_operation_conflict",
   );
 
   const paidSubscription = {
@@ -488,7 +645,12 @@ test("multiple recurring operations and confirmed cancellation lag fail closed o
     providerCoverageEndAt: null,
     pendingPlanId: null,
     pendingEffectiveAt: null,
-    plan: { id: "billing_paid", shopifyPlanHandle: "internal_paid", kind: "PAID_METERED", active: true },
+    plan: {
+      id: "billing_paid",
+      shopifyPlanHandle: "internal_paid",
+      kind: "PAID_METERED",
+      active: true,
+    },
     pendingPlan: null,
     billingPeriod: {
       id: "period_1",
@@ -501,16 +663,18 @@ test("multiple recurring operations and confirmed cancellation lag fail closed o
       periodStart: new Date("2026-10-01T00:00:00.000Z"),
       periodEnd: new Date("2026-10-31T00:00:00.000Z"),
       status: "OPEN",
-      entitlementCounters: [{
-        shopId: principal.shopId,
-        billingPeriodId: "period_1",
-        counter: "INCLUDED_RECOVERY_CREDITS",
-        grantedQuantity: 10,
-        currentAllowanceQuantity: null,
-        committedQuantity: 1,
-        reservedQuantity: 0,
-        forfeitedQuantity: 0,
-      }],
+      entitlementCounters: [
+        {
+          shopId: principal.shopId,
+          billingPeriodId: "period_1",
+          counter: "INCLUDED_RECOVERY_CREDITS",
+          grantedQuantity: 10,
+          currentAllowanceQuantity: null,
+          committedQuantity: 1,
+          reservedQuantity: 0,
+          forfeitedQuantity: 0,
+        },
+      ],
     },
   };
   const paidPlan = {
@@ -524,18 +688,24 @@ test("multiple recurring operations and confirmed cancellation lag fail closed o
     billingPeriod: "EVERY_30_DAYS",
     usageEvents: [],
   };
-  const cancellation = { ...operation, state: "CONFIRMED", providerReference: "provider-secret" };
+  const cancellation = {
+    ...operation,
+    state: "CONFIRMED",
+    providerReference: "provider-secret",
+  };
   const pending = await projectionService({
     subscription: paidSubscription,
     freePlan: paidPlan,
-    counters: [{
-      shopId: principal.shopId,
-      counter: "PURCHASED_RECOVERY_CREDITS",
-      grantedQuantity: 0,
-      committedQuantity: 0,
-      reservedQuantity: 0,
-      refundingQuantity: 0,
-    }],
+    counters: [
+      {
+        shopId: principal.shopId,
+        counter: "PURCHASED_RECOVERY_CREDITS",
+        grantedQuantity: 0,
+        committedQuantity: 0,
+        reservedQuantity: 0,
+        refundingQuantity: 0,
+      },
+    ],
     confirmedCancellations: [cancellation],
   }).service.read(principal);
   assert.deepEqual(pending.pendingCancellation, { state: "CONFIRMED" });
@@ -544,14 +714,16 @@ test("multiple recurring operations and confirmed cancellation lag fail closed o
   const awaiting = await projectionService({
     subscription: paidSubscription,
     freePlan: paidPlan,
-    counters: [{
-      shopId: principal.shopId,
-      counter: "PURCHASED_RECOVERY_CREDITS",
-      grantedQuantity: 0,
-      committedQuantity: 0,
-      reservedQuantity: 0,
-      refundingQuantity: 0,
-    }],
+    counters: [
+      {
+        shopId: principal.shopId,
+        counter: "PURCHASED_RECOVERY_CREDITS",
+        grantedQuantity: 0,
+        committedQuantity: 0,
+        reservedQuantity: 0,
+        refundingQuantity: 0,
+      },
+    ],
     operations: [{ ...operation, state: "OUTCOME_UNKNOWN" }],
   }).service.read(principal);
   assert.deepEqual(awaiting.pendingCancellation, { state: "OUTCOME_UNKNOWN" });
@@ -575,7 +747,10 @@ test("one unresolved plan operation projects an opaque pending Moda plan", async
     currency: "USD",
     billingPeriod: "EVERY_30_DAYS",
   };
-  const { service } = projectionService({ operations: [operation], pendingCataloguePlan: target });
+  const { service } = projectionService({
+    operations: [operation],
+    pendingCataloguePlan: target,
+  });
   const response = await service.read(principal);
   assert.deepEqual(response.pendingPlan, {
     merchantPricingPlanId: "mp_growth",
@@ -604,8 +779,18 @@ test("operation intent that disagrees with durable pending plan fails closed", a
     providerCoverageEndAt: null,
     pendingPlanId: "billing_pending",
     pendingEffectiveAt: periodEnd,
-    plan: { id: "billing_paid", shopifyPlanHandle: "internal_paid", kind: "PAID_METERED", active: true },
-    pendingPlan: { id: "billing_pending", shopifyPlanHandle: "internal_pending", kind: "PAID_METERED", active: true },
+    plan: {
+      id: "billing_paid",
+      shopifyPlanHandle: "internal_paid",
+      kind: "PAID_METERED",
+      active: true,
+    },
+    pendingPlan: {
+      id: "billing_pending",
+      shopifyPlanHandle: "internal_pending",
+      kind: "PAID_METERED",
+      active: true,
+    },
     billingPeriod: {
       id: "period_1",
       shopId: principal.shopId,
@@ -617,16 +802,18 @@ test("operation intent that disagrees with durable pending plan fails closed", a
       periodStart,
       periodEnd,
       status: "OPEN",
-      entitlementCounters: [{
-        shopId: principal.shopId,
-        billingPeriodId: "period_1",
-        counter: "INCLUDED_RECOVERY_CREDITS",
-        grantedQuantity: 10,
-        currentAllowanceQuantity: null,
-        committedQuantity: 1,
-        reservedQuantity: 0,
-        forfeitedQuantity: 0,
-      }],
+      entitlementCounters: [
+        {
+          shopId: principal.shopId,
+          billingPeriodId: "period_1",
+          counter: "INCLUDED_RECOVERY_CREDITS",
+          grantedQuantity: 10,
+          currentAllowanceQuantity: null,
+          committedQuantity: 1,
+          reservedQuantity: 0,
+          forfeitedQuantity: 0,
+        },
+      ],
     },
   };
   const paidPlan = {
@@ -654,30 +841,37 @@ test("operation intent that disagrees with durable pending plan fails closed", a
     currency: "USD",
     billingPeriod: "EVERY_30_DAYS",
   };
-  await assert.rejects(projectionService({
-    subscription,
-    freePlan: paidPlan,
-    counters: [{
-      shopId: principal.shopId,
-      counter: "PURCHASED_RECOVERY_CREDITS",
-      grantedQuantity: 0,
-      committedQuantity: 0,
-      reservedQuantity: 0,
-      refundingQuantity: 0,
-    }],
-    operations: [{
-      id: "operation_switch",
-      shopId: principal.shopId,
-      kind: "PLAN_SWITCH",
-      state: "AWAITING_CONFIRMATION",
-      merchantPricingPlanId: operationPlan.id,
-      providerReference: "provider-secret",
-      createdAt: new Date("2026-10-08T00:00:00.000Z"),
-    }],
-    pendingCataloguePlan: operationPlan,
-    durablePendingCataloguePlan: durablePlan,
-  }).service.read(principal), (error: unknown) =>
-    error instanceof BillingPresentationError && error.code === "billing_operation_conflict",
+  await assert.rejects(
+    projectionService({
+      subscription,
+      freePlan: paidPlan,
+      counters: [
+        {
+          shopId: principal.shopId,
+          counter: "PURCHASED_RECOVERY_CREDITS",
+          grantedQuantity: 0,
+          committedQuantity: 0,
+          reservedQuantity: 0,
+          refundingQuantity: 0,
+        },
+      ],
+      operations: [
+        {
+          id: "operation_switch",
+          shopId: principal.shopId,
+          kind: "PLAN_SWITCH",
+          state: "AWAITING_CONFIRMATION",
+          merchantPricingPlanId: operationPlan.id,
+          providerReference: "provider-secret",
+          createdAt: new Date("2026-10-08T00:00:00.000Z"),
+        },
+      ],
+      pendingCataloguePlan: operationPlan,
+      durablePendingCataloguePlan: durablePlan,
+    }).service.read(principal),
+    (error: unknown) =>
+      error instanceof BillingPresentationError &&
+      error.code === "billing_operation_conflict",
   );
 });
 

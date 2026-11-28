@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { createServer, type IncomingMessage } from "node:http";
 import test from "node:test";
-import { MerchantBootstrapIntegrityError, MerchantBootstrapReadService } from "../../../../src/merchant/bootstrap/bootstrap-read.service.js";
-import { createMerchantBootstrapRoute, MERCHANT_BOOTSTRAP_ROUTE_PATH } from "../../../../src/merchant/bootstrap/routes.js";
+import {
+  MerchantBootstrapIntegrityError,
+  MerchantBootstrapReadService,
+} from "../../../../src/merchant/bootstrap/bootstrap-read.service.js";
+import {
+  createMerchantBootstrapRoute,
+  MERCHANT_BOOTSTRAP_ROUTE_PATH,
+} from "../../../../src/merchant/bootstrap/routes.js";
 import { WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
 
 const principal = {
@@ -30,9 +36,15 @@ const shopRow = {
   commerceShopProfile: null,
 };
 
-type Event = { level: "info" | "warn" | "error"; name: string; data: Record<string, unknown> };
+type Event = {
+  level: "info" | "warn" | "error";
+  name: string;
+  data: Record<string, unknown>;
+};
 
-function fixture(options: { authFailure?: Error; readFailure?: Error; shop?: unknown } = {}) {
+function fixture(
+  options: { authFailure?: Error; readFailure?: Error; shop?: unknown } = {},
+) {
   const calls: string[] = [];
   const databaseQueries: unknown[] = [];
   const events: Event[] = [];
@@ -41,8 +53,10 @@ function fixture(options: { authFailure?: Error; readFailure?: Error; shop?: unk
     async authenticate(request: IncomingMessage) {
       calls.push("authenticate");
       if (options.authFailure) throw options.authFailure;
-      if (request.headers.authorization !== authHeaders.authorization ||
-        request.headers["x-moda-installation-id"] !== principal.installationId) {
+      if (
+        request.headers.authorization !== authHeaders.authorization ||
+        request.headers["x-moda-installation-id"] !== principal.installationId
+      ) {
         throw new WooUnauthenticatedError();
       }
       return principal;
@@ -56,14 +70,26 @@ function fixture(options: { authFailure?: Error; readFailure?: Error; shop?: unk
         if (options.readFailure) throw options.readFailure;
         return options.shop === undefined ? shopRow : options.shop;
       },
-      async update() { writes += 1; throw new Error("writes not allowed"); },
-      async create() { writes += 1; throw new Error("writes not allowed"); },
+      async update() {
+        writes += 1;
+        throw new Error("writes not allowed");
+      },
+      async create() {
+        writes += 1;
+        throw new Error("writes not allowed");
+      },
     },
   };
   const logger = {
-    info(name: string, data: Record<string, unknown>) { events.push({ level: "info", name, data }); },
-    warn(name: string, data: Record<string, unknown>) { events.push({ level: "warn", name, data }); },
-    error(name: string, data: Record<string, unknown>) { events.push({ level: "error", name, data }); },
+    info(name: string, data: Record<string, unknown>) {
+      events.push({ level: "info", name, data });
+    },
+    warn(name: string, data: Record<string, unknown>) {
+      events.push({ level: "warn", name, data });
+    },
+    error(name: string, data: Record<string, unknown>) {
+      events.push({ level: "error", name, data });
+    },
   };
   const route = createMerchantBootstrapRoute({
     authenticator: authenticator as never,
@@ -71,7 +97,15 @@ function fixture(options: { authFailure?: Error; readFailure?: Error; shop?: unk
     logger: logger as never,
     now: () => Date.parse("2026-10-16T12:00:00.000Z"),
   });
-  return { route, calls, databaseQueries, events, get writes() { return writes; } };
+  return {
+    route,
+    calls,
+    databaseQueries,
+    events,
+    get writes() {
+      return writes;
+    },
+  };
 }
 
 async function withRoute(
@@ -79,15 +113,18 @@ async function withRoute(
   run: (origin: string) => Promise<void>,
 ) {
   const server = createServer((request, response) => {
-    void route.handle(request, response).then((handled) => {
-      if (!handled) {
-        response.writeHead(404, { "content-type": "application/json" });
-        response.end('{"error":"not_found"}');
-      }
-    }).catch(() => {
-      if (!response.headersSent) response.writeHead(500);
-      response.end();
-    });
+    void route
+      .handle(request, response)
+      .then((handled) => {
+        if (!handled) {
+          response.writeHead(404, { "content-type": "application/json" });
+          response.end('{"error":"not_found"}');
+        }
+      })
+      .catch(() => {
+        if (!response.headersSent) response.writeHead(500);
+        response.end();
+      });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -95,7 +132,9 @@ async function withRoute(
   try {
     await run(`http://127.0.0.1:${address.port}`);
   } finally {
-    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+    await new Promise<void>((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
   }
 }
 
@@ -104,37 +143,61 @@ test("bootstrap route keeps its public path, scoped read model, headers and no-w
   const f = fixture();
   await withRoute(f.route, async (origin) => {
     const response = await fetch(`${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}`, {
-      headers: { ...authHeaders, "x-shop-id": "spoofed-shop", "x-customer-id": "private-customer" },
+      headers: {
+        ...authHeaders,
+        "x-shop-id": "spoofed-shop",
+        "x-customer-id": "private-customer",
+      },
     });
     assert.equal(response.status, 200);
     assert.equal(response.headers.get("cache-control"), "no-store");
-    assert.equal(response.headers.get("content-type"), "application/json; charset=utf-8");
+    assert.equal(
+      response.headers.get("content-type"),
+      "application/json; charset=utf-8",
+    );
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.equal(response.headers.get("access-control-allow-origin"), null);
     assert.deepEqual(await response.json(), {
       schemaVersion: 1,
       shop: {
-        id: principal.shopId, platform: "WOOCOMMERCE", domain: principal.canonicalSiteUrl,
-        onboardingCompleted: false, installedAt: "2026-10-02T10:00:00.000Z",
+        id: principal.shopId,
+        platform: "WOOCOMMERCE",
+        domain: principal.canonicalSiteUrl,
+        onboardingCompleted: false,
+        installedAt: "2026-10-02T10:00:00.000Z",
       },
       internationalContext: {
-        storeLocale: "pt_BR", languageTag: "pt-BR", timeZone: "America/Sao_Paulo", countryCode: "BR",
+        storeLocale: "pt_BR",
+        languageTag: "pt-BR",
+        timeZone: "America/Sao_Paulo",
+        countryCode: "BR",
       },
       storeProfile: {
-        activeCategory: null, pendingCategory: null, pendingSelectionGeneration: 0, pendingSelectedAt: null,
+        activeCategory: null,
+        pendingCategory: null,
+        pendingSelectionGeneration: 0,
+        pendingSelectedAt: null,
       },
     });
   });
   assert.deepEqual(f.calls, ["authenticate", "read-shop"]);
-  assert.deepEqual((f.databaseQueries[0] as { where: unknown }).where, { id: principal.shopId });
+  assert.deepEqual((f.databaseQueries[0] as { where: unknown }).where, {
+    id: principal.shopId,
+  });
   assert.equal(f.writes, 0);
-  assert.deepEqual(f.events, [{
-    level: "info", name: "merchant.bootstrap.read",
-    data: {
-      installationId: principal.installationId, shopId: principal.shopId,
-      outcome: "success", onboardingCompleted: false, durationMs: 0,
+  assert.deepEqual(f.events, [
+    {
+      level: "info",
+      name: "merchant.bootstrap.read",
+      data: {
+        installationId: principal.installationId,
+        shopId: principal.shopId,
+        outcome: "success",
+        onboardingCompleted: false,
+        durationMs: 0,
+      },
     },
-  }]);
+  ]);
   assert.equal(JSON.stringify(f.events).includes("spoofed-shop"), false);
   assert.equal(JSON.stringify(f.events).includes("private-customer"), false);
   assert.equal(JSON.stringify(f.events).includes("private-credential"), false);
@@ -144,7 +207,10 @@ test("bootstrap rejects any query after authentication, without querying or writ
   for (const suffix of ["?shopId=caller-controlled", "?locale=pt-BR"]) {
     const f = fixture();
     await withRoute(f.route, async (origin) => {
-      const response = await fetch(`${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}${suffix}`, { headers: authHeaders });
+      const response = await fetch(
+        `${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}${suffix}`,
+        { headers: authHeaders },
+      );
       assert.equal(response.status, 400);
       assert.deepEqual(await response.json(), { error: "invalid_request" });
       assert.equal(response.headers.get("cache-control"), "no-store");
@@ -159,7 +225,9 @@ test("bootstrap rejects missing or revoked authentication before query validatio
   for (const options of [{}, { authFailure: new WooUnauthenticatedError() }]) {
     const f = fixture(options);
     await withRoute(f.route, async (origin) => {
-      const response = await fetch(`${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}?shopId=other`);
+      const response = await fetch(
+        `${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}?shopId=other`,
+      );
       assert.equal(response.status, 401);
       assert.deepEqual(await response.json(), { error: "unauthorized" });
     });
@@ -176,7 +244,10 @@ test("bootstrap maps tenant-integrity rejection to a generic 500 and logs the ac
   ]) {
     const f = fixture(options);
     await withRoute(f.route, async (origin) => {
-      const response = await fetch(`${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}`, { headers: authHeaders });
+      const response = await fetch(
+        `${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}`,
+        { headers: authHeaders },
+      );
       assert.equal(response.status, 500);
       assert.deepEqual(await response.json(), { error: "internal_error" });
     });
@@ -185,23 +256,33 @@ test("bootstrap maps tenant-integrity rejection to a generic 500 and logs the ac
     assert.equal(f.events[0]?.level, "error");
     assert.equal(f.events[0]?.name, "merchant.bootstrap.read.failed");
     assert.equal(f.events[0]?.data?.reason, "integrity");
-    assert.equal(f.events[0]?.data?.errorName, "MerchantBootstrapIntegrityError");
+    assert.equal(
+      f.events[0]?.data?.errorName,
+      "MerchantBootstrapIntegrityError",
+    );
     assert.equal(typeof f.events[0]?.data?.errorMessage, "string");
     assert.equal(f.writes, 0);
   }
 });
 
 test("bootstrap logs the original exception while keeping its HTTP response generic", async () => {
-  const f = fixture({ readFailure: new Error("do not leak database connection string") });
+  const f = fixture({
+    readFailure: new Error("do not leak database connection string"),
+  });
   await withRoute(f.route, async (origin) => {
-    const response = await fetch(`${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}`, { headers: authHeaders });
+    const response = await fetch(`${origin}${MERCHANT_BOOTSTRAP_ROUTE_PATH}`, {
+      headers: authHeaders,
+    });
     assert.equal(response.status, 500);
     assert.deepEqual(await response.json(), { error: "internal_error" });
   });
   assert.equal(f.events.length, 1);
   assert.equal(f.events[0]?.data?.reason, "internal");
   assert.equal(f.events[0]?.data?.errorName, "Error");
-  assert.equal(f.events[0]?.data?.errorMessage, "do not leak database connection string");
+  assert.equal(
+    f.events[0]?.data?.errorMessage,
+    "do not leak database connection string",
+  );
   assert.match(String(f.events[0]?.data?.errorStack), /connection string/);
 });
 
@@ -209,8 +290,10 @@ test("bootstrap leaves unrelated endpoints and wrong methods to the next router"
   const f = fixture();
   await withRoute(f.route, async (origin) => {
     for (const [method, path] of [
-      ["POST", MERCHANT_BOOTSTRAP_ROUTE_PATH], ["DELETE", MERCHANT_BOOTSTRAP_ROUTE_PATH],
-      ["GET", "/v1/merchant/store-context"], ["GET", "/v1/billing"],
+      ["POST", MERCHANT_BOOTSTRAP_ROUTE_PATH],
+      ["DELETE", MERCHANT_BOOTSTRAP_ROUTE_PATH],
+      ["GET", "/v1/merchant/store-context"],
+      ["GET", "/v1/billing"],
     ] as const) {
       const response = await fetch(`${origin}${path}`, { method });
       assert.equal(response.status, 404);

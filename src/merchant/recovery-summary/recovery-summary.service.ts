@@ -22,10 +22,7 @@ export interface MerchantRecoverySummary {
   source: "MERCHANT" | "ADMIN_OVERRIDE";
 }
 
-type RecoverySummaryDatabase = Pick<
-  PrismaClient,
-  "$queryRaw"
->;
+type RecoverySummaryDatabase = Pick<PrismaClient, "$queryRaw">;
 
 interface RecoverySummaryRow {
   shopId: string;
@@ -64,7 +61,10 @@ export class RecoverySummaryIntegrityError extends Error {
 export class MerchantRecoverySummaryService {
   constructor(private readonly database: RecoverySummaryDatabase) {}
 
-  async read(principal: WooInstallationPrincipal, now = new Date()): Promise<MerchantRecoverySummary> {
+  async read(
+    principal: WooInstallationPrincipal,
+    now = new Date(),
+  ): Promise<MerchantRecoverySummary> {
     const rows = await this.database.$queryRaw<RecoverySummaryRow[]>(Prisma.sql`
       SELECT
         s."id" AS "shopId", s."domain", s."platform", s."shopifyShopId", s."status" AS "shopStatus",
@@ -90,41 +90,65 @@ export class MerchantRecoverySummaryService {
       WHERE s."id" = ${principal.shopId}
     `);
     const row = rows[0];
-    if (!row || row.shopId !== principal.shopId || row.domain !== principal.canonicalSiteUrl ||
-      row.platform !== "WOOCOMMERCE" || row.shopifyShopId !== null || row.shopStatus !== "ACTIVE" ||
-      row.installationId !== principal.installationId || row.installationShopId !== principal.shopId ||
-      row.canonicalSiteUrl !== principal.canonicalSiteUrl || row.credentialVersion !== principal.credentialVersion ||
-      row.installationStatus !== "ACTIVE" || row.revokedAt !== null) {
+    if (
+      !row ||
+      row.shopId !== principal.shopId ||
+      row.domain !== principal.canonicalSiteUrl ||
+      row.platform !== "WOOCOMMERCE" ||
+      row.shopifyShopId !== null ||
+      row.shopStatus !== "ACTIVE" ||
+      row.installationId !== principal.installationId ||
+      row.installationShopId !== principal.shopId ||
+      row.canonicalSiteUrl !== principal.canonicalSiteUrl ||
+      row.credentialVersion !== principal.credentialVersion ||
+      row.installationStatus !== "ACTIVE" ||
+      row.revokedAt !== null
+    ) {
       throw new RecoverySummaryIntegrityError();
     }
 
-    const merchant = row.merchantRecoveryDelayMinutes === null ? null : {
-      recoveryDelayMinutes: row.merchantRecoveryDelayMinutes,
-      recoveryOfferMode: row.merchantRecoveryOfferMode,
-      fixedShopifyDiscountId: row.merchantFixedDiscountId,
-      followUpEnabled: row.merchantFollowUpEnabled,
-      followUpDelayMinutes: row.merchantFollowUpDelayMinutes,
-    };
-    const override = row.overrideId === null ? null : {
-      recoveryDelayMinutes: row.overrideRecoveryDelayMinutes,
-      recoveryOfferMode: row.overrideRecoveryOfferMode,
-      fixedShopifyDiscountId: row.overrideFixedDiscountId,
-      followUpEnabled: row.overrideFollowUpEnabled,
-      followUpDelayMinutes: row.overrideFollowUpDelayMinutes,
-      expiresAt: row.overrideExpiresAt,
-    };
-    const activeOverride = override && (override.expiresAt === null || override.expiresAt > now) ? override : null;
+    const merchant =
+      row.merchantRecoveryDelayMinutes === null
+        ? null
+        : {
+            recoveryDelayMinutes: row.merchantRecoveryDelayMinutes,
+            recoveryOfferMode: row.merchantRecoveryOfferMode,
+            fixedShopifyDiscountId: row.merchantFixedDiscountId,
+            followUpEnabled: row.merchantFollowUpEnabled,
+            followUpDelayMinutes: row.merchantFollowUpDelayMinutes,
+          };
+    const override =
+      row.overrideId === null
+        ? null
+        : {
+            recoveryDelayMinutes: row.overrideRecoveryDelayMinutes,
+            recoveryOfferMode: row.overrideRecoveryOfferMode,
+            fixedShopifyDiscountId: row.overrideFixedDiscountId,
+            followUpEnabled: row.overrideFollowUpEnabled,
+            followUpDelayMinutes: row.overrideFollowUpDelayMinutes,
+            expiresAt: row.overrideExpiresAt,
+          };
+    const activeOverride =
+      override && (override.expiresAt === null || override.expiresAt > now)
+        ? override
+        : null;
     const source = activeOverride ?? merchant;
     let effective;
     try {
-      effective = parseEffectiveRecoveryPolicy(source ? {
-        recoveryDelayMinutes: source.recoveryDelayMinutes,
-        recoveryOfferMode: source.recoveryOfferMode,
-        fixedShopifyDiscountId: source.fixedShopifyDiscountId,
-        followUpEnabled: source.followUpEnabled,
-        followUpDelayMinutes: source.followUpEnabled ? source.followUpDelayMinutes : null,
-        source: activeOverride ? "ADMIN_OVERRIDE" : "MERCHANT",
-      } : UNCONFIGURED_RECOVERY_POLICY);
+      effective = parseEffectiveRecoveryPolicy(
+        source
+          ? {
+              recoveryDelayMinutes: source.recoveryDelayMinutes,
+              recoveryOfferMode: source.recoveryOfferMode,
+              fixedShopifyDiscountId: source.fixedShopifyDiscountId,
+              followUpEnabled: source.followUpEnabled,
+              followUpDelayMinutes: source.followUpEnabled
+                ? source.followUpDelayMinutes
+                : null,
+              source: activeOverride ? "ADMIN_OVERRIDE" : "MERCHANT",
+            }
+          : UNCONFIGURED_RECOVERY_POLICY,
+      );
     } catch (cause) {
       throw new RecoverySummaryIntegrityError({ cause });
     }

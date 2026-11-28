@@ -124,7 +124,15 @@ components:
     ConnectResponse:
       type: object
       additionalProperties: false
-      required: [installationId, shopId, canonicalSiteUrl, credential, credentialVersion, connection]
+      required:
+        [
+          installationId,
+          shopId,
+          canonicalSiteUrl,
+          credential,
+          credentialVersion,
+          connection,
+        ]
       properties:
         installationId:
           type: string

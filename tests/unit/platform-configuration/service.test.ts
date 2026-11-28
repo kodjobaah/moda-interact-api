@@ -2,76 +2,170 @@ import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import test from "node:test";
 import {
-  encryptCredential, parseCredentialKeyring,
+  encryptCredential,
+  parseCredentialKeyring,
 } from "@modainteract/moda-interact-shared/security/credentials/node";
 import { apiPlatformConfigurationAad } from "../../../src/platform-configuration/contracts.js";
 import { ApiPlatformConfigurationError } from "../../../src/platform-configuration/errors.js";
 import { createApiPlatformConfigurationService } from "../../../src/platform-configuration/service.js";
-import type { ApiPlatformConfigurationDatabase, PlatformConfigurationRow } from "../../../src/platform-configuration/repository.js";
+import type {
+  ApiPlatformConfigurationDatabase,
+  PlatformConfigurationRow,
+} from "../../../src/platform-configuration/repository.js";
 import { adminR2PlaintextFixture } from "../../fixtures/platform-configuration/r2-admin-payload.js";
 
-const root = parseCredentialKeyring(JSON.stringify({ "root-v1": randomBytes(32).toString("base64") }));
+const root = parseCredentialKeyring(
+  JSON.stringify({ "root-v1": randomBytes(32).toString("base64") }),
+);
 const previous = randomBytes(32).toString("base64");
 const current = randomBytes(32).toString("base64");
 const hmac = randomBytes(32).toString("base64");
-const keyValues = { connectionKeysJson: JSON.stringify({ previous, current }), activeKeyId: "current", commandHmacKey: hmac };
+const keyValues = {
+  connectionKeysJson: JSON.stringify({ previous, current }),
+  activeKeyId: "current",
+  commandHmacKey: hmac,
+};
 const validPolicy = adminR2PlaintextFixture;
 
-function sealed(environment: string, key: "merchant.knowledge.r2" | "commerce.connectionKeys" | "messaging.meta" | "messaging.sender" | "woocommerce.billing", version: number, payload: unknown) {
-  const envelope = encryptCredential({ keyring: root, activeKeyId: "root-v1", plaintext: JSON.stringify(payload),
-    aad: apiPlatformConfigurationAad(environment, key, version) });
-  return { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM", wrappingKeyId: envelope.keyId,
-    nonce: Buffer.from(envelope.nonce).toString("base64"), ciphertext: Buffer.from(envelope.ciphertext).toString("base64"),
-    authTag: Buffer.from(envelope.authTag).toString("base64") };
+function sealed(
+  environment: string,
+  key:
+    | "merchant.knowledge.r2"
+    | "commerce.connectionKeys"
+    | "messaging.meta"
+    | "messaging.sender"
+    | "woocommerce.billing",
+  version: number,
+  payload: unknown,
+) {
+  const envelope = encryptCredential({
+    keyring: root,
+    activeKeyId: "root-v1",
+    plaintext: JSON.stringify(payload),
+    aad: apiPlatformConfigurationAad(environment, key, version),
+  });
+  return {
+    kind: "sealed",
+    schemaVersion: 1,
+    algorithm: "AES-256-GCM",
+    wrappingKeyId: envelope.keyId,
+    nonce: Buffer.from(envelope.nonce).toString("base64"),
+    ciphertext: Buffer.from(envelope.ciphertext).toString("base64"),
+    authTag: Buffer.from(envelope.authTag).toString("base64"),
+  };
 }
 
 function fixture(environment = "test") {
   const rows = new Map<string, PlatformConfigurationRow>();
   const queries: string[] = [];
-  const database: ApiPlatformConfigurationDatabase = { platformConfiguration: {
-    async findUnique({ where }) {
-      const { environment: env, key } = where.environment_key;
-      queries.push(`${env}:${key}`);
-      return rows.get(`${env}:${key}`) ?? null;
+  const database: ApiPlatformConfigurationDatabase = {
+    platformConfiguration: {
+      async findUnique({ where }) {
+        const { environment: env, key } = where.environment_key;
+        queries.push(`${env}:${key}`);
+        return rows.get(`${env}:${key}`) ?? null;
+      },
     },
-  } };
-  const service = createApiPlatformConfigurationService({ database, environment, unsealKeyring: root });
+  };
+  const service = createApiPlatformConfigurationService({
+    database,
+    environment,
+    unsealKeyring: root,
+  });
   function set(env: string, key: string, value: unknown, version = 1) {
     rows.set(`${env}:${key}`, { environment: env, key, version, value });
   }
   return { service, set, queries, database };
 }
 
-async function fails(promise: Promise<unknown>, code: ApiPlatformConfigurationError["code"]) {
-  await assert.rejects(promise, (error: unknown) => error instanceof ApiPlatformConfigurationError &&
-    error.code === code && !JSON.stringify(error).includes(previous) && !error.message.includes(hmac));
+async function fails(
+  promise: Promise<unknown>,
+  code: ApiPlatformConfigurationError["code"],
+) {
+  await assert.rejects(
+    promise,
+    (error: unknown) =>
+      error instanceof ApiPlatformConfigurationError &&
+      error.code === code &&
+      !JSON.stringify(error).includes(previous) &&
+      !error.message.includes(hmac),
+  );
 }
 
 test("upload policy: editable location, size bounds, no cache, no cross-environment fallback", async () => {
   const { service, set, queries } = fixture();
   await fails(service.readMerchantKnowledgeUploadPolicy(), "MISSING");
-  set("production", "merchant.knowledge.r2", sealed("production", "merchant.knowledge.r2", 1, validPolicy));
+  set(
+    "production",
+    "merchant.knowledge.r2",
+    sealed("production", "merchant.knowledge.r2", 1, validPolicy),
+  );
   await fails(service.readMerchantKnowledgeUploadPolicy(), "MISSING");
-  set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 1, validPolicy));
-  assert.equal((await service.readMerchantKnowledgeUploadPolicy()).r2Bucket, "knowledge-bucket");
-  set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 2,
-    { ...validPolicy, bucket: "next-bucket", maxUploadBytes: 500 }), 2);
-  assert.equal((await service.readMerchantKnowledgeUploadPolicy()).maxUploadBytes, 500);
-  assert.equal((await service.readMerchantKnowledgeUploadPolicy()).r2Bucket, "next-bucket");
+  set(
+    "test",
+    "merchant.knowledge.r2",
+    sealed("test", "merchant.knowledge.r2", 1, validPolicy),
+  );
+  assert.equal(
+    (await service.readMerchantKnowledgeUploadPolicy()).r2Bucket,
+    "knowledge-bucket",
+  );
+  set(
+    "test",
+    "merchant.knowledge.r2",
+    sealed("test", "merchant.knowledge.r2", 2, {
+      ...validPolicy,
+      bucket: "next-bucket",
+      maxUploadBytes: 500,
+    }),
+    2,
+  );
+  assert.equal(
+    (await service.readMerchantKnowledgeUploadPolicy()).maxUploadBytes,
+    500,
+  );
+  assert.equal(
+    (await service.readMerchantKnowledgeUploadPolicy()).r2Bucket,
+    "next-bucket",
+  );
   assert.ok(queries.every((q) => q === "test:merchant.knowledge.r2"));
   const full = await service.requireMerchantKnowledgeR2Configuration();
   assert.equal(full.r2AccessKeyId, validPolicy.accessKeyId);
   assert.equal(full.r2SecretAccessKey, validPolicy.secretAccessKey);
-  assert.equal(Object.hasOwn(await service.readMerchantKnowledgeUploadPolicy(), "r2AccessKeyId"), false);
-  assert.equal(Object.hasOwn(await service.readMerchantKnowledgeUploadPolicy(), "r2SecretAccessKey"), false);
+  assert.equal(
+    Object.hasOwn(
+      await service.readMerchantKnowledgeUploadPolicy(),
+      "r2AccessKeyId",
+    ),
+    false,
+  );
+  assert.equal(
+    Object.hasOwn(
+      await service.readMerchantKnowledgeUploadPolicy(),
+      "r2SecretAccessKey",
+    ),
+    false,
+  );
   // Credentials must not be accepted as plaintext configuration.
   set("test", "merchant.knowledge.r2", validPolicy, 3);
-  await fails(service.requireMerchantKnowledgeR2Configuration(), "INVALID_ENVELOPE");
-  set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 3, validPolicy), 3);
+  await fails(
+    service.requireMerchantKnowledgeR2Configuration(),
+    "INVALID_ENVELOPE",
+  );
+  set(
+    "test",
+    "merchant.knowledge.r2",
+    sealed("test", "merchant.knowledge.r2", 3, validPolicy),
+    3,
+  );
   const tampered = sealed("test", "merchant.knowledge.r2", 3, validPolicy);
   set("test", "merchant.knowledge.r2", { ...tampered, ciphertext: "AAAA" }, 3);
-  await fails(service.requireMerchantKnowledgeR2Configuration(), "UNSEAL_FAILED");
-  for (const value of [{ ...validPolicy, endpoint: "http://localhost" },
+  await fails(
+    service.requireMerchantKnowledgeR2Configuration(),
+    "UNSEAL_FAILED",
+  );
+  for (const value of [
+    { ...validPolicy, endpoint: "http://localhost" },
     { ...validPolicy, endpoint: "https://127.0.0.1" },
     { ...validPolicy, extraField: true },
     { ...validPolicy, maxUploadBytes: 25 * 1024 * 1024 + 1 },
@@ -81,8 +175,14 @@ test("upload policy: editable location, size bounds, no cache, no cross-environm
     { ...validPolicy, r2Endpoint: validPolicy.endpoint },
     { ...validPolicy, r2Bucket: validPolicy.bucket },
     { ...validPolicy, r2AccessKeyId: validPolicy.accessKeyId },
-    { ...validPolicy, r2SecretAccessKey: validPolicy.secretAccessKey }]) {
-    set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 3, value), 3);
+    { ...validPolicy, r2SecretAccessKey: validPolicy.secretAccessKey },
+  ]) {
+    set(
+      "test",
+      "merchant.knowledge.r2",
+      sealed("test", "merchant.knowledge.r2", 3, value),
+      3,
+    );
     await fails(service.readMerchantKnowledgeUploadPolicy(), "INVALID_VALUE");
   }
 });
@@ -94,63 +194,142 @@ test("unified deployment keyring preserves historical keys and never reads store
     MODA_ENCRYPTION_ACTIVE_KEY_ID: "current",
     COMMERCE_CONNECTION_COMMAND_HMAC_KEY: hmac,
   };
-  const service = createApiPlatformConfigurationService({ database, environment: "test", encryptionEnvironment: environment });
-  set("test", "commerce.connectionKeys", { kind: "disabled", schemaVersion: 1 });
+  const service = createApiPlatformConfigurationService({
+    database,
+    environment: "test",
+    encryptionEnvironment: environment,
+  });
+  set("test", "commerce.connectionKeys", {
+    kind: "disabled",
+    schemaVersion: 1,
+  });
   const first = await service.requireCommerceConnectionSecurity();
   assert.ok(first.keyring.hasKey("previous"));
   assert.ok(first.keyring.hasKey("current"));
   assert.equal(first.activeKeyId, "current");
   assert.equal(Object.hasOwn(first, "commandHmacKey"), false);
   environment.MODA_ENCRYPTION_ACTIVE_KEY_ID = "previous";
-  assert.equal((await service.requireCommerceConnectionSecurity()).activeKeyId, "previous");
-  assert.deepEqual(queries, [], "the historical database keyring is not a runtime dependency");
-  await fails(createApiPlatformConfigurationService({ database, environment: "unknown", encryptionEnvironment: environment }).requireCommerceConnectionSecurity(), "INVALID_ENVIRONMENT");
-  const oldEnvelope = encryptCredential({ keyring: first.keyring, activeKeyId: "current", plaintext: "historical-provider-secret", aad: "unchanged-provider-aad" });
-  const { decryptCredential } = await import("@modainteract/moda-interact-shared/security/credentials/node");
-  assert.equal(decryptCredential({ keyring: (await service.requireCommerceConnectionSecurity()).keyring, envelope: oldEnvelope, aad: "unchanged-provider-aad" }), "historical-provider-secret");
+  assert.equal(
+    (await service.requireCommerceConnectionSecurity()).activeKeyId,
+    "previous",
+  );
+  assert.deepEqual(
+    queries,
+    [],
+    "the historical database keyring is not a runtime dependency",
+  );
+  await fails(
+    createApiPlatformConfigurationService({
+      database,
+      environment: "unknown",
+      encryptionEnvironment: environment,
+    }).requireCommerceConnectionSecurity(),
+    "INVALID_ENVIRONMENT",
+  );
+  const oldEnvelope = encryptCredential({
+    keyring: first.keyring,
+    activeKeyId: "current",
+    plaintext: "historical-provider-secret",
+    aad: "unchanged-provider-aad",
+  });
+  const { decryptCredential } =
+    await import("@modainteract/moda-interact-shared/security/credentials/node");
+  assert.equal(
+    decryptCredential({
+      keyring: (await service.requireCommerceConnectionSecurity()).keyring,
+      envelope: oldEnvelope,
+      aad: "unchanged-provider-aad",
+    }),
+    "historical-provider-secret",
+  );
   for (const invalid of [
-    {}, { MODA_ENCRYPTION_KEYS_JSON: keyValues.connectionKeysJson },
-    { MODA_ENCRYPTION_KEYS_JSON: keyValues.connectionKeysJson, MODA_ENCRYPTION_ACTIVE_KEY_ID: "missing" },
-    { MODA_ENCRYPTION_KEYS_JSON: "invalid", MODA_ENCRYPTION_ACTIVE_KEY_ID: "current" },
-    { COMMERCE_CONNECTION_KEYS_JSON: keyValues.connectionKeysJson, COMMERCE_CONNECTION_ACTIVE_KEY_ID: "current" },
+    {},
+    { MODA_ENCRYPTION_KEYS_JSON: keyValues.connectionKeysJson },
+    {
+      MODA_ENCRYPTION_KEYS_JSON: keyValues.connectionKeysJson,
+      MODA_ENCRYPTION_ACTIVE_KEY_ID: "missing",
+    },
+    {
+      MODA_ENCRYPTION_KEYS_JSON: "invalid",
+      MODA_ENCRYPTION_ACTIVE_KEY_ID: "current",
+    },
+    {
+      COMMERCE_CONNECTION_KEYS_JSON: keyValues.connectionKeysJson,
+      COMMERCE_CONNECTION_ACTIVE_KEY_ID: "current",
+    },
   ]) {
-    await fails(createApiPlatformConfigurationService({ database, environment: "test", encryptionEnvironment: invalid }).requireCommerceConnectionSecurity(), "INVALID_VALUE");
+    await fails(
+      createApiPlatformConfigurationService({
+        database,
+        environment: "test",
+        encryptionEnvironment: invalid,
+      }).requireCommerceConnectionSecurity(),
+      "INVALID_VALUE",
+    );
   }
 });
 
 test("Meta secret purpose: strict fields, AAD purpose binding and no generic secret API", async () => {
   const { service, set } = fixture();
   const key = "messaging.meta";
-  const payload = { META_APP_SECRET: "abcdef1234567890abcdef1234567890", WHATSAPP_VERIFY_TOKEN: "verify-token" };
+  const payload = {
+    META_APP_SECRET: "abcdef1234567890abcdef1234567890",
+    WHATSAPP_VERIFY_TOKEN: "verify-token",
+  };
   set("test", key, sealed("test", key, 1, payload));
   assert.deepEqual(await service.requireMetaWebhookSecrets(), {
-    metaAppSecret: payload.META_APP_SECRET, whatsappVerifyToken: payload.WHATSAPP_VERIFY_TOKEN,
+    metaAppSecret: payload.META_APP_SECRET,
+    whatsappVerifyToken: payload.WHATSAPP_VERIFY_TOKEN,
   });
   set("test", key, sealed("test", "commerce.connectionKeys", 2, payload), 2);
   await fails(service.requireMetaWebhookSecrets(), "UNSEAL_FAILED");
-  set("test", key, sealed("test", key, 3, { ...payload, extra: "unexpected" }), 3);
+  set(
+    "test",
+    key,
+    sealed("test", key, 3, { ...payload, extra: "unexpected" }),
+    3,
+  );
   await fails(service.requireMetaWebhookSecrets(), "INVALID_VALUE");
   set("test", key, { kind: "disabled", schemaVersion: 1 }, 4);
   await fails(service.requireMetaWebhookSecrets(), "DISABLED");
-  assert.deepEqual(Object.keys(service).sort(), [
-    "readMerchantKnowledgeUploadPolicy", "requireMerchantKnowledgeR2Configuration",
-    "readMessagingSenderWabaId", "requireCommerceConnectionSecurity", "requireMetaWebhookSecrets", "requireWooBillingCredentials",
-  ].sort());
+  assert.deepEqual(
+    Object.keys(service).sort(),
+    [
+      "readMerchantKnowledgeUploadPolicy",
+      "requireMerchantKnowledgeR2Configuration",
+      "readMessagingSenderWabaId",
+      "requireCommerceConnectionSecurity",
+      "requireMetaWebhookSecrets",
+      "requireWooBillingCredentials",
+    ].sort(),
+  );
 });
 
 test("sender WABA is purpose-scoped, fresh, sealed and exposes no provider credentials", async () => {
   const { service, set, queries, database } = fixture();
   const key = "messaging.sender";
-  const sender = { accessToken: "provider-token-must-not-escape", phoneNumberId: "1020304050",
-    businessAccountId: "123456789012345" };
+  const sender = {
+    accessToken: "provider-token-must-not-escape",
+    phoneNumberId: "1020304050",
+    businessAccountId: "123456789012345",
+  };
   set("test", key, sealed("test", key, 1, sender));
-  assert.equal(await service.readMessagingSenderWabaId(), sender.businessAccountId);
+  assert.equal(
+    await service.readMessagingSenderWabaId(),
+    sender.businessAccountId,
+  );
   assert.ok(queries.every((query) => query === "test:messaging.sender"));
   // Rotate the sealed record without caching the old business account.
-  set("test", key, sealed("test", key, 2, { ...sender, businessAccountId: "987654321012345" }), 2);
+  set(
+    "test",
+    key,
+    sealed("test", key, 2, { ...sender, businessAccountId: "987654321012345" }),
+    2,
+  );
   assert.equal(await service.readMessagingSenderWabaId(), "987654321012345");
   for (const value of [
-    { ...sender, accessToken: "" }, { ...sender, phoneNumberId: "" },
+    { ...sender, accessToken: "" },
+    { ...sender, phoneNumberId: "" },
     { ...sender, businessAccountId: "not-a-waba" },
     { ...sender, businessAccountId: "123" },
     { ...sender, extraSecret: "not-allowed" },
@@ -162,43 +341,85 @@ test("sender WABA is purpose-scoped, fresh, sealed and exposes no provider crede
   await fails(service.readMessagingSenderWabaId(), "UNSEAL_FAILED");
   set("test", key, { kind: "disabled", schemaVersion: 1 }, 5);
   await fails(service.readMessagingSenderWabaId(), "DISABLED");
-  const noRoot = createApiPlatformConfigurationService({ database, environment: "test" });
+  const noRoot = createApiPlatformConfigurationService({
+    database,
+    environment: "test",
+  });
   set("test", key, sealed("test", key, 6, sender), 6);
   await fails(noRoot.readMessagingSenderWabaId(), "UNSEAL_FAILED");
 });
 
 test("database errors, invalid deployment environment and malformed row fail closed", async () => {
   const { service, set, database } = fixture();
-  set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 1, validPolicy), 0);
+  set(
+    "test",
+    "merchant.knowledge.r2",
+    sealed("test", "merchant.knowledge.r2", 1, validPolicy),
+    0,
+  );
   await fails(service.readMerchantKnowledgeUploadPolicy(), "INVALID_ROW");
-  const incorrectEnvironment = createApiPlatformConfigurationService({ database, environment: "unknown", unsealKeyring: root });
-  await fails(incorrectEnvironment.readMerchantKnowledgeUploadPolicy(), "INVALID_ENVIRONMENT");
-  const down = createApiPlatformConfigurationService({ environment: "test", unsealKeyring: root,
-    database: { platformConfiguration: { async findUnique() { throw new Error("secret-bearing connection detail"); } } } });
+  const incorrectEnvironment = createApiPlatformConfigurationService({
+    database,
+    environment: "unknown",
+    unsealKeyring: root,
+  });
+  await fails(
+    incorrectEnvironment.readMerchantKnowledgeUploadPolicy(),
+    "INVALID_ENVIRONMENT",
+  );
+  const down = createApiPlatformConfigurationService({
+    environment: "test",
+    unsealKeyring: root,
+    database: {
+      platformConfiguration: {
+        async findUnique() {
+          throw new Error("secret-bearing connection detail");
+        },
+      },
+    },
+  });
   await fails(down.requireMetaWebhookSecrets(), "DATABASE_UNAVAILABLE");
 });
 
-
 test("R2: ADMIN-002 sealed six-field interoperability, no legacy alias or fallback", async () => {
   const { service, set, queries } = fixture();
-  assert.deepEqual(Object.keys(validPolicy).sort(), [
-    "endpoint", "bucket", "accessKeyId", "secretAccessKey", "maxUploadBytes", "maxXlsxUncompressedBytes",
-  ].sort());
+  assert.deepEqual(
+    Object.keys(validPolicy).sort(),
+    [
+      "endpoint",
+      "bucket",
+      "accessKeyId",
+      "secretAccessKey",
+      "maxUploadBytes",
+      "maxXlsxUncompressedBytes",
+    ].sort(),
+  );
   set("test", "merchantKnowledge.upload", validPolicy);
   // A populated old key must not make a missing canonical record appear configured.
   await fails(service.readMerchantKnowledgeUploadPolicy(), "MISSING");
   assert.deepEqual(queries, ["test:merchant.knowledge.r2"]);
-  set("test", "merchant.knowledge.r2", sealed("test", "merchant.knowledge.r2", 1, validPolicy));
+  set(
+    "test",
+    "merchant.knowledge.r2",
+    sealed("test", "merchant.knowledge.r2", 1, validPolicy),
+  );
   assert.deepEqual(await service.readMerchantKnowledgeUploadPolicy(), {
-    r2Endpoint: `${validPolicy.endpoint}/`, r2Bucket: validPolicy.bucket,
+    r2Endpoint: `${validPolicy.endpoint}/`,
+    r2Bucket: validPolicy.bucket,
     maxUploadBytes: validPolicy.maxUploadBytes,
     maxXlsxUncompressedBytes: validPolicy.maxXlsxUncompressedBytes,
   });
   const credentials = await service.requireMerchantKnowledgeR2Configuration();
   assert.equal(credentials.r2AccessKeyId, validPolicy.accessKeyId);
   assert.equal(credentials.r2SecretAccessKey, validPolicy.secretAccessKey);
-  assert.equal("r2AccessKeyId" in await service.readMerchantKnowledgeUploadPolicy(), false);
-  assert.equal("r2SecretAccessKey" in await service.readMerchantKnowledgeUploadPolicy(), false);
+  assert.equal(
+    "r2AccessKeyId" in (await service.readMerchantKnowledgeUploadPolicy()),
+    false,
+  );
+  assert.equal(
+    "r2SecretAccessKey" in (await service.readMerchantKnowledgeUploadPolicy()),
+    false,
+  );
   assert.ok(queries.every((entry) => entry === "test:merchant.knowledge.r2"));
 });
 
@@ -208,23 +429,48 @@ test("R2: disabled/malformed envelopes, missing and wrong unseal root fail witho
   set("test", key, { kind: "disabled", schemaVersion: 1 });
   await fails(service.readMerchantKnowledgeUploadPolicy(), "DISABLED");
   await fails(service.requireMerchantKnowledgeR2Configuration(), "DISABLED");
-  set("test", key, { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM" }, 2);
+  set(
+    "test",
+    key,
+    { kind: "sealed", schemaVersion: 1, algorithm: "AES-256-GCM" },
+    2,
+  );
   await fails(service.readMerchantKnowledgeUploadPolicy(), "INVALID_ENVELOPE");
   set("test", key, sealed("test", key, 3, validPolicy), 3);
-  const missingRoot = createApiPlatformConfigurationService({ database, environment: "test" });
-  await fails(missingRoot.requireMerchantKnowledgeR2Configuration(), "UNSEAL_FAILED");
-  const wrongRoot = createApiPlatformConfigurationService({ database, environment: "test",
-    unsealKeyring: parseCredentialKeyring(JSON.stringify({ "root-v1": randomBytes(32).toString("base64") })) });
+  const missingRoot = createApiPlatformConfigurationService({
+    database,
+    environment: "test",
+  });
+  await fails(
+    missingRoot.requireMerchantKnowledgeR2Configuration(),
+    "UNSEAL_FAILED",
+  );
+  const wrongRoot = createApiPlatformConfigurationService({
+    database,
+    environment: "test",
+    unsealKeyring: parseCredentialKeyring(
+      JSON.stringify({ "root-v1": randomBytes(32).toString("base64") }),
+    ),
+  });
   await fails(wrongRoot.readMerchantKnowledgeUploadPolicy(), "UNSEAL_FAILED");
   // A row-version change must invalidate AAD and must not reveal the plaintext.
   set("test", key, sealed("test", key, 3, validPolicy), 4);
-  await fails(service.requireMerchantKnowledgeR2Configuration(), "UNSEAL_FAILED");
+  await fails(
+    service.requireMerchantKnowledgeR2Configuration(),
+    "UNSEAL_FAILED",
+  );
   // The error must not contain any part of the R2 plaintext or envelope.
-  try { await service.requireMerchantKnowledgeR2Configuration(); assert.fail("should reject"); }
-  catch (error) {
+  try {
+    await service.requireMerchantKnowledgeR2Configuration();
+    assert.fail("should reject");
+  } catch (error) {
     assert.ok(error instanceof ApiPlatformConfigurationError);
     const diagnostic = JSON.stringify(error);
-    for (const secret of [validPolicy.accessKeyId, validPolicy.secretAccessKey, "fixture-only-secret-key"]) {
+    for (const secret of [
+      validPolicy.accessKeyId,
+      validPolicy.secretAccessKey,
+      "fixture-only-secret-key",
+    ]) {
       assert.equal(diagnostic.includes(secret), false);
     }
   }
@@ -233,7 +479,11 @@ test("R2: disabled/malformed envelopes, missing and wrong unseal root fail witho
 test("sealed messaging sender reader returns only current trusted WABA identity", async () => {
   const { service, set, queries } = fixture();
   const key = "messaging.sender";
-  const sender = { accessToken: "private-provider-token", phoneNumberId: "123456789", businessAccountId: "123456789000" };
+  const sender = {
+    accessToken: "private-provider-token",
+    phoneNumberId: "123456789",
+    businessAccountId: "123456789000",
+  };
   await fails(service.readMessagingSenderWabaId(), "MISSING");
   set("production", key, sealed("production", key, 1, sender));
   await fails(service.readMessagingSenderWabaId(), "MISSING");
@@ -244,8 +494,10 @@ test("sealed messaging sender reader returns only current trusted WABA identity"
   set("test", key, sealed("test", key, 2, rotated), 2);
   assert.equal(await service.readMessagingSenderWabaId(), "987654321000");
   for (const bad of [
-    { ...sender, businessAccountId: "" }, { ...sender, businessAccountId: "attacker" },
-    { ...sender, accessToken: "" }, { ...sender, extra: "secret" },
+    { ...sender, businessAccountId: "" },
+    { ...sender, businessAccountId: "attacker" },
+    { ...sender, accessToken: "" },
+    { ...sender, extra: "secret" },
   ]) {
     set("test", key, sealed("test", key, 3, bad), 3);
     await fails(service.readMessagingSenderWabaId(), "INVALID_VALUE");

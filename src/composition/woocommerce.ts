@@ -38,65 +38,119 @@ export function createWooRoutes(options: {
   platformConfiguration?: ApiPlatformConfigurationReader;
   checkoutPublisher?: WooCheckoutPublisher;
   orderPublisher?: WooOrderPublisher;
-}): { installation: ApiRouteHandler; billingWebhook: ApiRouteHandler; activity: ApiRouteHandler; consent: ApiRouteHandler; consentStatus: ApiRouteHandler; shopBrand: ApiRouteHandler; recoverySelection: ApiRouteHandler; recoveryRestore: ApiRouteHandler; restRead?: ApiRouteHandler } {
+}): {
+  installation: ApiRouteHandler;
+  billingWebhook: ApiRouteHandler;
+  activity: ApiRouteHandler;
+  consent: ApiRouteHandler;
+  consentStatus: ApiRouteHandler;
+  shopBrand: ApiRouteHandler;
+  recoverySelection: ApiRouteHandler;
+  recoveryRestore: ApiRouteHandler;
+  restRead?: ApiRouteHandler;
+} {
   const { prisma, config, authenticator, logger } = options;
   const installation = createWooInstallationRoutes({
     mode: config.woocommerceConnectionMode,
     connectionService: new WooInstallationConnectionService(
-      prisma, new WooSiteVerifier({ mode: config.woocommerceConnectionMode }),
+      prisma,
+      new WooSiteVerifier({ mode: config.woocommerceConnectionMode }),
     ),
     authenticator,
     recoveryTemplates: new WooRecoveryTemplateProvisioner({
-      database: prisma, environment: config.environment, logger,
-      sender: createTransactionMessagingSenderFactory({ environment: config.environment, logger }),
+      database: prisma,
+      environment: config.environment,
+      logger,
+      sender: createTransactionMessagingSenderFactory({
+        environment: config.environment,
+        logger,
+      }),
     }),
     logger,
   });
   const billingWebhook = createWooBillingWebhookRoute({
-    ...(config.wooBilling ? { resolveApiSecret: async () => {
-      if (!options.platformConfiguration) throw new Error("billing_configuration_unavailable");
-      return (await options.platformConfiguration.requireWooBillingCredentials()).apiSecret;
-    } } : {}),
-    receiptService: new WooBillingWebhookReceiptService(prisma.wooCommerceBillingWebhookReceipt),
+    ...(config.wooBilling
+      ? {
+          resolveApiSecret: async () => {
+            if (!options.platformConfiguration)
+              throw new Error("billing_configuration_unavailable");
+            return (
+              await options.platformConfiguration.requireWooBillingCredentials()
+            ).apiSecret;
+          },
+        }
+      : {}),
+    receiptService: new WooBillingWebhookReceiptService(
+      prisma.wooCommerceBillingWebhookReceipt,
+    ),
     logger,
   });
-  const restRead = (config.wooRestReadPublicOrigin || config.wooRestReadAuthorization)
-    ? createWooRestReadAuthorizationRoutes({
-        authenticator,
-        service: new WooReadAuthorizationService(
-          prisma,
-          config.wooRestReadPublicOrigin
-            ? { publicOrigin: config.wooRestReadPublicOrigin,
-                resolveSecurity: async () => {
-                  if (!options.platformConfiguration) throw new Error("platform_configuration_unavailable");
-                  return options.platformConfiguration.requireCommerceConnectionSecurity();
-                } }
-            : config.wooRestReadAuthorization!,
-          config.woocommerceConnectionMode,
-          new WooReadCredentialVerifier({ mode: config.woocommerceConnectionMode }),
-        ),
-        logger,
-      })
-    : undefined;
+  const restRead =
+    config.wooRestReadPublicOrigin || config.wooRestReadAuthorization
+      ? createWooRestReadAuthorizationRoutes({
+          authenticator,
+          service: new WooReadAuthorizationService(
+            prisma,
+            config.wooRestReadPublicOrigin
+              ? {
+                  publicOrigin: config.wooRestReadPublicOrigin,
+                  resolveSecurity: async () => {
+                    if (!options.platformConfiguration)
+                      throw new Error("platform_configuration_unavailable");
+                    return options.platformConfiguration.requireCommerceConnectionSecurity();
+                  },
+                }
+              : config.wooRestReadAuthorization!,
+            config.woocommerceConnectionMode,
+            new WooReadCredentialVerifier({
+              mode: config.woocommerceConnectionMode,
+            }),
+          ),
+          logger,
+        })
+      : undefined;
   const activity = createWooCheckoutActivityRoute({
     authenticator,
-    publisher: options.checkoutPublisher ?? { async publish() { throw new Error("woo_checkout_redis_unavailable"); } },
-    ...(options.orderPublisher ? { orderPublisher: options.orderPublisher } : {}),
+    publisher: options.checkoutPublisher ?? {
+      async publish() {
+        throw new Error("woo_checkout_redis_unavailable");
+      },
+    },
+    ...(options.orderPublisher
+      ? { orderPublisher: options.orderPublisher }
+      : {}),
     logger,
   });
   return {
     installation,
     activity,
-    consent: createWooConsentRoute({ authenticator, service: new WooConsentService(prisma), logger }),
-    consentStatus: createWooConsentStatusRoute({ authenticator, service: new WooConsentStatusService(prisma), logger }),
-    shopBrand: createWooShopBrandRoute({ authenticator, service: new WooShopBrandService(prisma), logger }),
+    consent: createWooConsentRoute({
+      authenticator,
+      service: new WooConsentService(prisma),
+      logger,
+    }),
+    consentStatus: createWooConsentStatusRoute({
+      authenticator,
+      service: new WooConsentStatusService(prisma),
+      logger,
+    }),
+    shopBrand: createWooShopBrandRoute({
+      authenticator,
+      service: new WooShopBrandService(prisma),
+      logger,
+    }),
     recoverySelection: createWooRecoverySelectionRoute({
-      authenticator, service: new WooRecoverySelectionService(prisma), logger,
+      authenticator,
+      service: new WooRecoverySelectionService(prisma),
+      logger,
     }),
     recoveryRestore: createWooRecoveryRestoreRoute({
-      authenticator, service: new WooRecoveryRestoreService(
-        prisma, new WooConfirmedSentOfferResolver(prisma, logger),
-      ), logger,
+      authenticator,
+      service: new WooRecoveryRestoreService(
+        prisma,
+        new WooConfirmedSentOfferResolver(prisma, logger),
+      ),
+      logger,
     }),
     billingWebhook,
     ...(restRead ? { restRead } : {}),

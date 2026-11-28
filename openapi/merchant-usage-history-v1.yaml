@@ -25,10 +25,11 @@ paths:
           schema: { type: string, enum: [current, past, all] }
         - name: periodId
           in: query
-          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,128}$' }
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,128}$" }
         - name: kind
           in: query
-          schema: { type: string, enum: [ALL, RECOVERY_CONVERSATION], default: ALL }
+          schema:
+            { type: string, enum: [ALL, RECOVERY_CONVERSATION], default: ALL }
         - name: page
           in: query
           schema: { type: integer, minimum: 1, maximum: 1000, default: 1 }
@@ -38,7 +39,7 @@ paths:
         - name: periodCursor
           in: query
           description: Opaque, signed, installation/Shop/view-bound period seek token
-          schema: { type: string, pattern: '^[A-Za-z0-9_-]{1,1024}$' }
+          schema: { type: string, pattern: "^[A-Za-z0-9_-]{1,1024}$" }
         - name: responseVersion
           in: query
           description: v2 adds per-event allocation; v3 is the unified consumption ledger (RECOVERY_CONVERSATION only). Omitted means strict v1.
@@ -46,19 +47,32 @@ paths:
         - name: chargeSource
           in: query
           description: v3 only. Filter by original committed reservation allocation before pagination and totals.
-          schema: { type: string, enum: [ALL, LIFETIME_FREE_CREDITS, INCLUDED_PLAN_ALLOWANCE, PURCHASED_TOP_UP, PROMOTIONAL_CREDITS, UNATTRIBUTED], default: ALL }
+          schema:
+            {
+              type: string,
+              enum:
+                [
+                  ALL,
+                  LIFETIME_FREE_CREDITS,
+                  INCLUDED_PLAN_ALLOWANCE,
+                  PURCHASED_TOP_UP,
+                  PROMOTIONAL_CREDITS,
+                  UNATTRIBUTED,
+                ],
+              default: ALL,
+            }
       responses:
-        '200':
+        "200":
           description: No-store read from existing Shop-owned usage and entitlement records
           headers:
             Cache-Control: { schema: { type: string, const: no-store } }
           content:
             application/json:
-              schema: { $ref: '#/components/schemas/UsageHistory' }
-        '400': { $ref: '#/components/responses/BadRequest' }
-        '401': { $ref: '#/components/responses/Unauthorized' }
-        '409': { $ref: '#/components/responses/Conflict' }
-        '500': { $ref: '#/components/responses/Internal' }
+              schema: { $ref: "#/components/schemas/UsageHistory" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "500": { $ref: "#/components/responses/Internal" }
 components:
   securitySchemes:
     InstallationBearer: { type: http, scheme: bearer }
@@ -69,7 +83,7 @@ components:
       additionalProperties: false
       required: [id, periodStart, periodEnd]
       properties:
-        id: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        id: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
         periodStart: { type: string, format: date-time }
         periodEnd: { type: string, format: date-time }
     PeriodPage:
@@ -80,49 +94,78 @@ components:
         items:
           type: array
           maxItems: 25
-          items: { $ref: '#/components/schemas/Period' }
-        previousCursor: { type: [string, 'null'], maxLength: 1024 }
-        nextCursor: { type: [string, 'null'], maxLength: 1024 }
+          items: { $ref: "#/components/schemas/Period" }
+        previousCursor: { type: [string, "null"], maxLength: 1024 }
+        nextCursor: { type: [string, "null"], maxLength: 1024 }
     RecoverySource:
       type: object
       additionalProperties: false
       required: [recoveryId, customerName]
       properties:
-        recoveryId: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
-        customerName: { type: [string, 'null'], maxLength: 160 }
+        recoveryId: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
+        customerName: { type: [string, "null"], maxLength: 160 }
     UsageEvent:
       type: object
       additionalProperties: false
       required: [id, metric, quantity, occurredAt, sourceRecovery]
       properties:
-        id: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        id: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
         metric:
           type: string
-          enum: [RECOVERY_CONVERSATION, OUTBOUND_AUTOMATED_MESSAGE, DELIVERED_WHATSAPP_MESSAGE, RECOVERY_CREDIT_PACK_PURCHASE]
-        quantity: { type: number, description: Signed authoritative usage including corrections }
+          enum:
+            [
+              RECOVERY_CONVERSATION,
+              OUTBOUND_AUTOMATED_MESSAGE,
+              DELIVERED_WHATSAPP_MESSAGE,
+              RECOVERY_CREDIT_PACK_PURCHASE,
+            ]
+        quantity:
+          {
+            type: number,
+            description: Signed authoritative usage including corrections,
+          }
         occurredAt: { type: string, format: date-time }
         sourceRecovery:
           oneOf:
-            - { $ref: '#/components/schemas/RecoverySource' }
-            - { type: 'null' }
+            - { $ref: "#/components/schemas/RecoverySource" }
+            - { type: "null" }
     UsageEventV2:
       type: object
       additionalProperties: false
-      required: [id, metric, quantity, occurredAt, sourceRecovery, chargedAgainst]
+      required:
+        [id, metric, quantity, occurredAt, sourceRecovery, chargedAgainst]
       properties:
-        id: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        id: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
         metric:
           type: string
-          enum: [RECOVERY_CONVERSATION, OUTBOUND_AUTOMATED_MESSAGE, DELIVERED_WHATSAPP_MESSAGE, RECOVERY_CREDIT_PACK_PURCHASE]
-        quantity: { type: number, description: Signed authoritative usage including corrections }
+          enum:
+            [
+              RECOVERY_CONVERSATION,
+              OUTBOUND_AUTOMATED_MESSAGE,
+              DELIVERED_WHATSAPP_MESSAGE,
+              RECOVERY_CREDIT_PACK_PURCHASE,
+            ]
+        quantity:
+          {
+            type: number,
+            description: Signed authoritative usage including corrections,
+          }
         occurredAt: { type: string, format: date-time }
         sourceRecovery:
           oneOf:
-            - { $ref: '#/components/schemas/RecoverySource' }
-            - { type: 'null' }
+            - { $ref: "#/components/schemas/RecoverySource" }
+            - { type: "null" }
         chargedAgainst:
           type: string
-          enum: [LIFETIME_FREE_CREDITS, INCLUDED_PLAN_ALLOWANCE, PURCHASED_TOP_UP, PROMOTIONAL_CREDITS, NOT_APPLICABLE, UNATTRIBUTED]
+          enum:
+            [
+              LIFETIME_FREE_CREDITS,
+              INCLUDED_PLAN_ALLOWANCE,
+              PURCHASED_TOP_UP,
+              PROMOTIONAL_CREDITS,
+              NOT_APPLICABLE,
+              UNATTRIBUTED,
+            ]
           description: >-
             Derived only from Shop-owned committed reservation allocation and
             original event lineage for corrections. UNATTRIBUTED means insufficient
@@ -131,21 +174,33 @@ components:
     UsageEventV3:
       type: object
       additionalProperties: false
-      required: [id, metric, quantity, occurredAt, sourceRecovery, chargedAgainst]
+      required:
+        [id, metric, quantity, occurredAt, sourceRecovery, chargedAgainst]
       properties:
-        id: { type: string, pattern: '^[A-Za-z0-9_-]{1,191}$' }
+        id: { type: string, pattern: "^[A-Za-z0-9_-]{1,191}$" }
         metric:
           type: string
           enum: [RECOVERY_CONVERSATION]
-        quantity: { type: number, description: Signed authoritative usage including corrections }
+        quantity:
+          {
+            type: number,
+            description: Signed authoritative usage including corrections,
+          }
         occurredAt: { type: string, format: date-time }
         sourceRecovery:
           oneOf:
-            - { $ref: '#/components/schemas/RecoverySource' }
-            - { type: 'null' }
+            - { $ref: "#/components/schemas/RecoverySource" }
+            - { type: "null" }
         chargedAgainst:
           type: string
-          enum: [LIFETIME_FREE_CREDITS, INCLUDED_PLAN_ALLOWANCE, PURCHASED_TOP_UP, PROMOTIONAL_CREDITS, UNATTRIBUTED]
+          enum:
+            [
+              LIFETIME_FREE_CREDITS,
+              INCLUDED_PLAN_ALLOWANCE,
+              PURCHASED_TOP_UP,
+              PROMOTIONAL_CREDITS,
+              UNATTRIBUTED,
+            ]
           description: >-
             Derived only from Shop-owned committed reservation allocation and
             original event lineage for corrections. UNATTRIBUTED means insufficient
@@ -153,62 +208,91 @@ components:
     UsagePagination:
       type: object
       additionalProperties: false
-      required: [page, pageSize, total, totalQuantity, billId, periodStart, periodEnd]
+      required:
+        [page, pageSize, total, totalQuantity, billId, periodStart, periodEnd]
       properties:
         page: { type: integer, minimum: 1, maximum: 1000 }
         pageSize: { type: integer, enum: [10, 25, 50, 100] }
         total: { type: integer, minimum: 0 }
-        totalQuantity: { type: number, description: Signed sum of filtered matching UsageEvents }
-        billId: { type: [string, 'null'], maxLength: 191 }
-        periodStart: { type: [string, 'null'], format: date-time }
-        periodEnd: { type: [string, 'null'], format: date-time }
+        totalQuantity:
+          {
+            type: number,
+            description: Signed sum of filtered matching UsageEvents,
+          }
+        billId: { type: [string, "null"], maxLength: 191 }
+        periodStart: { type: [string, "null"], format: date-time }
+        periodEnd: { type: [string, "null"], format: date-time }
     UsageHistory:
       oneOf:
-        - { $ref: '#/components/schemas/UsageHistoryV1' }
-        - { $ref: '#/components/schemas/UsageHistoryV2' }
-        - { $ref: '#/components/schemas/UsageHistoryV3' }
+        - { $ref: "#/components/schemas/UsageHistoryV1" }
+        - { $ref: "#/components/schemas/UsageHistoryV2" }
+        - { $ref: "#/components/schemas/UsageHistoryV3" }
     UsageHistoryV1:
       type: object
       additionalProperties: false
-      required: [schemaVersion, state, usageView, periodPage, usageEvents, usagePagination]
+      required:
+        [
+          schemaVersion,
+          state,
+          usageView,
+          periodPage,
+          usageEvents,
+          usagePagination,
+        ]
       properties:
         schemaVersion: { type: integer, const: 1 }
         state: { type: string, enum: [ready, unavailable] }
         usageView: { type: string, enum: [current, past] }
-        periodPage: { $ref: '#/components/schemas/PeriodPage' }
+        periodPage: { $ref: "#/components/schemas/PeriodPage" }
         usageEvents:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/UsageEvent' }
-        usagePagination: { $ref: '#/components/schemas/UsagePagination' }
+          items: { $ref: "#/components/schemas/UsageEvent" }
+        usagePagination: { $ref: "#/components/schemas/UsagePagination" }
     UsageHistoryV2:
       type: object
       additionalProperties: false
-      required: [schemaVersion, state, usageView, periodPage, usageEvents, usagePagination]
+      required:
+        [
+          schemaVersion,
+          state,
+          usageView,
+          periodPage,
+          usageEvents,
+          usagePagination,
+        ]
       properties:
         schemaVersion: { type: integer, const: 2 }
         state: { type: string, enum: [ready, unavailable] }
         usageView: { type: string, enum: [current, past] }
-        periodPage: { $ref: '#/components/schemas/PeriodPage' }
+        periodPage: { $ref: "#/components/schemas/PeriodPage" }
         usageEvents:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/UsageEventV2' }
-        usagePagination: { $ref: '#/components/schemas/UsagePagination' }
+          items: { $ref: "#/components/schemas/UsageEventV2" }
+        usagePagination: { $ref: "#/components/schemas/UsagePagination" }
     UsageHistoryV3:
       type: object
       additionalProperties: false
-      required: [schemaVersion, state, usageView, periodPage, usageEvents, usagePagination]
+      required:
+        [
+          schemaVersion,
+          state,
+          usageView,
+          periodPage,
+          usageEvents,
+          usagePagination,
+        ]
       properties:
         schemaVersion: { type: integer, const: 3 }
         state: { type: string, enum: [ready, unavailable] }
         usageView: { type: string, enum: [current, past, all] }
-        periodPage: { $ref: '#/components/schemas/PeriodPage' }
+        periodPage: { $ref: "#/components/schemas/PeriodPage" }
         usageEvents:
           type: array
           maxItems: 100
-          items: { $ref: '#/components/schemas/UsageEventV3' }
-        usagePagination: { $ref: '#/components/schemas/UsagePagination' }
+          items: { $ref: "#/components/schemas/UsageEventV3" }
+        usagePagination: { $ref: "#/components/schemas/UsagePagination" }
     Error:
       type: object
       additionalProperties: false
@@ -216,25 +300,33 @@ components:
       properties:
         error:
           type: string
-          enum: [invalid_request, unauthorized, invalid_cursor, invalid_period, usage_history_integrity_invalid, internal_error]
+          enum:
+            [
+              invalid_request,
+              unauthorized,
+              invalid_cursor,
+              invalid_period,
+              usage_history_integrity_invalid,
+              internal_error,
+            ]
   responses:
     BadRequest:
       description: Unknown, duplicate or malformed query parameter or GET request body
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
     Unauthorized:
       description: Missing, wrong-platform, suspended, disconnected or revoked Woo installation
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
     Conflict:
       description: Foreign/invalid period, invalid/tampered cursor or inconsistent billing state
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }
     Internal:
       description: Internal failure without sensitive details
       content:
         application/json:
-          schema: { $ref: '#/components/schemas/Error' }
+          schema: { $ref: "#/components/schemas/Error" }

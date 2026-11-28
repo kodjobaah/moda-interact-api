@@ -18,15 +18,21 @@ export interface BillingPlanCatalogueResponse {
     billingPeriod: "EVERY_30_DAYS";
     recurringAmountMinor: number;
     currency: string;
-    highlights: Array<{ contentKey: string; position: number; title: string; description: string }>;
+    highlights: Array<{
+      contentKey: string;
+      position: number;
+      title: string;
+      description: string;
+    }>;
   }>;
 }
 
 export class BillingCatalogueError extends Error {
-  constructor(readonly code:
-    | "billing_catalogue_invalid"
-    | "billing_catalogue_translation_unavailable"
-    | "billing_locale_invalid"
+  constructor(
+    readonly code:
+      | "billing_catalogue_invalid"
+      | "billing_catalogue_translation_unavailable"
+      | "billing_locale_invalid",
   ) {
     super(code);
     this.name = "BillingCatalogueError";
@@ -45,11 +51,18 @@ export class BillingPlanCatalogueReadService {
     principal: WooInstallationPrincipal,
     requestedLocale?: string,
   ): Promise<BillingPlanCatalogueResponse> {
-    const canonicalRequestedLocale = requestedLocale === undefined
-      ? undefined
-      : parsePresentationLocale(requestedLocale);
+    const canonicalRequestedLocale =
+      requestedLocale === undefined
+        ? undefined
+        : parsePresentationLocale(requestedLocale);
     return this.database.$transaction(
-      (transaction) => readCatalogueSnapshot(transaction, principal, canonicalRequestedLocale, this.logger),
+      (transaction) =>
+        readCatalogueSnapshot(
+          transaction,
+          principal,
+          canonicalRequestedLocale,
+          this.logger,
+        ),
       { isolationLevel: "RepeatableRead" },
     );
   }
@@ -74,10 +87,16 @@ async function readCatalogueSnapshot(
     },
   });
   if (
-    !shop || shop.id !== principal.shopId || shop.domain !== principal.canonicalSiteUrl ||
-    shop.platform !== "WOOCOMMERCE" || shop.shopifyShopId !== null || shop.status !== "ACTIVE"
-  ) throw new BillingPresentationError("billing_integrity_invalid");
-  if (!shop.onboardingCompleted) throw new BillingPresentationError("billing_not_initialized");
+    !shop ||
+    shop.id !== principal.shopId ||
+    shop.domain !== principal.canonicalSiteUrl ||
+    shop.platform !== "WOOCOMMERCE" ||
+    shop.shopifyShopId !== null ||
+    shop.status !== "ACTIVE"
+  )
+    throw new BillingPresentationError("billing_integrity_invalid");
+  if (!shop.onboardingCompleted)
+    throw new BillingPresentationError("billing_not_initialized");
 
   const candidates = localeCandidates(requestedLocale, shop.defaultLanguageTag);
   const plans = await transaction.merchantPricingPlan.findMany({
@@ -95,20 +114,31 @@ async function readCatalogueSnapshot(
       billingPeriod: true,
       recurringAmountMinor: true,
       currency: true,
-      translations: { where: { locale: { in: candidates } }, select: { locale: true, merchantDescription: true } },
+      translations: {
+        where: { locale: { in: candidates } },
+        select: { locale: true, merchantDescription: true },
+      },
       highlights: {
         orderBy: [{ position: "asc" }, { contentKey: "asc" }],
         take: 101,
         select: {
           contentKey: true,
           position: true,
-          translations: { where: { locale: { in: candidates } }, select: { locale: true, merchantTitle: true, merchantDescription: true } },
+          translations: {
+            where: { locale: { in: candidates } },
+            select: {
+              locale: true,
+              merchantTitle: true,
+              merchantDescription: true,
+            },
+          },
         },
       },
     },
   });
 
-  if (plans.length > 100) throw new BillingCatalogueError("billing_catalogue_invalid");
+  if (plans.length > 100)
+    throw new BillingCatalogueError("billing_catalogue_invalid");
 
   const freePlans = plans.filter((plan) => plan.planKind === "FREE");
   if (freePlans.length !== 1 || freePlans[0]?.recurringAmountMinor !== 0) {
@@ -116,8 +146,11 @@ async function readCatalogueSnapshot(
   }
   const selectable = plans.filter((plan) => {
     if (plan.planKind === "FREE") return true;
-    const compatible = plan.planKind === "PAID_METERED" && plan.recurringAmountMinor > 0 &&
-      plan.currency === "USD" && plan.billingPeriod === "EVERY_30_DAYS";
+    const compatible =
+      plan.planKind === "PAID_METERED" &&
+      plan.recurringAmountMinor > 0 &&
+      plan.currency === "USD" &&
+      plan.billingPeriod === "EVERY_30_DAYS";
     if (!compatible) {
       logger.warn("billing.plans.catalogue_plan_excluded", {
         planId: plan.id,
@@ -128,44 +161,67 @@ async function readCatalogueSnapshot(
   });
   let previousPosition = -1;
   for (const plan of selectable) {
-    if (!Number.isSafeInteger(plan.cataloguePosition) || plan.cataloguePosition <= previousPosition) {
+    if (
+      !Number.isSafeInteger(plan.cataloguePosition) ||
+      plan.cataloguePosition <= previousPosition
+    ) {
       throw new BillingCatalogueError("billing_catalogue_invalid");
     }
     previousPosition = plan.cataloguePosition;
     if (
-      !boundedText(plan.id, 128) || !boundedText(plan.displayName, 255) ||
-      !Number.isSafeInteger(plan.includedRecoveryCredits) || plan.includedRecoveryCredits < 0 ||
-      !Number.isSafeInteger(plan.recurringAmountMinor) || plan.recurringAmountMinor < 0 ||
-      !/^[A-Z]{3}$/.test(plan.currency) || typeof plan.featured !== "boolean"
-    ) throw new BillingCatalogueError("billing_catalogue_invalid");
+      !boundedText(plan.id, 128) ||
+      !boundedText(plan.displayName, 255) ||
+      !Number.isSafeInteger(plan.includedRecoveryCredits) ||
+      plan.includedRecoveryCredits < 0 ||
+      !Number.isSafeInteger(plan.recurringAmountMinor) ||
+      plan.recurringAmountMinor < 0 ||
+      !/^[A-Z]{3}$/.test(plan.currency) ||
+      typeof plan.featured !== "boolean"
+    )
+      throw new BillingCatalogueError("billing_catalogue_invalid");
     if (plan.planKind === "FREE" && plan.allowancePeriod !== "LIFETIME") {
       throw new BillingCatalogueError("billing_catalogue_invalid");
     }
-    if (plan.planKind === "PAID_METERED" && plan.allowancePeriod !== "EVERY_30_DAYS") {
+    if (
+      plan.planKind === "PAID_METERED" &&
+      plan.allowancePeriod !== "EVERY_30_DAYS"
+    ) {
       throw new BillingCatalogueError("billing_catalogue_invalid");
     }
-    if (plan.highlights.length > 100) throw new BillingCatalogueError("billing_catalogue_invalid");
+    if (plan.highlights.length > 100)
+      throw new BillingCatalogueError("billing_catalogue_invalid");
     let previousHighlightPosition = -1;
     for (const highlight of plan.highlights) {
-      if (!Number.isSafeInteger(highlight.position) || highlight.position <= previousHighlightPosition) {
+      if (
+        !Number.isSafeInteger(highlight.position) ||
+        highlight.position <= previousHighlightPosition
+      ) {
         throw new BillingCatalogueError("billing_catalogue_invalid");
       }
       previousHighlightPosition = highlight.position;
     }
   }
 
-  const resolvedLocale = candidates.find((candidate) => selectable.every((plan) =>
-    isCompletePlanTranslation(plan, candidate),
-  ));
-  if (!resolvedLocale) throw new BillingCatalogueError("billing_catalogue_translation_unavailable");
+  const resolvedLocale = candidates.find((candidate) =>
+    selectable.every((plan) => isCompletePlanTranslation(plan, candidate)),
+  );
+  if (!resolvedLocale)
+    throw new BillingCatalogueError(
+      "billing_catalogue_translation_unavailable",
+    );
 
   return {
     schemaVersion: 1,
     resolvedLocale,
     plans: selectable.map((plan) => {
-      const translation = exactlyOneTranslation(plan.translations, resolvedLocale);
+      const translation = exactlyOneTranslation(
+        plan.translations,
+        resolvedLocale,
+      );
       if (!translation || !boundedText(translation.merchantDescription, 2000)) {
-        throw new BillingCatalogueError("billing_catalogue_translation_unavailable");
+        throw new BillingCatalogueError(
+          "billing_catalogue_translation_unavailable",
+        );
       }
       return {
         merchantPricingPlanId: plan.id,
@@ -180,12 +236,19 @@ async function readCatalogueSnapshot(
         recurringAmountMinor: plan.recurringAmountMinor,
         currency: plan.currency,
         highlights: plan.highlights.map((highlight) => {
-          const localized = exactlyOneTranslation(highlight.translations, resolvedLocale);
+          const localized = exactlyOneTranslation(
+            highlight.translations,
+            resolvedLocale,
+          );
           if (
-            !boundedText(highlight.contentKey, 128) || !Number.isSafeInteger(highlight.position) ||
-            highlight.position < 0 || !localized || !boundedText(localized.merchantTitle, 120) ||
+            !boundedText(highlight.contentKey, 128) ||
+            !Number.isSafeInteger(highlight.position) ||
+            highlight.position < 0 ||
+            !localized ||
+            !boundedText(localized.merchantTitle, 120) ||
             !boundedText(localized.merchantDescription, 2000)
-          ) throw new BillingCatalogueError("billing_catalogue_invalid");
+          )
+            throw new BillingCatalogueError("billing_catalogue_invalid");
           return {
             contentKey: highlight.contentKey,
             position: highlight.position,
@@ -198,20 +261,28 @@ async function readCatalogueSnapshot(
   };
 }
 
-function isCompletePlanTranslation(plan: CataloguePlanRow, locale: string): boolean {
+function isCompletePlanTranslation(
+  plan: CataloguePlanRow,
+  locale: string,
+): boolean {
   const translation = exactlyOneTranslation(plan.translations, locale);
   return Boolean(
-    translation && boundedText(translation.merchantDescription, 2000) &&
+    translation &&
+    boundedText(translation.merchantDescription, 2000) &&
     plan.highlights.every((highlight) => {
       const localized = exactlyOneTranslation(highlight.translations, locale);
-      return Boolean(localized && boundedText(localized.merchantTitle, 120) &&
-        boundedText(localized.merchantDescription, 2000));
+      return Boolean(
+        localized &&
+        boundedText(localized.merchantTitle, 120) &&
+        boundedText(localized.merchantDescription, 2000),
+      );
     }),
   );
 }
 
 export function parsePresentationLocale(value: string): string {
-  if (Buffer.byteLength(value, "utf8") > 64) throw new BillingCatalogueError("billing_locale_invalid");
+  if (Buffer.byteLength(value, "utf8") > 64)
+    throw new BillingCatalogueError("billing_locale_invalid");
   const trimmed = value.trim();
   try {
     const locale = Intl.getCanonicalLocales(trimmed)[0];
@@ -222,7 +293,10 @@ export function parsePresentationLocale(value: string): string {
   }
 }
 
-function localeCandidates(requestedLocale: string | undefined, defaultLanguageTag: string | null): string[] {
+function localeCandidates(
+  requestedLocale: string | undefined,
+  defaultLanguageTag: string | null,
+): string[] {
   const candidates: string[] = [];
   const add = (value: string | undefined) => {
     if (value && !candidates.includes(value)) candidates.push(value);
@@ -246,9 +320,14 @@ function localeCandidates(requestedLocale: string | undefined, defaultLanguageTa
   return candidates;
 }
 
-function exactlyOneTranslation<T extends { locale: string }>(rows: T[], candidate: string): T | null {
-  const matches = rows.filter((row) => normalizeStoredLocale(row.locale) === candidate);
-  return matches.length === 1 ? matches[0] ?? null : null;
+function exactlyOneTranslation<T extends { locale: string }>(
+  rows: T[],
+  candidate: string,
+): T | null {
+  const matches = rows.filter(
+    (row) => normalizeStoredLocale(row.locale) === candidate,
+  );
+  return matches.length === 1 ? (matches[0] ?? null) : null;
 }
 
 function normalizeStoredLocale(value: string): string | null {
@@ -260,7 +339,11 @@ function normalizeStoredLocale(value: string): string | null {
 }
 
 function boundedText(value: unknown, maximum: number): value is string {
-  return typeof value === "string" && value.trim().length > 0 && value.length <= maximum;
+  return (
+    typeof value === "string" &&
+    value.trim().length > 0 &&
+    value.length <= maximum
+  );
 }
 
 type CataloguePlanRow = Prisma.MerchantPricingPlanGetPayload<{
@@ -275,13 +358,23 @@ type CataloguePlanRow = Prisma.MerchantPricingPlanGetPayload<{
     billingPeriod: true;
     recurringAmountMinor: true;
     currency: true;
-    translations: { where: { locale: { in: string[] } }; select: { locale: true; merchantDescription: true } };
+    translations: {
+      where: { locale: { in: string[] } };
+      select: { locale: true; merchantDescription: true };
+    };
     highlights: {
       orderBy: [{ position: "asc" }, { contentKey: "asc" }];
       select: {
         contentKey: true;
         position: true;
-          translations: { where: { locale: { in: string[] } }; select: { locale: true; merchantTitle: true; merchantDescription: true } };
+        translations: {
+          where: { locale: { in: string[] } };
+          select: {
+            locale: true;
+            merchantTitle: true;
+            merchantDescription: true;
+          };
+        };
       };
     };
   };

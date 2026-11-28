@@ -6,8 +6,15 @@ import {
   WooUnauthenticatedError,
   type WooInstallationAuthenticator,
 } from "../../auth/woo-installation/authenticator.js";
-import { MerchantStoreContextConflictError, type MerchantStoreContextService } from "./store-context.service.js";
-import { MAX_STORE_CONTEXT_BODY_BYTES, parseStoreContextRequest, StoreContextHttpFailure } from "./request.js";
+import {
+  MerchantStoreContextConflictError,
+  type MerchantStoreContextService,
+} from "./store-context.service.js";
+import {
+  MAX_STORE_CONTEXT_BODY_BYTES,
+  parseStoreContextRequest,
+  StoreContextHttpFailure,
+} from "./request.js";
 
 export const MERCHANT_STORE_CONTEXT_ROUTE_PATH = "/v1/merchant/store-context";
 export { MAX_STORE_CONTEXT_BODY_BYTES };
@@ -21,9 +28,16 @@ export function createMerchantStoreContextRoute(options: {
 }) {
   const { authenticator, service, logger, now = Date.now } = options;
   return {
-    async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
+    async handle(
+      request: IncomingMessage,
+      response: ServerResponse,
+    ): Promise<boolean> {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
-      if (requestUrl.pathname !== MERCHANT_STORE_CONTEXT_ROUTE_PATH || request.method !== "PUT") return false;
+      if (
+        requestUrl.pathname !== MERCHANT_STORE_CONTEXT_ROUTE_PATH ||
+        request.method !== "PUT"
+      )
+        return false;
 
       const startedAt = now();
       let installationId: string | undefined;
@@ -32,27 +46,41 @@ export function createMerchantStoreContextRoute(options: {
         const principal = await authenticator.authenticate(request);
         installationId = principal.installationId;
         shopId = principal.shopId;
-        if (requestUrl.search) throw new StoreContextHttpFailure(400, "invalid_request");
+        if (requestUrl.search)
+          throw new StoreContextHttpFailure(400, "invalid_request");
         const snapshot = await parseStoreContextRequest(request);
         await service.update(principal, snapshot);
         logger.info("merchant.store_context.sync", {
-          installationId, shopId, outcome: "success", durationMs: Math.max(0, now() - startedAt),
+          installationId,
+          shopId,
+          outcome: "success",
+          durationMs: Math.max(0, now() - startedAt),
         });
         sendNoContent(response);
       } catch (error) {
-        const reason = error instanceof WooUnauthenticatedError ? "unauthorized" :
-          error instanceof StoreContextHttpFailure ? "invalid_request" :
-            error instanceof MerchantStoreContextConflictError ? "tenant_conflict" : "internal";
+        const reason =
+          error instanceof WooUnauthenticatedError
+            ? "unauthorized"
+            : error instanceof StoreContextHttpFailure
+              ? "invalid_request"
+              : error instanceof MerchantStoreContextConflictError
+                ? "tenant_conflict"
+                : "internal";
         const metadata = {
           ...(installationId && shopId ? { installationId, shopId } : {}),
-          reason, durationMs: Math.max(0, now() - startedAt),
+          reason,
+          durationMs: Math.max(0, now() - startedAt),
           ...safeErrorDiagnostic(error),
         };
-        if (reason === "internal") logger.error("merchant.store_context.sync.failed", metadata);
+        if (reason === "internal")
+          logger.error("merchant.store_context.sync.failed", metadata);
         else logger.warn("merchant.store_context.sync.failed", metadata);
-        if (error instanceof WooUnauthenticatedError) sendError(response, 401, "unauthorized");
-        else if (error instanceof StoreContextHttpFailure) sendError(response, error.statusCode, error.code);
-        else if (error instanceof MerchantStoreContextConflictError) sendError(response, 409, "store_context_conflict");
+        if (error instanceof WooUnauthenticatedError)
+          sendError(response, 401, "unauthorized");
+        else if (error instanceof StoreContextHttpFailure)
+          sendError(response, error.statusCode, error.code);
+        else if (error instanceof MerchantStoreContextConflictError)
+          sendError(response, 409, "store_context_conflict");
         else sendError(response, 500, "internal_error");
       }
       return true;
@@ -62,10 +90,17 @@ export function createMerchantStoreContextRoute(options: {
 
 function sendNoContent(response: ServerResponse): void {
   if (response.destroyed || response.headersSent) return;
-  response.writeHead(204, { "cache-control": "no-store", "x-content-type-options": "nosniff" });
+  response.writeHead(204, {
+    "cache-control": "no-store",
+    "x-content-type-options": "nosniff",
+  });
   response.end();
 }
 
-function sendError(response: ServerResponse, statusCode: number, code: string): void {
+function sendError(
+  response: ServerResponse,
+  statusCode: number,
+  code: string,
+): void {
   sendJson(response, statusCode, { error: code });
 }

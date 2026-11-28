@@ -11,17 +11,17 @@ paths:
       security:
         - installationBearer: []
       parameters:
-        - $ref: '#/components/parameters/InstallationId'
+        - $ref: "#/components/parameters/InstallationId"
       responses:
-        '200':
-          $ref: '#/components/responses/PolicySuccess'
-        '400':
+        "200":
+          $ref: "#/components/responses/PolicySuccess"
+        "400":
           description: Invalid query or body
-        '401':
+        "401":
           description: Missing or invalid installation identity
-        '409':
+        "409":
           description: Shop/installation/policy integrity mismatch
-        '500':
+        "500":
           description: Unexpected error
     put:
       operationId: updateMerchantRecoveryPolicy
@@ -34,25 +34,25 @@ paths:
       security:
         - installationBearer: []
       parameters:
-        - $ref: '#/components/parameters/InstallationId'
+        - $ref: "#/components/parameters/InstallationId"
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/RecoveryPolicyUpdate'
+              $ref: "#/components/schemas/RecoveryPolicyUpdate"
       responses:
-        '200':
-          $ref: '#/components/responses/PolicySuccess'
-        '400':
+        "200":
+          $ref: "#/components/responses/PolicySuccess"
+        "400":
           description: Invalid input, query parameters or JSON content type
-        '401':
+        "401":
           description: Missing or invalid installation identity
-        '409':
+        "409":
           description: Stale revision, unsafe historical offer selection, or shop/installation/policy integrity mismatch
-        '413':
+        "413":
           description: Request exceeds 2048 bytes
-        '500':
+        "500":
           description: Unexpected error
 components:
   securitySchemes:
@@ -72,7 +72,13 @@ components:
     RecoveryPolicyValues:
       type: object
       additionalProperties: false
-      required: [recoveryDelayMinutes, recoveryOfferMode, followUpEnabled, followUpDelayMinutes]
+      required:
+        [
+          recoveryDelayMinutes,
+          recoveryOfferMode,
+          followUpEnabled,
+          followUpDelayMinutes,
+        ]
       properties:
         recoveryDelayMinutes:
           type: integer
@@ -91,11 +97,21 @@ components:
             - type: integer
               minimum: 1
               maximum: 10080
-            - type: 'null'
+            - type: "null"
     RecoveryPolicyResponse:
       type: object
       additionalProperties: false
-      required: [schemaVersion, revision, merchant, effective, source, overrideActive, offerSelectionAvailable, notifyOnInitialRecoveryOutreach]
+      required:
+        [
+          schemaVersion,
+          revision,
+          merchant,
+          effective,
+          source,
+          overrideActive,
+          offerSelectionAvailable,
+          notifyOnInitialRecoveryOutreach,
+        ]
       properties:
         schemaVersion:
           type: integer
@@ -104,9 +120,9 @@ components:
           type: string
           description: ISO update timestamp or UNCONFIGURED (no ShopSettings record)
         merchant:
-          $ref: '#/components/schemas/RecoveryPolicyValues'
+          $ref: "#/components/schemas/RecoveryPolicyValues"
         effective:
-          $ref: '#/components/schemas/RecoveryPolicyValues'
+          $ref: "#/components/schemas/RecoveryPolicyValues"
         source:
           type: string
           enum: [MERCHANT, ADMIN_OVERRIDE]
@@ -120,7 +136,14 @@ components:
     RecoveryPolicyUpdate:
       type: object
       additionalProperties: false
-      required: [expectedRevision, recoveryDelayMinutes, followUpEnabled, followUpDelayMinutes, notifyOnInitialRecoveryOutreach]
+      required:
+        [
+          expectedRevision,
+          recoveryDelayMinutes,
+          followUpEnabled,
+          followUpDelayMinutes,
+          notifyOnInitialRecoveryOutreach,
+        ]
       properties:
         expectedRevision:
           type: string
@@ -138,7 +161,7 @@ components:
             - type: integer
               minimum: 1
               maximum: 10080
-            - type: 'null'
+            - type: "null"
           description: Required when enabled; must be null when disabled
         notifyOnInitialRecoveryOutreach:
           type: boolean
@@ -153,4 +176,4 @@ components:
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/RecoveryPolicyResponse'
+            $ref: "#/components/schemas/RecoveryPolicyResponse"

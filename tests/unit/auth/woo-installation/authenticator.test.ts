@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { IncomingMessage } from "node:http";
-import { WooInstallationAuthenticator, WooUnauthenticatedError } from "../../../../src/auth/woo-installation/authenticator.js";
+import {
+  WooInstallationAuthenticator,
+  WooUnauthenticatedError,
+} from "../../../../src/auth/woo-installation/authenticator.js";
 import { digestSecret } from "../../../../src/auth/woo-installation/credential.js";
 
 const credential = Buffer.alloc(32, 4);
@@ -36,10 +39,14 @@ function makeAuthenticator(installation: unknown = activeInstallation) {
 
 test("authentication derives the principal only from the active installation row", async () => {
   const { authenticator, queries } = makeAuthenticator();
-  const principal = await authenticator.authenticate(request([
-    "X-Moda-Installation-Id", "install_123",
-    "Authorization", credentialHeader,
-  ]));
+  const principal = await authenticator.authenticate(
+    request([
+      "X-Moda-Installation-Id",
+      "install_123",
+      "Authorization",
+      credentialHeader,
+    ]),
+  );
 
   assert.deepEqual(principal, {
     installationId: "install_123",
@@ -47,16 +54,27 @@ test("authentication derives the principal only from the active installation row
     canonicalSiteUrl: "https://merchant.example",
     credentialVersion: 7,
   });
-  const query = queries[0] as { where: unknown; select: Record<string, unknown> };
+  const query = queries[0] as {
+    where: unknown;
+    select: Record<string, unknown>;
+  };
   assert.deepEqual(query.where, { id: "install_123" });
   assert.equal(typeof query.select.shop, "object");
 });
 test("optional installation lookup timing includes the database read but no credential material", async () => {
   const { authenticator } = makeAuthenticator();
   const durations: number[] = [];
-  await authenticator.authenticate(request(["X-Moda-Installation-Id", "install_123", "Authorization", credentialHeader]), {
-    onInstallationLookupMs: (ms) => durations.push(ms),
-  });
+  await authenticator.authenticate(
+    request([
+      "X-Moda-Installation-Id",
+      "install_123",
+      "Authorization",
+      credentialHeader,
+    ]),
+    {
+      onInstallationLookupMs: (ms) => durations.push(ms),
+    },
+  );
   assert.equal(durations.length, 1);
   assert.ok(Number.isFinite(durations[0]));
   assert.ok(durations[0]! >= 0);
@@ -68,49 +86,105 @@ test("malformed, missing and duplicate authentication headers share the same fai
   const requests = [
     request([]),
     request(["X-Moda-Installation-Id", "install_123"]),
-    request(["X-Moda-Installation-Id", "install_123", "X-Moda-Installation-Id", "install_123", "Authorization", credentialHeader]),
-    request(["X-Moda-Installation-Id", "install_123", "Authorization", "Bearer wrong"]),
+    request([
+      "X-Moda-Installation-Id",
+      "install_123",
+      "X-Moda-Installation-Id",
+      "install_123",
+      "Authorization",
+      credentialHeader,
+    ]),
+    request([
+      "X-Moda-Installation-Id",
+      "install_123",
+      "Authorization",
+      "Bearer wrong",
+    ]),
   ];
   for (const incoming of requests) {
-    await assert.rejects(authenticator.authenticate(incoming), (error: unknown) => {
-      assert.ok(error instanceof WooUnauthenticatedError);
-      assert.equal(error.message, "unauthorized");
-      return true;
-    });
+    await assert.rejects(
+      authenticator.authenticate(incoming),
+      (error: unknown) => {
+        assert.ok(error instanceof WooUnauthenticatedError);
+        assert.equal(error.message, "unauthorized");
+        return true;
+      },
+    );
   }
   assert.equal(queries.length, 0);
 });
 
 test("wrong secret, revoked installation and incompatible Shop share one failure", async () => {
   const incompatibleRows = [
-    { ...activeInstallation, credentialDigest: digestSecret(Buffer.alloc(32, 5)) },
+    {
+      ...activeInstallation,
+      credentialDigest: digestSecret(Buffer.alloc(32, 5)),
+    },
     { ...activeInstallation, revokedAt: new Date() },
     { ...activeInstallation, status: "REVOKED" },
-    { ...activeInstallation, shop: { ...activeInstallation.shop, status: "SUSPENDED" } },
-    { ...activeInstallation, shop: { ...activeInstallation.shop, platform: "SHOPIFY" } },
-    { ...activeInstallation, shop: { ...activeInstallation.shop, shopifyShopId: "gid://shop" } },
+    {
+      ...activeInstallation,
+      shop: { ...activeInstallation.shop, status: "SUSPENDED" },
+    },
+    {
+      ...activeInstallation,
+      shop: { ...activeInstallation.shop, platform: "SHOPIFY" },
+    },
+    {
+      ...activeInstallation,
+      shop: { ...activeInstallation.shop, shopifyShopId: "gid://shop" },
+    },
   ];
 
   for (const installation of incompatibleRows) {
     const { authenticator } = makeAuthenticator(installation);
     await assert.rejects(
-      authenticator.authenticate(request([
-        "X-Moda-Installation-Id", "install_123",
-        "Authorization", credentialHeader,
-      ])),
-      (error: unknown) => error instanceof WooUnauthenticatedError && error.message === "unauthorized",
+      authenticator.authenticate(
+        request([
+          "X-Moda-Installation-Id",
+          "install_123",
+          "Authorization",
+          credentialHeader,
+        ]),
+      ),
+      (error: unknown) =>
+        error instanceof WooUnauthenticatedError &&
+        error.message === "unauthorized",
     );
   }
 });
 test("Support-only suspended reads still reject revoked or uninstalled credentials", async () => {
-  const headers=request(["X-Moda-Installation-Id","install_123","Authorization",credentialHeader]);
-  const suspended={...activeInstallation,shop:{...activeInstallation.shop,status:"SUSPENDED"}};
-  const {authenticator}=makeAuthenticator(suspended);
-  await assert.rejects(authenticator.authenticate(headers),WooUnauthenticatedError);
-  assert.equal((await authenticator.authenticate(headers,{allowSuspendedShop:true})).shopId,"shop_authoritative");
-  for(const row of [{...suspended,status:"REVOKED"},{...suspended,revokedAt:new Date()},
-    {...suspended,shop:{...suspended.shop,status:"UNINSTALLED"}},
-    {...suspended,credentialDigest:digestSecret(Buffer.alloc(32,99))}]){
-    await assert.rejects(makeAuthenticator(row).authenticator.authenticate(headers,{allowSuspendedShop:true}),WooUnauthenticatedError);
+  const headers = request([
+    "X-Moda-Installation-Id",
+    "install_123",
+    "Authorization",
+    credentialHeader,
+  ]);
+  const suspended = {
+    ...activeInstallation,
+    shop: { ...activeInstallation.shop, status: "SUSPENDED" },
+  };
+  const { authenticator } = makeAuthenticator(suspended);
+  await assert.rejects(
+    authenticator.authenticate(headers),
+    WooUnauthenticatedError,
+  );
+  assert.equal(
+    (await authenticator.authenticate(headers, { allowSuspendedShop: true }))
+      .shopId,
+    "shop_authoritative",
+  );
+  for (const row of [
+    { ...suspended, status: "REVOKED" },
+    { ...suspended, revokedAt: new Date() },
+    { ...suspended, shop: { ...suspended.shop, status: "UNINSTALLED" } },
+    { ...suspended, credentialDigest: digestSecret(Buffer.alloc(32, 99)) },
+  ]) {
+    await assert.rejects(
+      makeAuthenticator(row).authenticator.authenticate(headers, {
+        allowSuspendedShop: true,
+      }),
+      WooUnauthenticatedError,
+    );
   }
 });

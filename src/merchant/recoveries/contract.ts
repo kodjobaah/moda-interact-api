@@ -3,7 +3,13 @@ import type { RecoveryStatusFilter, RecoveryPageSize } from "./query.js";
 /** Provider-neutral DTO. Formatting, currencies and translations belong to the UI. */
 export interface RecoveryListItem {
   id: string;
-  status: "DETECTED" | "MESSAGE_SENT" | "ENGAGED" | "COMPLETED" | "EXPIRED" | "CANCELLED";
+  status:
+    | "DETECTED"
+    | "MESSAGE_SENT"
+    | "ENGAGED"
+    | "COMPLETED"
+    | "EXPIRED"
+    | "CANCELLED";
   detectedAt: string;
   lastActivityAt: string;
   totalPrice: string | null;

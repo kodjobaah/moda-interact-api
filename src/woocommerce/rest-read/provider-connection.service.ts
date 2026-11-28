@@ -1,35 +1,71 @@
 import type { PrismaClient } from "@prisma/client";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { canonicalizeWooSiteUrl, type CanonicalWooSite, type WooConnectionMode } from "../installation/site-url.js";
-import type { WooRestReadAuthorizationConfig } from "./config.js";
-import { WooReadCredentialVerifier, WooReadVerificationError } from "./credential-verifier.js";
-import { openWooReadCredentials, type WooRestReadCredential } from "./envelope.js";
 import {
-  prepareWooProductRequest, projectWooProducts, WooProductInputError, WooProductResponseError,
-  type WooProductReadRequest, type WooProductReadOperation,
+  canonicalizeWooSiteUrl,
+  type CanonicalWooSite,
+  type WooConnectionMode,
+} from "../installation/site-url.js";
+import type { WooRestReadAuthorizationConfig } from "./config.js";
+import {
+  WooReadCredentialVerifier,
+  WooReadVerificationError,
+} from "./credential-verifier.js";
+import {
+  openWooReadCredentials,
+  type WooRestReadCredential,
+} from "./envelope.js";
+import {
+  prepareWooProductRequest,
+  projectWooProducts,
+  WooProductInputError,
+  WooProductResponseError,
+  type WooProductReadRequest,
+  type WooProductReadOperation,
   type WooProductView,
 } from "./product-operation.js";
 
 /** Only trusted, already-authorised API service code may invoke this port. Never expose it as an HTTP proxy. */
 export interface WooProductReadPort {
-  read(shopId: string, operation: WooProductReadRequest): Promise<WooProductReadResult>;
+  read(
+    shopId: string,
+    operation: WooProductReadRequest,
+  ): Promise<WooProductReadResult>;
 }
 
 export type WooProductReadFailure =
-  | "invalid_operation" | "shop_unavailable" | "reauthorization_required"
-  | "not_found" | "provider_forbidden" | "provider_unavailable" | "invalid_response";
+  | "invalid_operation"
+  | "shop_unavailable"
+  | "reauthorization_required"
+  | "not_found"
+  | "provider_forbidden"
+  | "provider_unavailable"
+  | "invalid_response";
 
 export type WooProductReadResult =
   | { ok: true; operation: "products.list"; products: WooProductView[] }
   | { ok: true; operation: "products.retrieve"; product: WooProductView }
-  | { ok: false; operation: WooProductReadOperation | "invalid"; reason: WooProductReadFailure };
+  | {
+      ok: false;
+      operation: WooProductReadOperation | "invalid";
+      reason: WooProductReadFailure;
+    };
 
-export type WooProductReadDatabase = Pick<PrismaClient, "wooCommerceInstallation" | "wooCommerceRestReadGrant">;
+export type WooProductReadDatabase = Pick<
+  PrismaClient,
+  "wooCommerceInstallation" | "wooCommerceRestReadGrant"
+>;
 
 /** Reuses API-007's DNS-pinned, peer-checked, bounded and no-redirect transport. */
 export interface WooProductTransport {
-  fetchProductOperation(site: CanonicalWooSite, credential: WooRestReadCredential, request: WooProductReadRequest): Promise<unknown>;
-  verify(site: CanonicalWooSite, credential: WooRestReadCredential): Promise<void>;
+  fetchProductOperation(
+    site: CanonicalWooSite,
+    credential: WooRestReadCredential,
+    request: WooProductReadRequest,
+  ): Promise<unknown>;
+  verify(
+    site: CanonicalWooSite,
+    credential: WooRestReadCredential,
+  ): Promise<void>;
 }
 
 interface SelectedGrant {
@@ -58,7 +94,10 @@ export class WooProductReadService implements WooProductReadPort {
     private readonly now: () => Date = () => new Date(),
   ) {}
 
-  async read(shopId: string, operation: WooProductReadRequest): Promise<WooProductReadResult> {
+  async read(
+    shopId: string,
+    operation: WooProductReadRequest,
+  ): Promise<WooProductReadResult> {
     let prepared: ReturnType<typeof prepareWooProductRequest>;
     try {
       prepared = prepareWooProductRequest(operation);
@@ -72,34 +111,69 @@ export class WooProductReadService implements WooProductReadPort {
     }
 
     try {
-      const installation = await this.database.wooCommerceInstallation.findUnique({
-        where: { shopId },
-        select: {
-          id: true, shopId: true, canonicalSiteUrl: true, status: true, revokedAt: true, credentialVersion: true,
-          shop: { select: { status: true, platform: true, shopifyShopId: true, domain: true } },
-          restReadGrant: {
-            select: {
-              id: true, installationId: true, shopId: true, authorizationAttemptId: true,
-              credentialVersionSnapshot: true, rotationVersion: true, authorizedScope: true,
-              status: true, credentialCiphertext: true, credentialNonce: true,
-              credentialAuthTag: true, encryptionKeyId: true,
+      const installation =
+        await this.database.wooCommerceInstallation.findUnique({
+          where: { shopId },
+          select: {
+            id: true,
+            shopId: true,
+            canonicalSiteUrl: true,
+            status: true,
+            revokedAt: true,
+            credentialVersion: true,
+            shop: {
+              select: {
+                status: true,
+                platform: true,
+                shopifyShopId: true,
+                domain: true,
+              },
+            },
+            restReadGrant: {
+              select: {
+                id: true,
+                installationId: true,
+                shopId: true,
+                authorizationAttemptId: true,
+                credentialVersionSnapshot: true,
+                rotationVersion: true,
+                authorizedScope: true,
+                status: true,
+                credentialCiphertext: true,
+                credentialNonce: true,
+                credentialAuthTag: true,
+                encryptionKeyId: true,
+              },
             },
           },
-        },
-      });
-      if (!installation || installation.shopId !== shopId || installation.status !== "ACTIVE" ||
-        installation.revokedAt !== null || installation.shop.status !== "ACTIVE" ||
-        installation.shop.platform !== "WOOCOMMERCE" || installation.shop.shopifyShopId !== null ||
-        installation.shop.domain !== installation.canonicalSiteUrl) {
+        });
+      if (
+        !installation ||
+        installation.shopId !== shopId ||
+        installation.status !== "ACTIVE" ||
+        installation.revokedAt !== null ||
+        installation.shop.status !== "ACTIVE" ||
+        installation.shop.platform !== "WOOCOMMERCE" ||
+        installation.shop.shopifyShopId !== null ||
+        installation.shop.domain !== installation.canonicalSiteUrl
+      ) {
         return this.finish(shopId, name, "shop_unavailable");
       }
       const grant = installation.restReadGrant;
-      if (!grant || grant.status !== "ACTIVE" || grant.authorizedScope !== "read" ||
-        grant.shopId !== shopId || grant.installationId !== installation.id ||
-        grant.credentialVersionSnapshot !== installation.credentialVersion) {
+      if (
+        !grant ||
+        grant.status !== "ACTIVE" ||
+        grant.authorizedScope !== "read" ||
+        grant.shopId !== shopId ||
+        grant.installationId !== installation.id ||
+        grant.credentialVersionSnapshot !== installation.credentialVersion
+      ) {
         return this.finish(shopId, name, "reauthorization_required");
       }
-      const site = canonicalizeWooSiteUrl(installation.canonicalSiteUrl, this.mode);
+      const site = canonicalizeWooSiteUrl(
+        installation.canonicalSiteUrl,
+        this.mode,
+      );
       if (site.canonicalSiteUrl !== installation.canonicalSiteUrl) {
         return this.finish(shopId, name, "shop_unavailable");
       }
@@ -107,18 +181,26 @@ export class WooProductReadService implements WooProductReadPort {
       // Ciphertext originates exclusively from DATABASE-003, never an external request.
       let credential: WooRestReadCredential;
       try {
-        credential = openWooReadCredentials({
-          credentialCiphertext: Buffer.from(grant.credentialCiphertext),
-          credentialNonce: Buffer.from(grant.credentialNonce),
-          credentialAuthTag: Buffer.from(grant.credentialAuthTag),
-          encryptionKeyId: grant.encryptionKeyId,
-        }, {
-          shopId, installationId: installation.id, authorizationAttemptId: grant.authorizationAttemptId,
-          credentialVersionSnapshot: grant.credentialVersionSnapshot,
-        }, this.config);
+        credential = openWooReadCredentials(
+          {
+            credentialCiphertext: Buffer.from(grant.credentialCiphertext),
+            credentialNonce: Buffer.from(grant.credentialNonce),
+            credentialAuthTag: Buffer.from(grant.credentialAuthTag),
+            encryptionKeyId: grant.encryptionKeyId,
+          },
+          {
+            shopId,
+            installationId: installation.id,
+            authorizationAttemptId: grant.authorizationAttemptId,
+            credentialVersionSnapshot: grant.credentialVersionSnapshot,
+          },
+          this.config,
+        );
       } catch (error) {
         this.logger.warn("woocommerce.rest_read.product.failed", {
-          shopId, operation: name, stage: "credential_decryption",
+          shopId,
+          operation: name,
+          stage: "credential_decryption",
           errorName: error instanceof Error ? error.name : typeof error,
           errorMessage: error instanceof Error ? error.message : String(error),
           errorStack: error instanceof Error ? error.stack : undefined,
@@ -131,9 +213,16 @@ export class WooProductReadService implements WooProductReadPort {
 
       let payload: unknown;
       try {
-        payload = await this.transport.fetchProductOperation(site, credential, operation);
+        payload = await this.transport.fetchProductOperation(
+          site,
+          credential,
+          operation,
+        );
       } catch (error) {
-        if (error instanceof WooReadVerificationError && error.reason === "rejected_credentials") {
+        if (
+          error instanceof WooReadVerificationError &&
+          error.reason === "rejected_credentials"
+        ) {
           // A product-specific 403 is not sufficient proof of a revoked grant.
           // Verify the same read key against the neutral product-list endpoint first.
           try {
@@ -141,14 +230,30 @@ export class WooProductReadService implements WooProductReadPort {
             return this.finish(shopId, name, "provider_forbidden");
           } catch (verificationError) {
             this.logger.warn("woocommerce.rest_read.product.failed", {
-              shopId, operation: name, stage: "credential_verification",
-              errorName: verificationError instanceof Error ? verificationError.name : typeof verificationError,
-              errorMessage: verificationError instanceof Error ? verificationError.message : String(verificationError),
-              errorStack: verificationError instanceof Error ? verificationError.stack : undefined,
-              errorCause: verificationError instanceof Error ? verificationError.cause : undefined,
+              shopId,
+              operation: name,
+              stage: "credential_verification",
+              errorName:
+                verificationError instanceof Error
+                  ? verificationError.name
+                  : typeof verificationError,
+              errorMessage:
+                verificationError instanceof Error
+                  ? verificationError.message
+                  : String(verificationError),
+              errorStack:
+                verificationError instanceof Error
+                  ? verificationError.stack
+                  : undefined,
+              errorCause:
+                verificationError instanceof Error
+                  ? verificationError.cause
+                  : undefined,
             });
-            if (verificationError instanceof WooReadVerificationError &&
-                verificationError.reason === "rejected_credentials") {
+            if (
+              verificationError instanceof WooReadVerificationError &&
+              verificationError.reason === "rejected_credentials"
+            ) {
               await this.invalidateIfCurrent(grant);
               return this.finish(shopId, name, "reauthorization_required");
             }
@@ -156,7 +261,9 @@ export class WooProductReadService implements WooProductReadPort {
           }
         }
         this.logger.warn("woocommerce.rest_read.product.failed", {
-          shopId, operation: name, stage: "provider_transport",
+          shopId,
+          operation: name,
+          stage: "provider_transport",
           errorName: error instanceof Error ? error.name : typeof error,
           errorMessage: error instanceof Error ? error.message : String(error),
           errorStack: error instanceof Error ? error.stack : undefined,
@@ -171,7 +278,9 @@ export class WooProductReadService implements WooProductReadPort {
       } catch (error) {
         if (!(error instanceof WooProductResponseError)) throw error;
         this.logger.warn("woocommerce.rest_read.product.failed", {
-          shopId, operation: name, stage: "provider_response",
+          shopId,
+          operation: name,
+          stage: "provider_response",
           errorName: error.name,
           errorMessage: error.message,
           errorStack: error.stack,
@@ -183,34 +292,78 @@ export class WooProductReadService implements WooProductReadPort {
       const current = await this.database.wooCommerceInstallation.findUnique({
         where: { shopId },
         select: {
-          id: true, shopId: true, canonicalSiteUrl: true, status: true, revokedAt: true, credentialVersion: true,
-          shop: { select: { status: true, platform: true, shopifyShopId: true, domain: true } },
+          id: true,
+          shopId: true,
+          canonicalSiteUrl: true,
+          status: true,
+          revokedAt: true,
+          credentialVersion: true,
+          shop: {
+            select: {
+              status: true,
+              platform: true,
+              shopifyShopId: true,
+              domain: true,
+            },
+          },
           restReadGrant: {
-            select: { id: true, authorizationAttemptId: true, rotationVersion: true, status: true,
-              authorizedScope: true, shopId: true, credentialVersionSnapshot: true },
+            select: {
+              id: true,
+              authorizationAttemptId: true,
+              rotationVersion: true,
+              status: true,
+              authorizedScope: true,
+              shopId: true,
+              credentialVersionSnapshot: true,
+            },
           },
         },
       });
-      if (!current || current.id !== installation.id || current.status !== "ACTIVE" ||
-        current.revokedAt !== null || current.credentialVersion !== installation.credentialVersion ||
+      if (
+        !current ||
+        current.id !== installation.id ||
+        current.status !== "ACTIVE" ||
+        current.revokedAt !== null ||
+        current.credentialVersion !== installation.credentialVersion ||
         current.canonicalSiteUrl !== installation.canonicalSiteUrl ||
-        current.shop.domain !== current.canonicalSiteUrl || current.shopId !== shopId ||
-        current.shop.status !== "ACTIVE" || current.shop.platform !== "WOOCOMMERCE" ||
-        current.shop.shopifyShopId !== null || current.restReadGrant?.status !== "ACTIVE" ||
+        current.shop.domain !== current.canonicalSiteUrl ||
+        current.shopId !== shopId ||
+        current.shop.status !== "ACTIVE" ||
+        current.shop.platform !== "WOOCOMMERCE" ||
+        current.shop.shopifyShopId !== null ||
+        current.restReadGrant?.status !== "ACTIVE" ||
         current.restReadGrant.id !== grant.id ||
-        current.restReadGrant.shopId !== shopId || current.restReadGrant.authorizedScope !== "read" ||
-        current.restReadGrant.credentialVersionSnapshot !== installation.credentialVersion ||
-        current.restReadGrant.authorizationAttemptId !== grant.authorizationAttemptId ||
-        current.restReadGrant.rotationVersion !== grant.rotationVersion) {
+        current.restReadGrant.shopId !== shopId ||
+        current.restReadGrant.authorizedScope !== "read" ||
+        current.restReadGrant.credentialVersionSnapshot !==
+          installation.credentialVersion ||
+        current.restReadGrant.authorizationAttemptId !==
+          grant.authorizationAttemptId ||
+        current.restReadGrant.rotationVersion !== grant.rotationVersion
+      ) {
         return this.finish(shopId, name, "reauthorization_required");
       }
-      this.logger.info("woocommerce.rest_read.product", { shopId, operation: name, outcome: "success" });
+      this.logger.info("woocommerce.rest_read.product", {
+        shopId,
+        operation: name,
+        outcome: "success",
+      });
       return name === "products.list"
-        ? { ok: true, operation: "products.list", products: product as WooProductView[] }
-        : { ok: true, operation: "products.retrieve", product: product as WooProductView };
+        ? {
+            ok: true,
+            operation: "products.list",
+            products: product as WooProductView[],
+          }
+        : {
+            ok: true,
+            operation: "products.retrieve",
+            product: product as WooProductView,
+          };
     } catch (error) {
       this.logger.warn("woocommerce.rest_read.product.failed", {
-        shopId, operation: name, stage: "database_or_state",
+        shopId,
+        operation: name,
+        stage: "database_or_state",
         errorName: error instanceof Error ? error.name : typeof error,
         errorMessage: error instanceof Error ? error.message : String(error),
         errorStack: error instanceof Error ? error.stack : undefined,
@@ -224,17 +377,21 @@ export class WooProductReadService implements WooProductReadPort {
     try {
       await this.database.wooCommerceRestReadGrant.updateMany({
         where: {
-          id: grant.id, installationId: grant.installationId, shopId: grant.shopId,
+          id: grant.id,
+          installationId: grant.installationId,
+          shopId: grant.shopId,
           authorizationAttemptId: grant.authorizationAttemptId,
           credentialVersionSnapshot: grant.credentialVersionSnapshot,
-          rotationVersion: grant.rotationVersion, status: "ACTIVE",
+          rotationVersion: grant.rotationVersion,
+          status: "ACTIVE",
         },
         data: { status: "INVALID", invalidatedAt: this.now() },
       });
     } catch (error) {
       // A failed status update is never permission to retry with stale credentials.
       this.logger.warn("woocommerce.rest_read.invalidate.failed", {
-        shopId: grant.shopId, reason: "update_failed",
+        shopId: grant.shopId,
+        reason: "update_failed",
         errorName: error instanceof Error ? error.name : typeof error,
         errorMessage: error instanceof Error ? error.message : String(error),
         errorStack: error instanceof Error ? error.stack : undefined,
@@ -244,22 +401,31 @@ export class WooProductReadService implements WooProductReadPort {
   }
 
   private finish(
-    shopId: string | undefined, operation: WooProductReadOperation | "invalid", reason: WooProductReadFailure,
+    shopId: string | undefined,
+    operation: WooProductReadOperation | "invalid",
+    reason: WooProductReadFailure,
   ): WooProductReadResult {
     this.logger.warn("woocommerce.rest_read.product", {
-      ...(shopId ? { shopId } : {}), operation, outcome: reason,
+      ...(shopId ? { shopId } : {}),
+      operation,
+      outcome: reason,
     });
     return { ok: false, operation, reason };
   }
 }
 
 function classifyTransportFailure(error: unknown): WooProductReadFailure {
-  if (!(error instanceof WooReadVerificationError)) return "provider_unavailable";
+  if (!(error instanceof WooReadVerificationError))
+    return "provider_unavailable";
   switch (error.reason) {
-    case "not_found": return "not_found";
-    case "invalid_response": return "invalid_response";
-    case "rejected_credentials": return "provider_forbidden";
-    default: return "provider_unavailable";
+    case "not_found":
+      return "not_found";
+    case "invalid_response":
+      return "invalid_response";
+    case "rejected_credentials":
+      return "provider_forbidden";
+    default:
+      return "provider_unavailable";
   }
 }
 
@@ -271,7 +437,10 @@ export function createWooProductReadPort(input: {
   logger: Pick<StructuredLogger, "info" | "warn">;
 }): WooProductReadPort {
   return new WooProductReadService(
-    input.database, input.authorization, input.mode,
-    new WooReadCredentialVerifier({ mode: input.mode }), input.logger,
+    input.database,
+    input.authorization,
+    input.mode,
+    new WooReadCredentialVerifier({ mode: input.mode }),
+    input.logger,
   );
 }

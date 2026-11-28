@@ -1,10 +1,22 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { sendNoStoreJson as sendJson } from "../../http/response.js";
 import type { StructuredLogger } from "@modainteract/moda-interact-shared/logging";
-import { BillingPresentationError, type BillingPresentationReadService } from "./billing-read.service.js";
-import { BillingCatalogueError, type BillingPlanCatalogueReadService } from "./plan-catalogue-read.service.js";
-import { isBillingPlanCatalogueResponse, isBillingPresentationResponse } from "./schemas.js";
-import { WooUnauthenticatedError, type WooInstallationAuthenticator } from "../../auth/woo-installation/authenticator.js";
+import {
+  BillingPresentationError,
+  type BillingPresentationReadService,
+} from "./billing-read.service.js";
+import {
+  BillingCatalogueError,
+  type BillingPlanCatalogueReadService,
+} from "./plan-catalogue-read.service.js";
+import {
+  isBillingPlanCatalogueResponse,
+  isBillingPresentationResponse,
+} from "./schemas.js";
+import {
+  WooUnauthenticatedError,
+  type WooInstallationAuthenticator,
+} from "../../auth/woo-installation/authenticator.js";
 
 export const BILLING_PRESENTATION_ROUTE_PATH = "/v1/billing";
 export const BILLING_PLANS_ROUTE_PATH = "/v1/billing/plans";
@@ -24,17 +36,28 @@ export function createBillingReadRoutes({
   authenticator,
   logger,
   now = Date.now,
-}: BillingReadRouteOptions): { handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> } {
+}: BillingReadRouteOptions): {
+  handle(request: IncomingMessage, response: ServerResponse): Promise<boolean>;
+} {
   return {
     async handle(request, response) {
       const requestUrl = new URL(request.url ?? "/", "http://localhost");
-      if (requestUrl.pathname === BILLING_PRESENTATION_ROUTE_PATH && request.method === "GET" && billingReadService) {
+      if (
+        requestUrl.pathname === BILLING_PRESENTATION_ROUTE_PATH &&
+        request.method === "GET" &&
+        billingReadService
+      ) {
         const startedAt = now();
         try {
           const principal = await authenticator.authenticate(request);
-          if (requestUrl.search || requestHasBody(request)) throw new HttpFailure(400, "invalid_request");
-          const billing = await billingReadService.read(principal, new Date(now()));
-          if (!isBillingPresentationResponse(billing)) throw new BillingPresentationError("billing_integrity_invalid");
+          if (requestUrl.search || requestHasBody(request))
+            throw new HttpFailure(400, "invalid_request");
+          const billing = await billingReadService.read(
+            principal,
+            new Date(now()),
+          );
+          if (!isBillingPresentationResponse(billing))
+            throw new BillingPresentationError("billing_integrity_invalid");
           logger.info("billing.presentation.read", {
             shopId: principal.shopId,
             experienceState: billing.experienceState,
@@ -51,17 +74,21 @@ export function createBillingReadRoutes({
           } else if (error instanceof HttpFailure) {
             sendError(response, error.statusCode, error.code);
           } else if (error instanceof BillingPresentationError) {
-            logger.warn("billing.presentation.read.failed", { reason: error.code,
+            logger.warn("billing.presentation.read.failed", {
+              reason: error.code,
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
             sendError(response, 409, error.code);
           } else {
-            logger.error("billing.presentation.read.failed", { reason: "internal",
+            logger.error("billing.presentation.read.failed", {
+              reason: "internal",
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -71,16 +98,27 @@ export function createBillingReadRoutes({
         return true;
       }
 
-      if (requestUrl.pathname === BILLING_PLANS_ROUTE_PATH && request.method === "GET" && billingPlanCatalogueReadService) {
+      if (
+        requestUrl.pathname === BILLING_PLANS_ROUTE_PATH &&
+        request.method === "GET" &&
+        billingPlanCatalogueReadService
+      ) {
         const startedAt = now();
         try {
           const principal = await authenticator.authenticate(request);
           const localeValues = requestUrl.searchParams.getAll("locale");
           if (
-            requestHasBody(request) || requestUrl.searchParams.size !== localeValues.length || localeValues.length > 1
-          ) throw new HttpFailure(400, "invalid_request");
-          const catalogue = await billingPlanCatalogueReadService.read(principal, localeValues[0]);
-          if (!isBillingPlanCatalogueResponse(catalogue)) throw new BillingCatalogueError("billing_catalogue_invalid");
+            requestHasBody(request) ||
+            requestUrl.searchParams.size !== localeValues.length ||
+            localeValues.length > 1
+          )
+            throw new HttpFailure(400, "invalid_request");
+          const catalogue = await billingPlanCatalogueReadService.read(
+            principal,
+            localeValues[0],
+          );
+          if (!isBillingPlanCatalogueResponse(catalogue))
+            throw new BillingCatalogueError("billing_catalogue_invalid");
           logger.info("billing.plans.read", {
             shopId: principal.shopId,
             resolvedLocale: catalogue.resolvedLocale,
@@ -96,26 +134,36 @@ export function createBillingReadRoutes({
             sendError(response, error.statusCode, error.code);
           } else if (error instanceof BillingCatalogueError) {
             if (error.code !== "billing_locale_invalid") {
-              logger.warn("billing.plans.read.failed", { reason: error.code,
+              logger.warn("billing.plans.read.failed", {
+                reason: error.code,
                 errorName: error instanceof Error ? error.name : typeof error,
-                errorMessage: error instanceof Error ? error.message : String(error),
+                errorMessage:
+                  error instanceof Error ? error.message : String(error),
                 errorStack: error instanceof Error ? error.stack : undefined,
                 errorCause: error instanceof Error ? error.cause : undefined,
               });
             }
-            sendError(response, error.code === "billing_locale_invalid" ? 400 : 409, error.code);
+            sendError(
+              response,
+              error.code === "billing_locale_invalid" ? 400 : 409,
+              error.code,
+            );
           } else if (error instanceof BillingPresentationError) {
-            logger.warn("billing.plans.read.failed", { reason: error.code,
+            logger.warn("billing.plans.read.failed", {
+              reason: error.code,
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
             sendError(response, 409, error.code);
           } else {
-            logger.error("billing.plans.read.failed", { reason: "internal",
+            logger.error("billing.plans.read.failed", {
+              reason: "internal",
               errorName: error instanceof Error ? error.name : typeof error,
-              errorMessage: error instanceof Error ? error.message : String(error),
+              errorMessage:
+                error instanceof Error ? error.message : String(error),
               errorStack: error instanceof Error ? error.stack : undefined,
               errorCause: error instanceof Error ? error.cause : undefined,
             });
@@ -131,7 +179,10 @@ export function createBillingReadRoutes({
 }
 
 class HttpFailure extends Error {
-  constructor(readonly statusCode: number, readonly code: string) {
+  constructor(
+    readonly statusCode: number,
+    readonly code: string,
+  ) {
     super(code);
     this.name = "HttpFailure";
   }
@@ -142,11 +193,20 @@ function requestHasBody(request: IncomingMessage): boolean {
     const name = request.rawHeaders[index]?.toLowerCase();
     const value = request.rawHeaders[index + 1];
     if (name === "transfer-encoding") return true;
-    if (name === "content-length" && value !== undefined && (!/^\d+$/.test(value) || Number(value) > 0)) return true;
+    if (
+      name === "content-length" &&
+      value !== undefined &&
+      (!/^\d+$/.test(value) || Number(value) > 0)
+    )
+      return true;
   }
   return false;
 }
 
-function sendError(response: ServerResponse, statusCode: number, code: string): void {
+function sendError(
+  response: ServerResponse,
+  statusCode: number,
+  code: string,
+): void {
   sendJson(response, statusCode, { error: code });
 }

@@ -17,12 +17,20 @@ export type ApiConfigurationErrorCode =
   | "UNSEAL_FAILED";
 
 export class ApiPlatformConfigurationError extends Error {
-  constructor(readonly key: ApiConfigurationKey, readonly code: ApiConfigurationErrorCode, cause?: unknown) {
+  constructor(
+    readonly key: ApiConfigurationKey,
+    readonly code: ApiConfigurationErrorCode,
+    cause?: unknown,
+  ) {
     super(`API platform configuration ${key}: ${code}`, { cause });
     this.name = "ApiPlatformConfigurationError";
   }
 }
 
-export function configurationError(key: ApiConfigurationKey, code: ApiConfigurationErrorCode, cause?: unknown): never {
+export function configurationError(
+  key: ApiConfigurationKey,
+  code: ApiConfigurationErrorCode,
+  cause?: unknown,
+): never {
   throw new ApiPlatformConfigurationError(key, code, cause);
 }

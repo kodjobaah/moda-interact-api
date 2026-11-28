@@ -15,7 +15,10 @@ export class MerchantStoreContextConflictError extends Error {
 export class MerchantStoreContextService {
   constructor(private readonly database: MerchantStoreContextDatabase) {}
 
-  async update(principal: WooInstallationPrincipal, snapshot: MerchantStoreContextSnapshot): Promise<void> {
+  async update(
+    principal: WooInstallationPrincipal,
+    snapshot: MerchantStoreContextSnapshot,
+  ): Promise<void> {
     const result = await this.database.shop.updateMany({
       where: {
         id: principal.shopId,

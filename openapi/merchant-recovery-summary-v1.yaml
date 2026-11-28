@@ -17,7 +17,7 @@ paths:
           schema:
             type: string
       responses:
-        '200':
+        "200":
           description: Effective recovery policy snapshot
           headers:
             Cache-Control:
@@ -27,14 +27,14 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/RecoverySummary'
-        '400':
+                $ref: "#/components/schemas/RecoverySummary"
+        "400":
           description: Invalid query or body
-        '401':
+        "401":
           description: Missing or invalid installation credential
-        '409':
+        "409":
           description: Installation or shop integrity failure
-        '500':
+        "500":
           description: Invalid underlying policy or unexpected database error
 components:
   securitySchemes:
@@ -45,7 +45,15 @@ components:
     RecoverySummary:
       type: object
       additionalProperties: false
-      required: [schemaVersion, recoveryDelayMinutes, recoveryOfferMode, followUpEnabled, followUpDelayMinutes, source]
+      required:
+        [
+          schemaVersion,
+          recoveryDelayMinutes,
+          recoveryOfferMode,
+          followUpEnabled,
+          followUpDelayMinutes,
+          source,
+        ]
       properties:
         schemaVersion:
           type: integer
@@ -64,7 +72,7 @@ components:
             - type: integer
               minimum: 1
               maximum: 10080
-            - type: 'null'
+            - type: "null"
         source:
           type: string
           enum: [MERCHANT, ADMIN_OVERRIDE]

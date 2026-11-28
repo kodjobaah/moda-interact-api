@@ -1,9 +1,16 @@
 import type { IncomingMessage } from "node:http";
 import type { PrismaClient } from "@prisma/client";
 import { performance } from "node:perf_hooks";
-import { constantTimeDigestMatches, decodeSecret, digestSecret } from "./credential.js";
+import {
+  constantTimeDigestMatches,
+  decodeSecret,
+  digestSecret,
+} from "./credential.js";
 
-export type WooAuthenticationDatabase = Pick<PrismaClient, "wooCommerceInstallation">;
+export type WooAuthenticationDatabase = Pick<
+  PrismaClient,
+  "wooCommerceInstallation"
+>;
 
 export type { WooInstallationPrincipal } from "./principal.js";
 import type { WooInstallationPrincipal } from "./principal.js";
@@ -18,12 +25,18 @@ export class WooUnauthenticatedError extends Error {
 export class WooInstallationAuthenticator {
   constructor(private readonly database: WooAuthenticationDatabase) {}
 
-  async authenticate(request: IncomingMessage, options: {
-    allowSuspendedShop?: boolean;
-    /** Optional diagnostic hook for an authenticated route; not part of the auth decision. */
-    onInstallationLookupMs?: (durationMs: number) => void;
-  } = {}): Promise<WooInstallationPrincipal> {
-    const installationId = readExactlyOneHeader(request, "x-moda-installation-id");
+  async authenticate(
+    request: IncomingMessage,
+    options: {
+      allowSuspendedShop?: boolean;
+      /** Optional diagnostic hook for an authenticated route; not part of the auth decision. */
+      onInstallationLookupMs?: (durationMs: number) => void;
+    } = {},
+  ): Promise<WooInstallationPrincipal> {
+    const installationId = readExactlyOneHeader(
+      request,
+      "x-moda-installation-id",
+    );
     const authorization = readExactlyOneHeader(request, "authorization");
     if (!installationId || !/^[A-Za-z0-9_-]{1,128}$/.test(installationId)) {
       throw new WooUnauthenticatedError();
@@ -45,21 +58,34 @@ export class WooInstallationAuthenticator {
             credentialDigest: true,
             credentialVersion: true,
             revokedAt: true,
-            shop: { select: { status: true, platform: true, shopifyShopId: true } },
+            shop: {
+              select: { status: true, platform: true, shopifyShopId: true },
+            },
           },
         });
       } finally {
-        options.onInstallationLookupMs?.(Math.max(0, Math.round((performance.now() - lookupStartedAt) * 100) / 100));
+        options.onInstallationLookupMs?.(
+          Math.max(
+            0,
+            Math.round((performance.now() - lookupStartedAt) * 100) / 100,
+          ),
+        );
       }
     })();
     const digestMatches = installation
-      ? constantTimeDigestMatches(digestSecret(rawCredential), installation.credentialDigest)
+      ? constantTimeDigestMatches(
+          digestSecret(rawCredential),
+          installation.credentialDigest,
+        )
       : false;
     if (
       !installation ||
       installation.status !== "ACTIVE" ||
       installation.revokedAt !== null ||
-      (installation.shop.status !== "ACTIVE" && !(options.allowSuspendedShop && installation.shop.status === "SUSPENDED")) ||
+      (installation.shop.status !== "ACTIVE" &&
+        !(
+          options.allowSuspendedShop && installation.shop.status === "SUSPENDED"
+        )) ||
       installation.shop.platform !== "WOOCOMMERCE" ||
       installation.shop.shopifyShopId !== null ||
       !digestMatches
@@ -76,7 +102,10 @@ export class WooInstallationAuthenticator {
   }
 }
 
-function readExactlyOneHeader(request: IncomingMessage, name: string): string | undefined {
+function readExactlyOneHeader(
+  request: IncomingMessage,
+  name: string,
+): string | undefined {
   const values: string[] = [];
   for (let index = 0; index < request.rawHeaders.length; index += 2) {
     if (request.rawHeaders[index]?.toLowerCase() === name) {
